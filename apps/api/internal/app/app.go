@@ -57,6 +57,9 @@ type App struct {
 	db                    *dbpkg.Postgres
 	auth                  *authpkg.Verifier
 	realtime              *realtime.Hub
+	whatsappQueueCancel   context.CancelFunc
+	whatsappOutboxDone    <-chan struct{}
+	whatsappWebhookDone   <-chan struct{}
 	stageInactivityCancel context.CancelFunc
 	stageInactivityDone   <-chan struct{}
 }
@@ -433,11 +436,13 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	backgroundWorkers.Run(func() {
 		whatsappHandler.StartAIWorker(ctx, logger)
 	})
+	whatsappQueueCtx, whatsappQueueCancel := context.WithCancel(ctx)
+	var whatsappOutboxDone, whatsappWebhookDone <-chan struct{}
 	backgroundWorkers.Run(func() {
-		whatsappHandler.StartOutboxWorker(ctx, logger)
+		whatsappOutboxDone = whatsappHandler.StartOutboxWorker(whatsappQueueCtx, logger)
 	})
 	backgroundWorkers.Run(func() {
-		whatsappHandler.StartWebhookWorker(ctx, logger)
+		whatsappWebhookDone = whatsappHandler.StartWebhookWorker(whatsappQueueCtx, logger)
 	})
 	backgroundWorkers.Run(func() {
 		whatsappHandler.StartMediaWorker(ctx, logger)
@@ -581,6 +586,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		db:                    postgres,
 		auth:                  authVerifier,
 		realtime:              realtimeHub,
+		whatsappQueueCancel:   whatsappQueueCancel,
+		whatsappOutboxDone:    whatsappOutboxDone,
+		whatsappWebhookDone:   whatsappWebhookDone,
 		stageInactivityCancel: stageInactivityCancel,
 		stageInactivityDone:   stageInactivityDone,
 	}, nil
@@ -601,9 +609,19 @@ func (app *App) Handler() http.Handler {
 }
 
 func (app *App) Close() {
-	// Finish this bounded worker before closing the shared connection pool.
+	// Stop claiming WhatsApp work and keep the shared connection pool available
+	// until each bounded provider or inbox operation can reconcile its lease.
+	if app.whatsappQueueCancel != nil {
+		app.whatsappQueueCancel()
+	}
 	if app.stageInactivityCancel != nil {
 		app.stageInactivityCancel()
+	}
+	if app.whatsappOutboxDone != nil {
+		<-app.whatsappOutboxDone
+	}
+	if app.whatsappWebhookDone != nil {
+		<-app.whatsappWebhookDone
 	}
 	if app.stageInactivityDone != nil {
 		<-app.stageInactivityDone

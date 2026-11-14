@@ -33,7 +33,6 @@ func main() {
 		logger.Error("failed to initialize api", "error", err)
 		os.Exit(1)
 	}
-	defer application.Close()
 
 	server := &http.Server{
 		Addr:              cfg.HTTP.Addr(),
@@ -64,5 +63,6 @@ func main() {
 		}
 	}
 
+	application.Close()
 	logger.Info("vimob api stopped")
 }

@@ -254,16 +254,20 @@ type pendingEvolutionWebhook struct {
 	CreatedAt       time.Time
 }
 
-func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logger) {
+func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logger) <-chan struct{} {
 	config := handler.workerConfig.normalized()
 	if !config.WebhookWorkerEnabled {
-		return
+		return nil
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
 
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
+		var workers sync.WaitGroup
+		defer workers.Wait()
 		for {
 			if err := handler.repo.ensureEvolutionWebhookSchema(ctx); err == nil {
 				break
@@ -283,6 +287,9 @@ func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logg
 		liveConcurrency, backlogConcurrency := evolutionWebhookLaneConcurrency(config.WebhookWorkerConcurrency)
 		var statsMu sync.Mutex
 		windowStats := evolutionWebhookWorkerWindowStats{startedAt: time.Now()}
+		// A slot stops claiming when ctx is canceled. Dispatch and reconcile
+		// any already admitted inbox row on its own bounded context.
+		workCtx := context.WithoutCancel(ctx)
 		startLane := func(lane string, concurrency int, wake *evolutionWebhookWorkerSignal) {
 			startSlot := func(slot int) {
 				cursor := ""
@@ -292,7 +299,7 @@ func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logg
 					// cannot begin immediately, and a fast slot refills without waiting
 					// for a slower sibling in the same lane.
 					batchStats, nextCursor, err := handler.repo.processWebhookInboxLaneBatch(
-						ctx,
+						workCtx,
 						lane,
 						1,
 						1,
@@ -304,17 +311,13 @@ func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logg
 					statsMu.Unlock()
 					return batchStats.Claimed(), err
 				}
-				go runEvolutionWebhookLaneWorker(
-					ctx,
-					config.WebhookWorkerInterval,
-					wake,
-					processBatch,
-					func(err error) {
+				workers.Go(func() {
+					runEvolutionWebhookLaneWorker(ctx, config.WebhookWorkerInterval, wake, processBatch, func(err error) {
 						if !errors.Is(err, context.Canceled) {
 							logger.Error("whatsapp webhook inbox lane worker failed", "lane", lane, "slot", slot, "error", err)
 						}
-					},
-				)
+					})
+				})
 			}
 			for slot := 0; slot < concurrency; slot++ {
 				startSlot(slot)
@@ -347,6 +350,7 @@ func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logg
 			}
 		}
 	}()
+	return done
 }
 
 func runEvolutionWebhookLaneWorker(
@@ -358,7 +362,7 @@ func runEvolutionWebhookLaneWorker(
 ) {
 	pollTicker := time.NewTicker(interval)
 	defer pollTicker.Stop()
-	for {
+	for ctx.Err() == nil {
 		// Capture the generation before querying. A provider notification that
 		// races with an empty claim closes this exact channel, so no wake-up can
 		// be lost between the database read and the wait below.
@@ -738,6 +742,8 @@ func (repo Repository) claimEvolutionWebhooksForLane(
 	batch int,
 	afterSessionID string,
 ) ([]pendingEvolutionWebhook, string, error) {
+	ctx, cancel := context.WithTimeout(ctx, webhookClaimTimeout)
+	defer cancel()
 	batch = normalizeWorkerBatch(batch, defaultWhatsAppWebhookWorkerBatch)
 	if lane != evolutionWebhookLaneLive && lane != evolutionWebhookLaneBacklog {
 		return nil, afterSessionID, fmt.Errorf("unsupported WhatsApp webhook processing lane %q", lane)
@@ -746,7 +752,7 @@ func (repo Repository) claimEvolutionWebhooksForLane(
 	if err != nil {
 		return nil, afterSessionID, err
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackWebhookTx(tx)
 	// A missing/invalid rollout index must fail this claim quickly instead of
 	// turning the large durable inbox into a long-running sequential scan.
 	if _, err := tx.Exec(ctx, `set local statement_timeout = '5s'`); err != nil {

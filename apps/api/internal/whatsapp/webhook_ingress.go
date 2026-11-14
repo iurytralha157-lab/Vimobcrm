@@ -565,6 +565,10 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	if err != nil {
 		return evolutionWebhookReceipt{}, webhookIngressStage("processing_epoch", err)
 	}
+	automationIngress, err := loadAutomationReplyIngress(ctx, tx, session, envelope)
+	if err != nil {
+		return evolutionWebhookReceipt{}, webhookIngressStage("automation_reply_scope", err)
+	}
 	parts, err = attachEvolutionWebhookRoutingSnapshots(ctx, tx, session, parts, processingEpoch, repo.postFormGuardEnabled, repo.legacyNativeCompatEnabled, repo.liveBoundDeadBacklogBypassEnabled)
 	if err != nil {
 		// The terminal retention scrub can commit between the read-only early
@@ -590,6 +594,10 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 		return evolutionWebhookReceipt{}, webhookIngressStage("routing_snapshot", fmt.Errorf("capture Evolution webhook routing provenance: %w", err))
 	}
 
+	automationCandidates, err := prepareAutomationReplyAdmissions(ctx, tx, session, parts, automationIngress)
+	if err != nil {
+		return evolutionWebhookReceipt{}, webhookIngressStage("automation_reply_prepare", err)
+	}
 	// Insert the original event key first. Besides preserving the public receipt
 	// contract, this is a rolling-deploy fence: if an older API replica already
 	// persisted the unsplit callback, this replica must not add derived rows that
@@ -761,6 +769,11 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			// any derived key therefore invalidates the whole callback; committing a
 			// partial set would strand ledger rows or attach them to another receipt.
 			return evolutionWebhookReceipt{}, webhookIngressStage("batch_conflict", errors.New("persist Evolution webhook batch parts: derived event key conflict"))
+		}
+	}
+	for _, candidate := range automationCandidates {
+		if err := candidate.record(ctx, tx, session, automationIngress.Generation); err != nil {
+			return evolutionWebhookReceipt{}, webhookIngressStage("automation_reply_admission", err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {

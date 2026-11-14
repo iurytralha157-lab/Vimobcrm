@@ -35,6 +35,7 @@ type nativeEvolutionMessage struct {
 	Location                           *MessageLocation
 	Contacts                           []MessageContact
 	QuotedMessageID                    string
+	automationReplyInboxID             string
 	MediaStoragePath                   string
 	MediaSize                          int64
 	MediaStatus                        string
@@ -69,10 +70,11 @@ type nativeEvolutionMessage struct {
 }
 
 type nativeEvolutionStatus struct {
-	MessageIDs []string
-	Status     string
-	OccurredAt time.Time
-	Error      string
+	MessageIDs               []string
+	Status                   string
+	OccurredAt               time.Time
+	ProviderTimestampMissing bool
+	Error                    string
 }
 
 func decodeNativeEvolutionPayload(payload []byte) (map[string]any, error) {
@@ -441,14 +443,16 @@ func extractNativeEvolutionStatuses(payload map[string]any) []nativeEvolutionSta
 			}
 			seen[key] = true
 			occurredAt := nativeTimestamp(nativeFirstValue(entry, "timestamp", "Timestamp", "time", "date"))
-			if occurredAt.IsZero() {
+			providerTimestampMissing := occurredAt.IsZero()
+			if providerTimestampMissing {
 				occurredAt = time.Now().UTC()
 			}
 			result = append(result, nativeEvolutionStatus{
-				MessageIDs: ids,
-				Status:     status,
-				OccurredAt: occurredAt.UTC(),
-				Error:      firstNonEmpty(firstString(entry, "error", "message", "reason"), "Falha no envio"),
+				MessageIDs:               ids,
+				Status:                   status,
+				OccurredAt:               occurredAt.UTC(),
+				ProviderTimestampMissing: providerTimestampMissing,
+				Error:                    firstNonEmpty(firstString(entry, "error", "message", "reason"), "Falha no envio"),
 			})
 		}
 	}

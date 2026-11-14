@@ -12,8 +12,11 @@ export function schemaSources(sharedQueue = true) {
   return ['scripts/tests/whatsapp-ci-infrastructure.sql', ...MIGRATIONS.flatMap(name => [
     ...(name === '20260904123000_managed_whatsapp_distribution_auto_reply.sql' ? [CREATIVE_LEDGER_SOURCE] : []),
     ...(name === '20260920170647_add_durable_whatsapp_lead_avatar_enrichment.sql' ? [STRICT_CHECK_SOURCE, QUEUE_COLUMNS_SOURCE] : []),
-    ...(name === '20261012133549_whatsapp_contradictory_pn_ingress_barrier.sql' ? [B1_FUNCTION_SOURCE] : []), 'supabase/migrations/' + name]),
-    ...(sharedQueue ? QUEUE_SOURCES : [])];
+    ...(name === '20261012133549_whatsapp_contradictory_pn_ingress_barrier.sql' ? [B1_FUNCTION_SOURCE] : []),
+    ...(sharedQueue && name === '20261111233000_whatsapp_backlog_recovery_etapa2.sql' ? QUEUE_SOURCES : []),
+    ...(sharedQueue || !name.includes('fence_whatsapp_automation_reply_identity') && !name.includes('arbitrate_whatsapp_automation_reply_deadlines')
+      ? ['supabase/migrations/' + name] : []),
+  ])];
 }
 export async function bootstrap(rootValue, sharedQueue = true) {
 const root = fixtureRoot(rootValue);

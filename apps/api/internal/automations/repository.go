@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/leadscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/roundrobin"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -826,7 +827,11 @@ func (repo Repository) ListExecutions(ctx context.Context, tenantContext tenant.
 		filter.Limit = 50
 	}
 
-	args := []any{tenantContext.OrganizationID, filter.Limit}
+	args := []any{tenantContext.OrganizationID, filter.Limit, tenantContext.UserID,
+		leadscope.CanViewAll(tenantContext), leadscope.CanViewTeam(tenantContext)}
+	// Join only visible leads so monitoring can show status without exposing
+	// lead identifiers, raw payloads, or error text to other operators.
+	leadVisibility := leadscope.VisibilitySQL("l", "$4", "$3", "$5", leadscope.CanViewOwn(tenantContext))
 	where := []string{"ae.organization_id = $1::uuid"}
 	if filter.AutomationID != "" {
 		automationID, ok := normalizeUUID(filter.AutomationID)
@@ -842,7 +847,8 @@ func (repo Repository) ListExecutions(ctx context.Context, tenantContext tenant.
 			return nil, ErrInvalidInput
 		}
 		args = append(args, leadID)
-		where = append(where, "ae.lead_id = $"+strconv.Itoa(len(args))+"::uuid")
+		leadParameter := "$" + strconv.Itoa(len(args)) + "::uuid"
+		where = append(where, "ae.lead_id = "+leadParameter+" and l.id is not null")
 	}
 	if filter.ActiveOnly {
 		where = append(where, "ae.status in ('queued', 'running', 'waiting')")
@@ -875,24 +881,25 @@ func (repo Repository) ListExecutions(ctx context.Context, tenantContext tenant.
 		select
 			ae.id::text,
 			coalesce(ae.automation_id::text, ''),
-			coalesce(ae.lead_id::text, ''),
-			coalesce(ae.conversation_id::text, ''),
+			coalesce(l.id::text, ''),
+			case when l.id is not null then coalesce(ae.conversation_id::text, '') else '' end,
 			ae.organization_id::text,
 			ae.status,
 			coalesce(ae.current_node_id::text, ''),
 			coalesce(ae.current_node_key, ''),
 			coalesce(ae.started_at::text, ''),
 			coalesce(ae.completed_at::text, ''),
-			coalesce(ae.error_message, ''),
-			coalesce(ae.execution_data, '{}'::jsonb)::text,
+			case when l.id is not null then coalesce(ae.error_message, '') else '' end,
+			case when l.id is not null then coalesce(ae.execution_data, '{}'::jsonb)::text else '{}' end,
 			coalesce(ae.next_execution_at::text, ''),
 			coalesce(l.id::text, ''),
 			coalesce(l.name, ''),
 			coalesce(a.id::text, ''),
 			coalesce(a.name, '')
 		from public.automation_executions ae
-		left join public.leads l on l.id = ae.lead_id
-		left join public.automations a on a.id = ae.automation_id
+		left join public.leads l on l.id = ae.lead_id and l.organization_id = ae.organization_id
+		  and `+leadVisibility+`
+		left join public.automations a on a.id = ae.automation_id and a.organization_id = ae.organization_id
 		where `+strings.Join(where, " and ")+`
 		order by ae.started_at desc, ae.id desc
 		limit $2::integer
@@ -1218,24 +1225,30 @@ func (repo Repository) ListExecutionSteps(ctx context.Context, tenantContext ten
 		return nil, ErrExecutionNotFound
 	}
 
+	leadVisibility := leadscope.VisibilitySQL("l", "$6", "$5", "$7", leadscope.CanViewOwn(tenantContext))
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
-			id::text,
-			execution_id::text,
-			node_key,
-			node_type,
-			coalesce(action_type, ''),
-			status,
-			attempt,
-			coalesce(started_at::text, ''),
-			coalesce(completed_at::text, ''),
-			coalesce(left(error_message, 500), '')
-		from public.automation_execution_steps
-		where execution_id = $1::uuid
-		  and organization_id = $2::uuid
-		order by started_at asc, id asc
+			step.id::text,
+			step.execution_id::text,
+			step.node_key,
+			step.node_type,
+			coalesce(step.action_type, ''),
+			step.status,
+			step.attempt,
+			coalesce(step.started_at::text, ''),
+			coalesce(step.completed_at::text, ''),
+			case when l.id is not null then coalesce(left(step.error_message, 500), '') else '' end
+		from public.automation_execution_steps step
+		join public.automation_executions execution
+		  on execution.id = step.execution_id and execution.organization_id = step.organization_id
+		left join public.leads l on l.id = execution.lead_id and l.organization_id = execution.organization_id
+		  and `+leadVisibility+`
+		where step.execution_id = $1::uuid
+		  and step.organization_id = $2::uuid
+		order by step.started_at asc, step.id asc
 		limit $3 offset $4
-	`, executionID, tenantContext.OrganizationID, filter.Limit, filter.Offset)
+	`, executionID, tenantContext.OrganizationID, filter.Limit, filter.Offset, tenantContext.UserID,
+		leadscope.CanViewAll(tenantContext), leadscope.CanViewTeam(tenantContext))
 	if err != nil {
 		return nil, err
 	}
@@ -1311,6 +1324,7 @@ func (repo Repository) ListRuntimeIssues(ctx context.Context, tenantContext tena
 		return RuntimeIssuesResult{}, err
 	}
 
+	leadVisibility := leadscope.VisibilitySQL("l", "$5", "$4", "$6", leadscope.CanViewOwn(tenantContext))
 	rows, err := repo.db.Pool().Query(ctx, `
 		with issue_rows as (
 		  select
@@ -1321,7 +1335,7 @@ func (repo Repository) ListRuntimeIssues(ctx context.Context, tenantContext tena
 		    null::text as automation_id,
 		    null::text as automation_name,
 		    null::text as execution_id,
-		    o.lead_id::text as lead_id,
+		    o.lead_id,
 		    left(coalesce(o.last_error, 'trigger processing failed'), 500) as message,
 		    jsonb_build_object('eventType', o.event_type, 'attempts', o.attempts, 'maxAttempts', o.max_attempts) as details,
 		    exists (
@@ -1344,7 +1358,7 @@ func (repo Repository) ListRuntimeIssues(ctx context.Context, tenantContext tena
 		    e.automation_id::text,
 		    a.name,
 		    d.execution_id::text,
-		    e.lead_id::text,
+		    e.lead_id,
 		    left(coalesce(d.error_message, outbox.last_error, 'WhatsApp delivery failed'), 500),
 		    jsonb_build_object(
 		      'effectType', d.effect_type,
@@ -1384,7 +1398,7 @@ func (repo Repository) ListRuntimeIssues(ctx context.Context, tenantContext tena
 		    decision->>'automation_id',
 		    a.name,
 		    null::text,
-		    o.lead_id::text,
+		    o.lead_id,
 		    decision->>'type',
 		    decision,
 		    decision->>'type' = 'circuit_open' and not exists (
@@ -1411,7 +1425,7 @@ func (repo Repository) ListRuntimeIssues(ctx context.Context, tenantContext tena
 		    e.automation_id::text,
 		    a.name,
 		    d.execution_id::text,
-		    e.lead_id::text,
+		    e.lead_id,
 		    left(coalesce(d.error_message, 'provider outcome is ambiguous; automatic resend is disabled'), 500),
 		    jsonb_build_object('effectType', d.effect_type, 'nodeKey', d.node_key, 'effectKey', d.effect_key, 'providerId', d.provider_id),
 		    false,
@@ -1432,7 +1446,7 @@ func (repo Repository) ListRuntimeIssues(ctx context.Context, tenantContext tena
 		    c.automation_id::text,
 		    a.name,
 		    null::text,
-		    c.lead_id::text,
+		    c.lead_id,
 		    coalesce(c.reason, 'automation circuit is open'),
 		    jsonb_build_object('executionCount', c.execution_count, 'openUntil', c.open_until),
 		    false,
@@ -1441,13 +1455,19 @@ func (repo Repository) ListRuntimeIssues(ctx context.Context, tenantContext tena
 		  left join public.automations a on a.id = c.automation_id and a.organization_id = c.organization_id
 		  where c.organization_id = $1::uuid and c.open_until > now()
 		)
-		select id, kind, severity, status, coalesce(automation_id, ''), coalesce(automation_name, ''),
-		       coalesce(execution_id, ''), coalesce(lead_id, ''), coalesce(message, ''),
-		       details::text, retryable, occurred_at::text
-		from issue_rows
-		order by occurred_at desc, id desc
+		select issue.id, issue.kind, issue.severity, issue.status,
+		       coalesce(issue.automation_id, ''), coalesce(issue.automation_name, ''),
+		       coalesce(issue.execution_id, ''), coalesce(l.id::text, ''),
+		       case when l.id is not null then coalesce(issue.message, '') else issue.kind end,
+		       case when l.id is not null then issue.details::text else '{}' end,
+		       issue.retryable, issue.occurred_at::text
+		from issue_rows issue
+		left join public.leads l on l.id = issue.lead_id and l.organization_id = $1::uuid
+		  and `+leadVisibility+`
+		order by issue.occurred_at desc, issue.id desc
 		limit $2 offset $3
-	`, tenantContext.OrganizationID, limit, offset)
+	`, tenantContext.OrganizationID, limit, offset, tenantContext.UserID,
+		leadscope.CanViewAll(tenantContext), leadscope.CanViewTeam(tenantContext))
 	if err != nil {
 		return RuntimeIssuesResult{}, err
 	}

@@ -39,6 +39,7 @@ services:
 
   api:
     image: ${VIMOB_API_IMAGE:?VIMOB_API_IMAGE is required and must use a github.sha tag}
+    stop_grace_period: 140s
     deploy:
       update_config:
         parallelism: 1

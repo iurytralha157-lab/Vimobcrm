@@ -10,6 +10,7 @@ import (
 
 const (
 	nativeWebhookItemTimeout = 45 * time.Second
+	webhookClaimTimeout      = 5 * time.Second
 	webhookRecoveryTimeout   = 20 * time.Second
 	webhookCompletionTimeout = 5 * time.Second
 	webhookRollbackTimeout   = 2 * time.Second

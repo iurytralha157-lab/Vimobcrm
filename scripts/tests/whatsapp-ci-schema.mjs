@@ -86,6 +86,12 @@ export const MIGRATIONS = Object.freeze([
   '20261113145517_restore_automation_whatsapp_binding_lock.sql',
   '20261113150808_fence_automation_whatsapp_attendance_evidence.sql',
   '20261113151127_fence_automation_whatsapp_immutable_media.sql',
+  '20261113174342_finish_unconnected_automation_wait_outcome.sql',
+  '20261113181327_restrict_automation_wait_resume_rpc_execution.sql',
+  '20261113181444_restrict_automation_due_delay_rpc_execution.sql',
   '20261113200932_allow_automation_whatsapp_without_attendance.sql',
   '20261113231543_whatsapp_automation_reply_attendance.sql',
+  '20261114210348_protect_automation_execution_lead_scope.sql',
+  '20261114210410_fence_whatsapp_automation_reply_identity.sql',
+  '20261114210427_arbitrate_whatsapp_automation_reply_deadlines.sql',
 ]);

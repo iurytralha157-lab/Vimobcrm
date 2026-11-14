@@ -39,6 +39,7 @@ services:
       dockerfile: Dockerfile.api
     image: ${VIMOB_API_IMAGE:-vimob-crm-api:local}
     restart: unless-stopped
+    stop_grace_period: 140s
     environment:
       API_ENV: production
       API_HOST: 0.0.0.0

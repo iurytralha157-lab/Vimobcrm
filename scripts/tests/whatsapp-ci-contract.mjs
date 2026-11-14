@@ -32,6 +32,9 @@ export const GO_TESTS = Object.freeze([
   'TestLocalAutomationReplyCaptureRequiresAcceptedSendAndExactScope',
   'TestLocalAutomationReplyWaitsForInFlightProviderAcknowledgement',
   'TestLocalAutomationReplyUsesExactProviderReceipt',
+  'TestLocalAutomationReplyV2OrderingAndAccountGeneration',
+  'TestLocalAutomationReplyDeadlineFencesUncommittedIngress',
+  'TestLocalQueueOutboxDrainsInFlightSendWithoutClaimingSuccessor',
   'TestMediaWorkerAttemptCannotKeepRenewingForever',
   'TestMediaWorkerHeartbeatCannotHoldTheExecutorForever',
   'TestMediaWorkerCompletionWinsItsOwnHeartbeatCancellation',
@@ -76,7 +79,10 @@ export const SQL_BASELINE_TESTS = Object.freeze([
 export const SQL_TESTS = Object.freeze([
   ...SQL_BASELINE_TESTS,
   'automation_whatsapp_binding_fences.test.sql',
+  'automation_execution_lead_scope.test.sql',
+  'automation_runtime_hardening.test.sql',
   'whatsapp_automation_canonical_outbox.test.sql',
+  'whatsapp_automation_reply_deadlines.test.sql',
   'whatsapp_ci_queue_read_scope.test.sql',
 ]);
 export const DATABASE_NODE_TESTS = Object.freeze([

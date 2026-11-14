@@ -1204,6 +1204,7 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 	}
 
 	allowAutomatedReply := evolutionWebhookAllowsAutomatedReply(item)
+	automationIngress := automationReplyIngressState(item.Payload)
 	autoReplyInputs := []autoReplyInput{}
 	leadIDsToPublish := map[string]struct{}{}
 	mediaQueued := false
@@ -1550,12 +1551,22 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 				bindingID, attendanceEntryID, managedOutbound, false,
 			))
 			if canCheckAutomationReplyCapture(conversation, message, routingSnapshot, inheritedBindingProven) {
-				openedByAutomation, err := automationReplyCaptureForEvent(ctx, tx, session, conversation, item, providerOccurredAt, ingressSequence)
+				var openedByAutomation bool
+				if automationIngress.Versioned {
+					if automationIngress.Generation != "" && item.ProcessingLane == evolutionWebhookLaneLive {
+						openedByAutomation, err = automationReplyCaptureV2(ctx, tx, session, conversation, item, message, ingressSequence)
+					}
+				} else if item.ProcessingLane == evolutionWebhookLaneLive {
+					openedByAutomation, err = automationReplyCaptureForEvent(ctx, tx, session, conversation, item, providerOccurredAt, ingressSequence)
+				}
 				if err != nil {
 					return err
 				}
 				if openedByAutomation {
 					captureState = "captured"
+					if automationIngress.Versioned {
+						message.automationReplyInboxID = item.ID
+					}
 					// Capturing a reply should not opt this conversation into the AI agent.
 					leadVisibilityFallback = true
 				}
@@ -1583,6 +1594,12 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 		if message.FromMe {
 			if err := reconcileNativeOutboundOutbox(ctx, tx, session, message, messageRowID); err != nil {
 				return err
+			}
+			if managedOutbound && !message.ProviderTimestampMissing {
+				if err := recordWhatsAppAutomationProviderSendTime(ctx, tx, session, effectiveConversationID,
+					message.ProviderMessageID, automationIngress.Generation, message.SentAt, item.CreatedAt); err != nil {
+					return err
+				}
 			}
 			if err := tx.QueryRow(ctx, `
 				select coalesce(capture_state, 'captured')
@@ -1689,6 +1706,11 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 					return err
 				}
 			}
+		}
+	}
+	if automationIngress.Versioned && automationIngress.Generation != "" {
+		if err := clearAutomationReplyCandidates(ctx, tx, item); err != nil {
+			return err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -2491,7 +2513,7 @@ func reconcileNativeOutboundOutbox(
 		return fmt.Errorf("%w: WhatsApp webhook reconciliation outbox identity mismatch", ErrProviderFailed)
 	}
 	if err := acceptWhatsAppAutomationReplyStart(ctx, tx, session.OrganizationID, session.ID,
-		outboxConversationID, outboxID, message.ProviderMessageID); err != nil {
+		outboxConversationID, outboxID, message.ProviderMessageID, ""); err != nil {
 		return err
 	}
 
@@ -4629,6 +4651,9 @@ func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session native
 			"attendance_entry_id": attendanceEntryID,
 		}
 	}
+	if message.automationReplyInboxID != "" {
+		metadata["automation_reply_inbox_id"] = message.automationReplyInboxID
+	}
 	messageMetadata := jsonb(metadata)
 	var existingID, existingConversationID, existingLeadID, existingStatus, existingCaptureState string
 	rows, err := tx.Query(ctx, `
@@ -5279,6 +5304,7 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 	if err != nil {
 		return err
 	}
+	confirmedGeneration := automationReplyIngressState(item.Payload).Generation
 	receiptMessageIDs := make([]string, 0)
 	for _, receipt := range statuses {
 		receiptMessageIDs = append(receiptMessageIDs, receipt.MessageIDs...)
@@ -5369,8 +5395,14 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 			switch receipt.Status {
 			case "sent", "delivered", "read":
 				if err := acceptWhatsAppAutomationReplyStart(ctx, tx, session.OrganizationID, session.ID,
-					target.OutboxConversationID, target.OutboxID, target.OutboxProviderMessageID); err != nil {
+					target.OutboxConversationID, target.OutboxID, target.OutboxProviderMessageID, confirmedGeneration); err != nil {
 					return err
+				}
+				if !receipt.ProviderTimestampMissing {
+					if err := recordWhatsAppAutomationProviderSendTime(ctx, tx, session, target.OutboxConversationID,
+						target.OutboxProviderMessageID, confirmedGeneration, receipt.OccurredAt, item.CreatedAt); err != nil {
+						return err
+					}
 				}
 			}
 			if outboxStatus == "failed" {

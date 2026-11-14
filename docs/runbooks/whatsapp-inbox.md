@@ -123,24 +123,64 @@ Valide a admissão e a repetição idempotente em banco descartável como
 Após aplicar, faça uma nova execução controlada e confira a entrega pelo
 recibo do provedor. A migration não reprocessa efeitos antigos.
 
-Quando o WhatsApp confirma o envio da automação pelo dono da conexão, o worker
-Go registra o início do atendimento para as respostas nessa conversa. A prova
-fica vinculada à organização, conexão, conversa, lead e vínculo ativo no momento
-do envio. Isso também vale quando outro usuário é responsável pelo lead. A
-leitura do histórico usa as permissões do card. O registro da automação não
-autoriza envio manual nem marca entrada humana. Cada resposta nova segue o fluxo
-normal de automações que aguardam resposta. Uma resposta recebida enquanto o
-envio ainda aguarda confirmação pode voltar à fila por até 30 segundos. Sem
-confirmação, ela segue a regra de captura existente. Respostas recebidas antes
-do envio e registros já suprimidos não são alterados.
+### Captura de respostas às automações
 
-Aplique a migration `20261113231543_whatsapp_automation_reply_attendance.sql`
-antes de subir as réplicas Go de envio e recebimento. Antes de liberar tráfego,
-confira um envio aceito e uma resposta imediata na mesma conversa com um lead
-atribuído a outro usuário. Confira também um envio rejeitado e outra conversa
-sem atendimento. Para reverter, restaure a versão anterior da API e da bridge
-e preserve a tabela privada e os históricos já gravados. Nenhum replay é
-necessário.
+A captura usa a confirmação de um envio de automação pelo dono da conexão. A
+prova identifica organização, sessão, conta WhatsApp, conversa, lead e vínculo.
+Ela vale também para leads atribuídos a outro usuário. A API Go mantém o
+monitoramento de status da organização e só retorna o conteúdo da execução,
+as referências de lead e conversa e os erros detalhados quando o usuário
+pode ler o card. A Data API exige também uma sessão autenticada ativa para
+ler a linha bruta da execução. O runtime conserva o acesso a seus dados.
+A prova dá acesso ao fluxo de resposta. O envio manual e a entrada humana
+seguem o contrato de atendimento. Uma resposta admitida dentro da janela pode
+aguardar confirmação por prazo limitado. Sua hora de ingresso permanece a mesma
+nos retries. Registros já capturados ou suprimidos conservam sua decisão.
+
+1. Confira versões, digests e configurações efetivas de todas as réplicas da API,
+   bridge e consumidores do runtime de automações. Registre o estado da inbox e
+   da outbox por lane antes da troca. Preserve as configurações atuais do callback,
+   modo do processador e allowlist. Se o release `c6302560` estiver em execução,
+   trate a captura legada como ativa até confirmar todo o inventário. Esse release
+   ainda ignora o seletor da captura corrigida.
+2. Prepare as migrations aditivas conforme o [fluxo de banco](../../supabase/README.md).
+   Confira o ledger real, valide as migrations com duas versões do aplicativo em
+   banco descartável e aplique antes das novas imagens. Mantenha o procedimento
+   protegido do repositório, com o bloqueio vigente de `db push`. A correção do
+   escopo de execução deve permanecer em vigor em toda a operação. Valide a API
+   Go e a Data API com usuário autorizado e com usuário sem acesso ao lead.
+3. Substitua uma réplica por vez, com os workers habilitados e tráfego atendido
+   pelas réplicas saudáveis. A réplica compatível que recebe `SIGTERM` encerra os
+   novos claims e permite que seus itens em voo finalizem dentro dos limites de
+   execução. Reserve `stop_grace_period: 140s` na API e na bridge que também
+   consumir filas. A primeira versão a ser retirada pode ainda cancelar jobs
+   ao receber `SIGTERM`. Confirme o fim dos claims dessa réplica e seus jobs em
+   voo antes de desligá-la, enquanto outra segue processando. Quando essa
+   transição não puder ser observada, mantenha a captura corrigida desativada
+   e valide o procedimento de troca antes de prosseguir. Remova a versão antiga
+   dos consumidores antes de habilitar a captura corrigida. Confirme imagens por réplica, ausência de execução antiga
+   em voo, contrato do banco e `/readyz`. O health público de uma réplica sozinho
+   dá apenas evidência de conectividade e versão daquela resposta.
+4. Libere a captura corrigida inicialmente para uma sessão de teste da organização
+   pelo controle privado `private.whatsapp_automation_reply_sessions`. Na primeira
+   ativação, grave o par `organization_id` e `session_id` conferido com
+   `enabled = true` e `activated_at` igual à hora atual do banco. Sem registro,
+   ou com `enabled = false`, a sessão fica fora da admissão nova. O callback da
+   sessão de teste precisa identificar a instância atual do provedor.
+   Confira o envio aceito e a resposta dentro da espera no card e no ramo correto,
+   além de envio rejeitado, ausência de resposta, outra conversa, desconexão
+   transitória e troca da conta conectada. Use dados sintéticos. Compare idade das
+   filas, retries, `dead` e resultados incertos do provedor com o período anterior.
+   Amplie em lotes depois de confirmar continuidade dos fluxos existentes e a
+   execução única dos efeitos do canário.
+
+Para reverter uma sessão, defina `enabled = false` e preserve `activated_at`.
+Mantenha réplicas compatíveis até os candidatos já registrados concluírem ou
+expirarem.
+Reverta imagem só para uma versão que mantenha a proteção de leitura e após
+conferir que os registros persistidos são compatíveis. Preserve o schema,
+histórico e estados das filas. Um envio de resultado incerto é reconciliado pelo
+mesmo identificador de provedor, sem reenvio automático ou replay da inbox.
 
 A outbox é independente da inbox. Texto e mídia usam lanes que podem reivindicar
 e enviar itens prontos em paralelo; não há garantia de ordem global de entrega.

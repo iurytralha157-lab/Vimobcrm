@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -424,10 +425,10 @@ type pendingWhatsAppOutbox struct {
 	CreatedAt         time.Time
 }
 
-func (handler Handler) StartOutboxWorker(ctx context.Context, logger *slog.Logger) {
+func (handler Handler) StartOutboxWorker(ctx context.Context, logger *slog.Logger) <-chan struct{} {
 	config := handler.workerConfig.normalized()
 	if !config.OutboxWorkerEnabled {
-		return
+		return nil
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -439,26 +440,19 @@ func (handler Handler) StartOutboxWorker(ctx context.Context, logger *slog.Logge
 	// orders of magnitude longer than a text request. Durable starts within one
 	// conversation are serialized across both lanes; independent conversations
 	// retain parallel capacity. Provider delivery itself is outside this fence.
+	var workers sync.WaitGroup
 	for range config.OutboxWorkerConcurrency {
-		go handler.runWhatsAppOutboxLaneWorker(
-			ctx,
-			logger,
-			whatsappOutboxLaneFast,
-			whatsappOutboxFastWorkerWake,
-			config.OutboxWorkerInterval,
-			config.OutboxWorkerBatch,
-		)
+		workers.Go(func() {
+			handler.runWhatsAppOutboxLaneWorker(ctx, logger, whatsappOutboxLaneFast,
+				whatsappOutboxFastWorkerWake, config.OutboxWorkerInterval, config.OutboxWorkerBatch)
+		})
 	}
-	go handler.runWhatsAppOutboxLaneWorker(
-		ctx,
-		logger,
-		whatsappOutboxLaneMedia,
-		whatsappOutboxMediaWorkerWake,
-		config.OutboxWorkerInterval,
-		1,
-	)
+	workers.Go(func() {
+		handler.runWhatsAppOutboxLaneWorker(ctx, logger, whatsappOutboxLaneMedia,
+			whatsappOutboxMediaWorkerWake, config.OutboxWorkerInterval, 1)
+	})
 
-	go func() {
+	workers.Go(func() {
 		recoveryTicker := time.NewTicker(time.Minute)
 		cleanupTicker := time.NewTicker(time.Hour)
 		defer recoveryTicker.Stop()
@@ -481,11 +475,17 @@ func (handler Handler) StartOutboxWorker(ctx context.Context, logger *slog.Logge
 				}
 			}
 		}
-	}()
+	})
 
 	// Drain rows already committed before this process started instead of waiting
 	// for the first fallback poll.
 	wakeWhatsAppOutboxWorker()
+	done := make(chan struct{})
+	go func() {
+		workers.Wait()
+		close(done)
+	}()
+	return done
 }
 
 func (handler Handler) runWhatsAppOutboxLaneWorker(
@@ -499,9 +499,12 @@ func (handler Handler) runWhatsAppOutboxLaneWorker(
 	pollTicker := time.NewTicker(interval)
 	defer pollTicker.Stop()
 	afterConversationID := ""
+	// Stop admitting new claims on shutdown. An already admitted claim and
+	// delivery keep their existing timeouts and reconcile before DB shutdown.
+	workCtx := context.WithoutCancel(ctx)
 
 	for {
-		processed, cursor, err := handler.repo.processWhatsAppOutboxLaneBurst(ctx, lane, burst, afterConversationID)
+		processed, cursor, err := handler.repo.processWhatsAppOutboxLaneBurst(ctx, workCtx, lane, burst, afterConversationID)
 		afterConversationID = cursor
 		if err != nil && !errors.Is(err, context.Canceled) {
 			recordWhatsAppOutboxWorkerError(lane)
@@ -563,12 +566,12 @@ func (repo Repository) ProcessWhatsAppOutbox(ctx context.Context) error {
 }
 
 func (repo Repository) ProcessWhatsAppOutboxWithBatch(ctx context.Context, batch int) error {
-	_, _, err := repo.processWhatsAppOutboxLaneBurst(ctx, whatsappOutboxLaneAny, batch, "")
+	_, _, err := repo.processWhatsAppOutboxLaneBurst(ctx, ctx, whatsappOutboxLaneAny, batch, "")
 	return err
 }
 
 func (repo Repository) processWhatsAppOutboxLaneBurst(
-	ctx context.Context,
+	claimGate, workCtx context.Context,
 	lane whatsappOutboxLane,
 	burst int,
 	afterConversationID string,
@@ -579,10 +582,14 @@ func (repo Repository) processWhatsAppOutboxLaneBurst(
 	wrapped := false
 	var processErrors []error
 	for processed < burst {
+		if err := claimGate.Err(); err != nil {
+			processErrors = append(processErrors, err)
+			break
+		}
 		// Claim only the row that this goroutine is about to deliver. Claiming a
 		// whole burst up front would leave the remaining rows leased as
 		// `processing` while provider calls are still happening sequentially.
-		items, err := repo.claimWhatsAppOutboxWithBatchAfterConversation(ctx, 1, cursor, lane)
+		items, err := repo.claimWhatsAppOutboxWithBatchAfterConversation(workCtx, 1, cursor, lane)
 		if err != nil {
 			processErrors = append(processErrors, err)
 			break
@@ -600,7 +607,7 @@ func (repo Repository) processWhatsAppOutboxLaneBurst(
 			metricsLane = whatsappOutboxLaneForPayload(item.Payload)
 		}
 		recordWhatsAppOutboxClaim(metricsLane, item.CreatedAt)
-		if err := repo.processClaimedWhatsAppOutbox(ctx, item, metricsLane); err != nil {
+		if err := repo.processClaimedWhatsAppOutbox(workCtx, item, metricsLane); err != nil {
 			if lane == whatsappOutboxLaneAny {
 				recordWhatsAppOutboxWorkerError(metricsLane)
 			}
@@ -1159,14 +1166,19 @@ func (repo Repository) markWhatsAppOutboxProviderAccepted(ctx context.Context, i
 			returning id, organization_id, session_id, conversation_id, provider_message_id
 		), accepted_reply_start as (
 			update private.whatsapp_automation_reply_starts start
-			set accepted_at = greatest(clock_timestamp(), start.started_at)
+			set accepted_at = coalesce(start.accepted_at, greatest(clock_timestamp(), start.started_at)),
+			    account_confirmation = start.account_confirmation or exists (
+			      select 1 from public.whatsapp_sessions session
+			      where session.id = start.session_id and session.organization_id = start.organization_id
+			        and session.automation_reply_generation = start.account_generation
+			    )
 			from acknowledged
 			where start.outbox_id = acknowledged.id
 			  and start.organization_id = acknowledged.organization_id
 			  and start.session_id = acknowledged.session_id
 			  and start.conversation_id = acknowledged.conversation_id
 			  and start.provider_message_id = acknowledged.provider_message_id
-			  and start.accepted_at is null
+			  and not start.account_confirmation
 		)
 		select exists (select 1 from acknowledged)
 	`, item.ID, item.LeaseToken, providerMessageID, whatsappOutboxProviderAcceptedMarker).Scan(&acknowledged)
@@ -1662,7 +1674,7 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 		return errWhatsAppOutboxLeaseLost
 	}
 	if err := acceptWhatsAppAutomationReplyStart(ctx, tx, item.OrganizationID, item.SessionID,
-		item.ConversationID, item.ID, providerMessageID); err != nil {
+		item.ConversationID, item.ID, providerMessageID, ""); err != nil {
 		return err
 	}
 	if err := confirmHumanWhatsAppAttendance(ctx, tx, item.OrganizationID, canonicalMessageID); err != nil {

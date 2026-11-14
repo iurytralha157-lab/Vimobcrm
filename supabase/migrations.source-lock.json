@@ -1134,6 +1134,18 @@
     {
       "file": "20261113231543_whatsapp_automation_reply_attendance.sql",
       "sha256": "9a631fafec6ecf2f93509d2703e013dd248518dc59b19d9929204d863d5752df"
+    },
+    {
+      "file": "20261114210348_protect_automation_execution_lead_scope.sql",
+      "sha256": "444eb158cedbff0c1ea0ef885c9ba061877374581d72d8782cec05a0909c1410"
+    },
+    {
+      "file": "20261114210410_fence_whatsapp_automation_reply_identity.sql",
+      "sha256": "6f4b8e5f5eeabf007d1c7be34c2e872261c4de981bd347e2d20a61961220c823"
+    },
+    {
+      "file": "20261114210427_arbitrate_whatsapp_automation_reply_deadlines.sql",
+      "sha256": "dfd05fd5fad262635091cb8d7bbc6b12e30da2565fce19196f0c089f2c96f8f7"
     }
   ]
 }
