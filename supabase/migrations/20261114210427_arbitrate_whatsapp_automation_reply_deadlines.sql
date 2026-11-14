@@ -179,10 +179,10 @@ do $migration$
 declare
   target regprocedure := 'public.resume_automation_delay(uuid,uuid,text,timestamptz,jsonb,uuid,uuid)'::regprocedure;
   definition text;
-  prior constant text := $prior$    if is_reply_aware and exists (
+  prior constant text := replace($prior$    if is_reply_aware and exists (
       select 1
-      from public.automation_event_outbox o$prior$;
-  replacement constant text := $replacement$    -- The timeout already holds the execution. Never wait on ingress with
+      from public.automation_event_outbox o$prior$, chr(13), '');
+  replacement constant text := replace($replacement$    -- The timeout already holds the execution. Never wait on ingress with
     -- that row locked. A short deferral lets ingress commit and release.
     if is_reply_aware and target_execution.lead_id is not null and not
       pg_catalog.pg_try_advisory_xact_lock(private.whatsapp_automation_reply_scope_key(
@@ -198,13 +198,13 @@ declare
       wait_started_at, target_execution.next_execution_at
     ) or exists (
       select 1
-      from public.automation_event_outbox o$replacement$;
-  prior_end constant text := $end$        and private.safe_automation_timestamptz(o.payload->>'occurred_at') <= target_execution.next_execution_at
-    ) then$end$;
-  replacement_end constant text := $end$        and private.safe_automation_timestamptz(o.payload->>'occurred_at') <= target_execution.next_execution_at
+      from public.automation_event_outbox o$replacement$, chr(13), '');
+  prior_end constant text := replace($end$        and private.safe_automation_timestamptz(o.payload->>'occurred_at') <= target_execution.next_execution_at
+    ) then$end$, chr(13), '');
+  replacement_end constant text := replace($end$        and private.safe_automation_timestamptz(o.payload->>'occurred_at') <= target_execution.next_execution_at
         and (not (o.payload ? 'automation_reply_inbox_accepted_at') or
           private.safe_automation_timestamptz(o.payload->>'automation_reply_inbox_accepted_at') <= target_execution.next_execution_at)
-    )) then$end$;
+    )) then$end$, chr(13), '');
 begin
   select replace(pg_catalog.pg_get_functiondef(target::oid), E'\r\n', E'\n') into strict definition;
   if length(definition) - length(replace(definition, prior, '')) <> length(prior)
@@ -220,20 +220,20 @@ declare
   target regprocedure := 'public.process_automation_inbound_message(uuid,uuid,uuid,uuid,text,text,timestamptz)'::regprocedure;
   definition text;
   prior_declaration constant text := '  wait_step record;';
-  replacement_declaration constant text := $replacement$  wait_step record;
-  inbox_accepted_at timestamptz;$replacement$;
+  replacement_declaration constant text := replace($replacement$  wait_step record;
+  inbox_accepted_at timestamptz;$replacement$, chr(13), '');
   prior_preview constant text := '  preview := left(coalesce(nullif(trim(p_content),';
-  replacement_preview constant text := $replacement$  select private.safe_automation_timestamptz(event.payload->>'automation_reply_inbox_accepted_at')
+  replacement_preview constant text := replace($replacement$  select private.safe_automation_timestamptz(event.payload->>'automation_reply_inbox_accepted_at')
   into inbox_accepted_at
   from public.automation_event_outbox event
   where event.organization_id = p_organization_id and event.lead_id = p_lead_id
     and event.conversation_id is not distinct from p_conversation_id and event.aggregate_id = p_message_id
     and event.event_type = 'message_received' and event.dedupe_key = 'message_received:' || p_message_id::text;
 
-  preview := left(coalesce(nullif(trim(p_content),$replacement$;
+  preview := left(coalesce(nullif(trim(p_content),$replacement$, chr(13), '');
   prior_deadline constant text := '       or p_occurred_at > candidate.next_execution_at then';
-  replacement_deadline constant text := $replacement$       or p_occurred_at > candidate.next_execution_at
-       or inbox_accepted_at > candidate.next_execution_at then$replacement$;
+  replacement_deadline constant text := replace($replacement$       or p_occurred_at > candidate.next_execution_at
+       or inbox_accepted_at > candidate.next_execution_at then$replacement$, chr(13), '');
 begin
   select replace(pg_catalog.pg_get_functiondef(target::oid), E'\r\n', E'\n') into strict definition;
   if length(definition) - length(replace(definition, prior_declaration, '')) <> length(prior_declaration)
@@ -253,7 +253,7 @@ declare
   target regprocedure := 'public.release_due_automation_delays(integer)'::regprocedure;
   definition text;
   prior constant text := '      and e.next_execution_at <= now()';
-  replacement constant text := $replacement$      and e.next_execution_at <= now()
+  replacement constant text := replace($replacement$      and e.next_execution_at <= now()
       and not case when private.whatsapp_automation_reply_pending_for_wait(
         e.organization_id, e.lead_id, e.conversation_id, null, e.next_execution_at
       ) then exists (
@@ -274,7 +274,7 @@ declare
           and private.whatsapp_automation_reply_pending_for_wait(
             e.organization_id, e.lead_id, e.conversation_id, wait_step.started_at, e.next_execution_at
           )
-      ) else false end$replacement$;
+      ) else false end$replacement$, chr(13), '');
 begin
   select replace(pg_catalog.pg_get_functiondef(target::oid), E'\r\n', E'\n') into strict definition;
   if length(definition) - length(replace(definition, prior, '')) <> length(prior) then
