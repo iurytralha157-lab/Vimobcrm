@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "58e7ac1cb600b796d85f10f120d6d66bfa9335bbf99469e87f797b81f9eead47",
+  "sourceDigestSha256": "b111957056cb226f9033c7e813f10127a1d889f46ff108293b3f45848aea48f6",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -19758,10 +19758,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:efb81c7c16d557794c2a",
+          "id": "cta:8b3e4f4a140a14df8d70",
           "column": 15,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 207,
+          "line": 209,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -19770,10 +19770,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7c48516da6bc0d161098",
+          "id": "cta:c8adee80d9924e0b952f",
           "column": 15,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 237,
+          "line": 239,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -19782,10 +19782,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c1d750c449b317a6f75e",
+          "id": "cta:62be81bc6fbd90caa4d4",
           "column": 25,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 349,
+          "line": 351,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -19794,10 +19794,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:433f35930c3dde53aedf",
+          "id": "cta:0a9eaee7281e5e672870",
           "column": 23,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 443,
+          "line": 447,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -19806,10 +19806,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:46e71fe619cd1f83234a",
+          "id": "cta:d0298064f24b932b6d10",
           "column": 17,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 465,
+          "line": 469,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -19818,10 +19818,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:33dfc38006af3fbc61a6",
+          "id": "cta:e763670a337df902e4fa",
           "column": 13,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 489,
+          "line": 493,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -19830,10 +19830,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:02e0d536c9063feb5a02",
+          "id": "cta:81c1aa719685ed46fbd1",
           "column": 13,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 508,
+          "line": 512,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -19842,10 +19842,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:25531e79f0c63950e146",
+          "id": "cta:97e4d8f5d672e52c3d2c",
           "column": 13,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 524,
+          "line": 528,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -47530,7 +47530,7 @@
         }
       ]
     },
-    "digestSha256": "2e576040ac93f7757fe88a7b34df426b619111647a04f4b361f31a33cbf68886"
+    "digestSha256": "7fd1f1ec1169b0bf43beecb45f4593557bb78d72147996d43eeda06a1db004d4"
   },
   "routes": [
     {
@@ -47818,7 +47818,7 @@
       "id": "route:4a23f6eb303a65e43b82",
       "optionalCatchAll": false,
       "redirectTargets": [
-        "/inicio"
+        "/inicio#home-focus"
       ],
       "source": "app/(protected)/attention/page.tsx",
       "url": "/attention"

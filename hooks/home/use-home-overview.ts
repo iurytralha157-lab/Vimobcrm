@@ -18,6 +18,7 @@ import {
 import { isBillingAccessBlocked } from '@/lib/billing-access'
 
 const HOME_OVERVIEW_STALE_TIME_MS = 60_000
+const HOME_FOCUS_REFETCH_INTERVAL_MS = 15_000
 const HOME_OVERVIEW_GC_TIME_MS = 10 * 60_000
 const HOME_TASK_LIMIT = 5
 const HOME_FOCUS_LIMIT = 8
@@ -161,6 +162,7 @@ export function useHomeOverview(
     enabled &&
     !billingBlocked &&
     !permissionsLoading &&
+    !modulesLoading &&
     hasPermission('dashboard_view')
   const canViewSchedule =
     enabled &&
@@ -181,7 +183,7 @@ export function useHomeOverview(
     ),
     staleTime: HOME_OVERVIEW_STALE_TIME_MS,
     gcTime: HOME_OVERVIEW_GC_TIME_MS,
-    refetchInterval: HOME_OVERVIEW_STALE_TIME_MS,
+    refetchInterval: HOME_FOCUS_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: false,
   })
 
@@ -214,10 +216,11 @@ export function useHomeOverview(
     gcTime: HOME_OVERVIEW_GC_TIME_MS,
   })
 
-  const scheduleEvents = visibleScheduleEvents(scheduleQuery.data || [])
+  // Disabled queries retain cache; expose only data allowed by current access.
+  const scheduleEvents = canViewSchedule ? visibleScheduleEvents(scheduleQuery.data || []) : []
   const focusItems = [
-    ...(serverFocusQuery.data || []).map(mapServerFocusItem),
-    ...(upcomingTasksQuery.data || []).map(mapUpcomingTask),
+    ...(canViewAttention ? serverFocusQuery.data || [] : []).map(mapServerFocusItem),
+    ...(canViewUpcomingTasks && !canViewAttention ? upcomingTasksQuery.data || [] : []).map(mapUpcomingTask),
     ...scheduleEvents.map(mapScheduleEvent),
   ]
     .sort(sortFocusItems)

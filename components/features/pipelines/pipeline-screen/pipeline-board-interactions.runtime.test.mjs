@@ -68,11 +68,12 @@ before(async () => {
     h.render=()=>renderWithQueries(React.createElement(React.Fragment,null,h.shell(),h.overlay==='dialog'?React.createElement(Dialog,{open:true,onOpenChange:noop},React.createElement(DialogContent,null,React.createElement(DialogTitle,null,'Popup sintético'),React.createElement(DialogDescription,null,'Teste da camada real Radix'))):h.overlay==='drawer'?React.createElement(Drawer,{open:true,onOpenChange:noop,shouldScaleBackground:false},React.createElement(DrawerContent,{showHandle:false,style:{height:'80dvh'}},React.createElement(DrawerTitle,null,'Drawer sintético'),React.createElement(DrawerDescription,null,'Teste da camada real Vaul'))):null));h.render();`);
 
   let entrySource = await readFile(entry, 'utf8');
-  entrySource = "import{getPipelineBoardScrollMemory}from'@/hooks/pipelines/use-pipeline-board-scroll';\n" + entrySource;
+  entrySource = "import{getPipelineBoardScrollMemory}from'@/hooks/pipelines/use-pipeline-board-scroll';import{canManagePipeline,canEditStageOperationalRules,canViewStageAutomations}from'@/lib/access/pipeline-settings-access';\n" + entrySource;
   entrySource = entrySource
     .replace('stages:h.stages,filteredStages:', 'scrollMemory:h.scrollScope?getPipelineBoardScrollMemory(queryClient,h.scrollScope,h.mobile):null,stages:h.stages,filteredStages:')
     .replace('h.shell(),h.overlay', 'h.away?null:h.shell(),h.overlay');
   entrySource = entrySource.replace("import React from'react';", "import React from'react';import{DragDropContext,Droppable}from'@hello-pangea/dnd';import{LeadCard}from'@/components/features/leads/LeadCard';")
+    .replace('canEditPipeline:true,', 'canEditPipeline:h.stagePermissions?canManagePipeline(key=>h.stagePermissions.includes(key)):true,canOpenStageSettings:h.stagePermissions?canEditStageOperationalRules(key=>h.stagePermissions.includes(key))||canViewStageAutomations(key=>h.stagePermissions.includes(key),!!h.stageAutomationModule):undefined,')
     .replace('onOpenLead:onOpenLead', 'onOpenLead:h.overrideOpen||onOpenLead')
     .replace('isDragDisabled:false,nowMs:', 'isDragDisabled:!!h.disabled,nowMs:')
     .replace('canOperateWhatsApp:true,canShowColumnActions:', 'canOperateWhatsApp:!h.readOnly,canShowColumnActions:')
@@ -590,6 +591,49 @@ test('desktop controls retain 28px owner and quick actions without mobile naviga
         const rect = element.getBoundingClientRect(); return [rect.width, rect.height];
       }));
     assert.deepEqual(sizes, [[28, 28], [28, 28], [28, 28], [28, 28]]);
+  } finally { await page.close(); }
+});
+
+for (const [width, height] of [[1280, 720], [390, 844]]) test(`column configuration respects actual access policies at ${width}x${height}`, async () => {
+  const page = await openBoard(width, height);
+  const configure = page.getByRole('button', { name: /^Configurar coluna / });
+  async function permissions(keys, module = false) {
+    await page.evaluate(({ keys, module }) => {
+      window.h.stagePermissions = keys; window.h.stageAutomationModule = module; window.h.render();
+    }, { keys, module });
+  }
+  try {
+    await permissions(['lead_operate', 'lead_create']);
+    await page.getByRole('heading', { name: 'Etapa sintética 0 com nome longo', exact: true }).waitFor();
+    assert.equal(await configure.count(), 0, 'ordinary lead operators must not receive a settings CTA');
+    assert.equal(await page.getByRole('button', { name: /^Renomear coluna / }).count(), 0);
+    assert.equal(await page.locator('article').count() > 0, true, 'normal lead content remains available');
+    await page.screenshot({ path: join(artifacts, `column-settings-common-${width}x${height}.png`) });
+
+    await permissions(['automations_view']);
+    assert.equal(await configure.count(), 0, 'automation readers still require the module');
+    await permissions(['automations_view'], true);
+    await configure.first().waitFor();
+    await configure.first().click();
+    await page.getByRole('menu').waitFor();
+    await page.keyboard.press('Escape');
+
+    await permissions(['automations_manage']);
+    await configure.first().click();
+    await page.getByRole('menuitem', { name: 'Regras da etapa', exact: true }).click();
+    assert.deepEqual(await page.evaluate(() => window.h.settingsRequests), [{ stageId: 'stage0', tab: 'cadence' }]);
+
+    await permissions(['pipeline_manage']);
+    await page.getByRole('button', { name: 'Renomear coluna Etapa sintética 0 com nome longo', exact: true }).waitFor();
+    await configure.first().click();
+    await page.getByRole('menu').waitFor();
+    await page.screenshot({ path: join(artifacts, `column-settings-admin-${width}x${height}.png`) });
+    await permissions(['lead_operate']);
+    await page.getByRole('heading', { name: 'Etapa sintética 0 com nome longo', exact: true }).waitFor();
+    await page.getByRole('menu').waitFor({ state: 'detached' });
+    assert.equal(await configure.count(), 0);
+    assert.equal(await page.getByRole('menu').count(), 0, 'revoked access unmounts the open menu');
+    assert.equal(await page.evaluate(() => window.h.settingsRequests.length), 1, 'permission changes never select an action');
   } finally { await page.close(); }
 });
 

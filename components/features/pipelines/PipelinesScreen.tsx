@@ -97,7 +97,7 @@ import {
   type PipelineMoveRevision,
 } from '@/lib/pipeline-move-revision';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { canManagePipeline } from '@/lib/access/pipeline-settings-access';
+import { canEditStageOperationalRules, canManagePipeline, canViewStageAutomations } from '@/lib/access/pipeline-settings-access';
 import { useLeadVisibility } from '@/hooks/use-lead-visibility';
 import { useSelectedPipelineLeadAccess } from '@/hooks/pipelines';
 import { matchesVerifiedLeadReadScope } from '@/lib/lead-read-snapshot';
@@ -811,6 +811,8 @@ export default function Pipelines() {
   const assignLeadRoundRobin = useAssignLeadRoundRobin();
   const assignLeadRoundRobinMutate = assignLeadRoundRobin.mutate;
   const canEditPipeline = canManagePipeline(hasPermission);
+  const canOpenStageSettings = canEditStageOperationalRules(hasPermission)
+    || canViewStageAutomations(hasPermission, hasModule('automations'));
   const canManageAttention = hasPermission('attention_view') && (
     hasPermission('pipeline_manage') || hasPermission('automations_manage')
   );
@@ -1965,6 +1967,7 @@ export default function Pipelines() {
           hasPreviousMobileStage={hasPreviousMobileStage}
           hasNextMobileStage={hasNextMobileStage}
           canEditPipeline={canEditPipeline}
+          canOpenStageSettings={canOpenStageSettings}
           hasWhatsAppModule={hasWhatsAppModule}
           canViewWhatsApp={canViewWhatsApp}
           canOperateWhatsApp={canOperateWhatsApp}

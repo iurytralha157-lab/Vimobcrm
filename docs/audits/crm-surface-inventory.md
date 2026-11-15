@@ -1,7 +1,7 @@
 # Inventario canonico de superficies do CRM
 
 Gerado por `node scripts/audits/inventory-crm-surfaces.mjs --write`.
-O conteudo e deterministico para o digest `58e7ac1cb600b796d85f10f120d6d66bfa9335bbf99469e87f797b81f9eead47`.
+O conteudo e deterministico para o digest `b111957056cb226f9033c7e813f10127a1d889f46ff108293b3f45848aea48f6`.
 
 ## Denominadores
 
@@ -25,7 +25,7 @@ CTAs declarados, inclusive externos/desconhecidos: `actionButton` 1461, `externa
 
 ## Identificadores estaveis
 
-O indice JSON usa IDs no formato `tipo:00000000000000000000`, derivados por SHA-256 de tipo + caminho relativo + localizacao/assinatura estrutural. Nenhum caminho absoluto entra na chave. O digest do indice e `2e576040ac93f7757fe88a7b34df426b619111647a04f4b361f31a33cbf68886`.
+O indice JSON usa IDs no formato `tipo:00000000000000000000`, derivados por SHA-256 de tipo + caminho relativo + localizacao/assinatura estrutural. Nenhum caminho absoluto entra na chave. O digest do indice e `7fd1f1ec1169b0bf43beecb45f4593557bb78d72147996d43eeda06a1db004d4`.
 
 | Categoria enderecavel | IDs |
 | --- | ---: |
@@ -100,7 +100,7 @@ Delegacoes `Button asChild` a revisar: nenhuma.
 | `route:707d9d0390a19e917af9` | `/admin/system-settings` | protected/admin | estatica | `-` |
 | `route:a666aa15bbb75e119186` | `/admin/users` | protected/admin | estatica | `-` |
 | `route:82e198588d04b57c9fd0` | `/agenda` | protected | estatica | `-` |
-| `route:4a23f6eb303a65e43b82` | `/attention` | protected | alias | `/inicio` |
+| `route:4a23f6eb303a65e43b82` | `/attention` | protected | alias | `/inicio#home-focus` |
 | `route:9cd088e45100d87b467d` | `/automations` | protected | estatica | `-` |
 | `route:b9b7c81e53d271e49ea9` | `/cadastro` | auth | estatica | `-` |
 | `route:d506f31301c9ad084200` | `/checkout/[token]` | public | dinamica | `-` |

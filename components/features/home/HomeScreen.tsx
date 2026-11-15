@@ -1,19 +1,22 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   useHomeNotices,
+  useHomeOverview,
   useHomePublications,
 } from "@/hooks/home";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
-import type { HomePublicationCard } from "@/lib/api/home";
+import { useUserAccessScope } from "@/hooks/use-user-access-scope";
+import type { HomeFocusScope, HomePublicationCard } from "@/lib/api/home";
 import { isBillingAccessBlocked } from "@/lib/billing-access";
 
 import { HomeAssistant } from "./HomeAssistant";
+import { HomeFocusList } from "./HomeFocusList";
 import { HomeNoticeRail } from "./HomeNoticeRail";
 import { HomePublicationCarousel } from "./HomePublicationCarousel";
 import {
@@ -43,10 +46,21 @@ export default function HomeScreen() {
   const { profile, organization, isSuperAdmin } = useAuth();
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
   const { hasModule, isLoading: modulesLoading } = useOrganizationModules();
+  const access = useUserAccessScope();
+  const [requestedFocusScope, setRequestedFocusScope] = useState<HomeFocusScope>("mine");
+  const canViewTeamFocus = access.isAdmin || access.isTeamLeader;
+  const canViewOrganizationFocus = access.canViewAllLeads;
+  const focusScope: HomeFocusScope =
+    requestedFocusScope === "organization" && !canViewOrganizationFocus
+      ? "mine"
+      : requestedFocusScope === "team" && !canViewTeamFocus
+        ? "mine"
+        : requestedFocusScope;
   const publicationsQuery = useHomePublications(
     HOME_PAGE_SECTIONS.publications,
   );
   const noticesQuery = useHomeNotices();
+  const overview = useHomeOverview(focusScope, HOME_PAGE_SECTIONS.focus);
   const accessReady = !permissionsLoading && !modulesLoading;
   const billingBlocked = !isSuperAdmin && isBillingAccessBlocked(organization);
 
@@ -133,6 +147,21 @@ export default function HomeScreen() {
           firstName={getFirstName(profile?.name)}
           quickActions={quickActions}
         />
+        {HOME_PAGE_SECTIONS.focus ? (
+          <HomeFocusList
+            items={overview.focusItems}
+            isLoading={overview.isLoading}
+            hasError={overview.hasError}
+            isRetrying={overview.isRetrying}
+            onRetry={overview.retry}
+            hasAnyAccess={overview.hasAnyAccess}
+            billingBlocked={overview.billingBlocked}
+            scope={focusScope}
+            onScopeChange={setRequestedFocusScope}
+            canViewTeam={canViewTeamFocus}
+            canViewOrganization={canViewOrganizationFocus}
+          />
+        ) : null}
       </div>
     </AppLayout>
   );

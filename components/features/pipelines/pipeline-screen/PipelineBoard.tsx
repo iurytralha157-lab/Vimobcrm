@@ -54,6 +54,7 @@ type PipelineBoardProps = {
   hasPreviousMobileStage: boolean;
   hasNextMobileStage: boolean;
   canEditPipeline: boolean;
+  canOpenStageSettings?: boolean;
   hasWhatsAppModule: boolean;
   canViewWhatsApp: boolean;
   canOperateWhatsApp: boolean;
@@ -103,6 +104,7 @@ export function PipelineBoard({
   hasPreviousMobileStage,
   hasNextMobileStage,
   canEditPipeline,
+  canOpenStageSettings = canEditPipeline,
   hasWhatsAppModule,
   canViewWhatsApp,
   canOperateWhatsApp,
@@ -397,14 +399,16 @@ export function PipelineBoard({
                         {stageCountMetaMap.get(stage.id)?.isCountEstimate ? '+' : ''}
                       </Badge>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1">
-                      <StageColumnMenu
-                        stageName={stage.name}
-                        isMobile={isMobile}
-                        tourTarget={stageIndex === 0 ? 'pipeline-column-settings' : undefined}
-                        onSelect={(tab, returnFocusElement) => onOpenStageSettings(stage, tab, returnFocusElement)}
-                      />
-                    </div>
+                    {canOpenStageSettings && (
+                      <div className="flex shrink-0 items-center gap-1">
+                        <StageColumnMenu
+                          stageName={stage.name}
+                          isMobile={isMobile}
+                          tourTarget={stageIndex === 0 ? 'pipeline-column-settings' : undefined}
+                          onSelect={(tab, returnFocusElement) => onOpenStageSettings(stage, tab, returnFocusElement)}
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <PipelineDropColumn stage={stage} className={cn('flex min-h-0 flex-1 flex-col overflow-y-auto', styles.leadList)}>
