@@ -15,12 +15,13 @@ import {
   type UpdateTeamInput,
 } from "@/lib/api/teams";
 import { toast } from "sonner";
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import type { VimobAPIRequestIntent } from "@/lib/api/vimob-client";
 import { assertManagementRequestIntent, captureManagementRequestIntent } from "@/lib/api/management-request";
 import { shouldRetryPipelineQuery } from "@/lib/pipeline-reliability";
 import { getGlobalSignOutSessionId } from "@/lib/auth/global-sign-out";
+import { captureQueryClientAccess } from "@/lib/access/query-client-access";
 import type { TeamFilterCatalog } from "@/lib/validation/team-filter-catalog";
 import {
   cacheTeamEditorSnapshot,
@@ -298,15 +299,90 @@ export function useUpdateTeam() {
   });
 }
 
+/** Bind destructive commands before React Query's first await. */
+function useTeamCommandMutation<Variables extends { organizationId: string }, Result>(
+  execute: (variables: Variables, intent: VimobAPIRequestIntent) => Promise<Result>,
+  onSuccess: (result: Result, variables: Variables) => void,
+  onError: (error: Error, variables: Variables) => void,
+) {
+  const client = useQueryClient();
+  const { activeOrganization, user, profile, session } = useAuth();
+  const organizationId = activeOrganization.organizationId;
+  const userId = user?.id ?? profile?.id ?? null;
+  const sessionId = getGlobalSignOutSessionId(session);
+  const identity = useMemo(() => ({ client, organizationId, userId, sessionId }),
+    [client, organizationId, userId, sessionId]);
+  const active = useRef<{ identity: typeof identity } | null>(null);
+  const lastIdentity = useRef(identity);
+  const operations = useRef(new WeakMap<Variables, { intent: VimobAPIRequestIntent; isCurrent: () => boolean; canReconcile: () => boolean }>());
+  useLayoutEffect(() => {
+    const visit = { identity };
+    lastIdentity.current = identity;
+    active.current = visit;
+    return () => {
+      if (active.current === visit) active.current = null;
+    };
+  }, [identity]);
+  const requireOperation = (variables: Variables) => {
+    const operation = operations.current.get(variables);
+    if (!operation?.isCurrent()) throw new Error('O acesso mudou. Reabra a gestão antes de alterar a equipe.');
+    return operation;
+  };
+  const mutation = useMutation({
+    mutationFn: async (variables: Variables) => {
+      const operation = requireOperation(variables);
+      const result = await execute(variables, operation.intent);
+      if (!operation.canReconcile()) throw new Error('O acesso mudou. Reabra a gestão antes de alterar a equipe.');
+      return result;
+    },
+    retry: false,
+    onSuccess: (result, variables) => { if (operations.current.get(variables)?.canReconcile()) onSuccess(result, variables); },
+    onError: (error, variables) => { if (operations.current.get(variables)?.isCurrent()) onError(error, variables); },
+    onSettled: (_result, _error, variables) => { operations.current.delete(variables); },
+  });
+  const capture = (variables: Variables, options?: Parameters<typeof mutation.mutate>[1]) => {
+    const visit = active.current;
+    const canUseClient = captureQueryClientAccess(client);
+    assertManagementRequestIntent({ expectedUserId: userId, expectedSessionId: sessionId });
+    if (!visit || visit.identity !== identity || !organizationId || variables.organizationId !== organizationId || !canUseClient()) {
+      throw new Error('O acesso mudou. Reabra a gestão antes de alterar a equipe.');
+    }
+    const intent = captureManagementRequestIntent();
+    const canReconcile = () => {
+      if (lastIdentity.current !== identity || !canUseClient()) return false;
+      try { assertManagementRequestIntent(intent); return true; } catch { return false; }
+    };
+    const isCurrent = () => active.current === visit && canReconcile();
+    const input = { ...variables };
+    operations.current.set(input, { intent, isCurrent, canReconcile });
+    const guarded: NonNullable<typeof options> = {
+      onSuccess: (...args) => { if (isCurrent()) options?.onSuccess?.(...args); },
+      onError: (...args) => { if (isCurrent()) options?.onError?.(...args); },
+      onSettled: (...args) => { if (isCurrent()) options?.onSettled?.(...args); },
+    };
+    return { input, guarded };
+  };
+  return { ...mutation,
+    mutate: (variables: Variables, options?: Parameters<typeof mutation.mutate>[1]) => {
+      const { input, guarded } = capture(variables, options);
+      mutation.mutate(input, guarded);
+    },
+    mutateAsync: (variables: Variables, options?: Parameters<typeof mutation.mutateAsync>[1]) => {
+      const { input, guarded } = capture(variables, options);
+      return mutation.mutateAsync(input, guarded);
+    },
+  };
+}
+
 export function useDeleteTeam() {
   const queryClient = useQueryClient();
   const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId || null;
   const isCurrentScope = useTeamMutationScope(organizationId);
 
-  return useMutation({
-    mutationFn: async ({ id, organizationId: requestedOrganizationId }: { id: string; organizationId: string }) => teamsAPI.deleteTeam(id, requestedOrganizationId),
-    onSuccess: (_, variables) => {
+  return useTeamCommandMutation(
+    async ({ id, organizationId: requestedOrganizationId }: { id: string; organizationId: string }, intent) => teamsAPI.deleteTeam(id, requestedOrganizationId, intent),
+    (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["teams", variables.organizationId] });
       queryClient.invalidateQueries({ queryKey: ["lead-visibility"] });
       queryClient.invalidateQueries(
@@ -316,11 +392,11 @@ export function useDeleteTeam() {
       invalidateTeamScopeDependentQueries(queryClient);
       if (isCurrentScope(variables.organizationId)) toast.success("Equipe excluida!");
     },
-    onError: (error, variables) => {
+    (error, variables) => {
       if (!isCurrentScope(variables.organizationId)) return;
       toast.error("Erro ao excluir equipe: " + error.message);
     },
-  });
+  );
 }
 
 export function useUpdateTeamStatus() {
@@ -329,10 +405,10 @@ export function useUpdateTeamStatus() {
   const organizationId = activeOrganization.organizationId || null;
   const isCurrentScope = useTeamMutationScope(organizationId);
 
-  return useMutation({
-    mutationFn: async ({ id, is_active, organizationId: requestedOrganizationId }: { id: string; is_active: boolean; organizationId: string }) =>
-      teamsAPI.updateTeamStatus({ id, is_active }, requestedOrganizationId),
-    onSuccess: (_, variables) => {
+  return useTeamCommandMutation(
+    async ({ id, is_active, organizationId: requestedOrganizationId }: { id: string; is_active: boolean; organizationId: string }, intent) =>
+      teamsAPI.updateTeamStatus({ id, is_active }, requestedOrganizationId, intent),
+    (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["teams", variables.organizationId] });
       queryClient.invalidateQueries({ queryKey: ["team", variables.organizationId, variables.id] });
       queryClient.invalidateQueries({ queryKey: ["team-history", variables.organizationId, variables.id] });
@@ -346,9 +422,9 @@ export function useUpdateTeamStatus() {
         variables.is_active ? "Equipe ativada!" : "Equipe desativada!",
       );
     },
-    onError: (error, variables) => {
+    (error, variables) => {
       if (!isCurrentScope(variables.organizationId)) return;
       toast.error("Erro ao atualizar equipe: " + error.message);
     },
-  });
+  );
 }

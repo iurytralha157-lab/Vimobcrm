@@ -108,6 +108,11 @@ function assertExpectedRequestIdentity(options: RequestOptions) {
 
 export async function vimobAPIRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   throwIfAborted(options.signal)
+  options = {
+    ...options,
+    expectedUserId: options.expectedUserId !== undefined ? options.expectedUserId : activeAccessTokenIdentity?.userId,
+    expectedSessionId: options.expectedSessionId !== undefined ? options.expectedSessionId : getVimobAPIAccessTokenSessionId() ?? undefined,
+  }
 
   if (shouldBlockLocalMutation(options.method)) {
     throw new VimobAPIError(LOCAL_READ_ONLY_ERROR_MESSAGE, {
@@ -117,6 +122,9 @@ export async function vimobAPIRequest<T>(path: string, options: RequestOptions =
   }
 
   const accessToken = await resolveWithAbortSignal(getAccessTokenForAPI(), options.signal)
+  // Bootstrap has no identity yet; pin its first resolved session before retries.
+  if (options.expectedUserId === undefined) options.expectedUserId = activeAccessTokenIdentity?.userId
+  if (options.expectedSessionId === undefined) options.expectedSessionId = getGlobalSignOutSessionId({ access_token: accessToken }) ?? undefined
   assertExpectedRequestIdentity(options)
   assertAccessTokenAllowedForRequest(path, options.method, accessToken)
   throwIfAborted(options.signal)
@@ -137,6 +145,7 @@ export async function vimobAPIRequest<T>(path: string, options: RequestOptions =
   }
 
   throwIfAborted(options.signal)
+  assertExpectedRequestIdentity(options)
 
   if (!result.response.ok) {
     const envelope = result.payload as APIErrorEnvelope | null

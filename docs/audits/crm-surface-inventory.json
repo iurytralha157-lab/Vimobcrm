@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "aac73cb3441e9a17571636e8604e94a090cad56f05811cf7c94f7ff98cbe07c3",
+  "sourceDigestSha256": "b4797331f0ef78174417cfff6715e68584f1d625fc9d66e8c0ab6403055d0b7b",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -4455,10 +4455,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:f31d82522e21575e83d9",
+          "id": "overlay:94159ca2b5b2892c155f",
           "column": 7,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 1529,
+          "line": 1531,
           "owner": "TeamEditorDialog",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -28426,10 +28426,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2c7c4908b402c9648f01",
+          "id": "cta:e708b23d1bf075e8c64b",
           "column": 23,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 651,
+          "line": 652,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28438,10 +28438,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:891a3bd5b924f470b85b",
+          "id": "cta:37c754c7a11fa2c40f8e",
           "column": 21,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 661,
+          "line": 662,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28450,10 +28450,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b23ced0520b004ef0180",
+          "id": "cta:485488519beb54d6a7db",
           "column": 19,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 694,
+          "line": 695,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28462,10 +28462,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:5e5051bbe40875f2d72b",
+          "id": "cta:2b3dfe205dda8d27e03d",
           "column": 15,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 704,
+          "line": 705,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28474,10 +28474,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:41f50fc633985efe598b",
+          "id": "cta:e63fc8d43da79f0c4b4a",
           "column": 15,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 733,
+          "line": 734,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28486,10 +28486,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c13565ad2e11803e64dc",
+          "id": "cta:f08d93396edc4a5c428a",
           "column": 21,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 762,
+          "line": 763,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28498,10 +28498,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f6566df7cab91b60f519",
+          "id": "cta:d6fd1c098a058b046166",
           "column": 21,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 788,
+          "line": 789,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28510,10 +28510,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:7a6f130365da1e5f0b1a",
+          "id": "cta:a354bba6234444e7a8bb",
           "column": 21,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 837,
+          "line": 838,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28522,10 +28522,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:5287396b1be9f5658808",
+          "id": "cta:6cb0cf1d3a40ab9aab48",
           "column": 17,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 858,
+          "line": 859,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28534,10 +28534,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:557eafb173a6294052a5",
+          "id": "cta:cd35c83a0cd9d377662b",
           "column": 17,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 881,
+          "line": 882,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28546,10 +28546,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fddd552f65cc41714767",
+          "id": "cta:8066bb9e31c8a645c53e",
           "column": 21,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 925,
+          "line": 926,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28558,10 +28558,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:1638d5c09709a587210c",
+          "id": "cta:0b3d277e0906ff8021fa",
           "column": 19,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 1155,
+          "line": 1156,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28570,10 +28570,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:4d4bf1327f017b132025",
+          "id": "cta:94564d6888ed9e47559f",
           "column": 17,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 1171,
+          "line": 1172,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -31474,10 +31474,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0118589309d244eb0eb9",
+          "id": "cta:28c8464e547cb987318f",
           "column": 25,
           "file": "components/features/teams/MemberAvailabilityDialog.tsx",
-          "line": 439,
+          "line": 442,
           "owner": "MemberAvailabilityDialog",
           "routes": [
             "/crm/management"
@@ -31486,10 +31486,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:a5715748428eeeb36f29",
+          "id": "cta:7e05c903bd604c21530f",
           "column": 13,
           "file": "components/features/teams/MemberAvailabilityDialog.tsx",
-          "line": 458,
+          "line": 461,
           "owner": "MemberAvailabilityDialog",
           "routes": [
             "/crm/management"
@@ -31498,10 +31498,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:9aed6443029f15c86802",
+          "id": "cta:5dcc486e4eb71a01aff2",
           "column": 15,
           "file": "components/features/teams/MemberAvailabilityDialog.tsx",
-          "line": 466,
+          "line": 469,
           "owner": "MemberAvailabilityDialog",
           "routes": [
             "/crm/management"
@@ -31706,10 +31706,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:a7ccaef14608ae157c11",
+          "id": "cta:f77d5e7c292ef57b4d67",
           "column": 25,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 1452,
+          "line": 1454,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -31719,10 +31719,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:dcb5d8d6e540a114ea3b",
+          "id": "cta:e5ee0dcb05cbdbe65ae4",
           "column": 19,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 1487,
+          "line": 1489,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -31732,10 +31732,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:044edd52442d3907ef7c",
+          "id": "cta:4b19a1d5155530661269",
           "column": 9,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 1639,
+          "line": 1641,
           "owner": "EditorMessage",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -47530,7 +47530,7 @@
         }
       ]
     },
-    "digestSha256": "293207cbb9942c6303923cc66405bf0b66690b5e2e79e1715bc7aa2033d6a4a2"
+    "digestSha256": "2e576040ac93f7757fe88a7b34df426b619111647a04f4b361f31a33cbf68886"
   },
   "routes": [
     {

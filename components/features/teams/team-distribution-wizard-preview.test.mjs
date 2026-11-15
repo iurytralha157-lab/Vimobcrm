@@ -94,16 +94,27 @@ test("queue preview keeps direct participants and team rosters distinct with the
   assert.ok(!html.includes("Resposta no WhatsApp"));
 });
 
-test("queue schedule preserves legacy opt-in and the preview states closed collection without inventing hours", () => {
-  const legacy = renderToStaticMarkup(React.createElement(DistributionQueueScheduleSection, { isLegacy: true, onChange() {}, onPoolNotificationsChange() {} }));
-  assert.ok(legacy.includes('Definir horário da fila'));
-  assert.ok(legacy.includes('funcionamento anterior'));
+test("queue schedule remains optional and the preview states closed collection without inventing hours", () => {
+  const optional = renderToStaticMarkup(React.createElement(DistributionQueueScheduleSection, { available: true, onChange() {}, onPoolNotificationsChange() {} }));
+  assert.ok(optional.includes('Definir horário da fila'));
+  assert.ok(optional.includes('funcionamento padrão'));
+  assert.ok(optional.includes('escala é opcional'));
+  assert.ok(!optional.includes('id="queue-operating-timezone"'));
+  assert.ok(!optional.includes('id="queue-day-'));
   const formData = createEmptyDistributionQueueFormData();
   formData.settings.operating_schedule.timezone = 'America/Sao_Paulo';
   formData.settings.operating_schedule.days[1] = { day_of_week: 1, is_active: true, is_all_day: false, start_time: '22:00', end_time: '06:00' };
   const html = renderToStaticMarkup(React.createElement(DistributionQueueCreationPreview, { formData, criteria: [], tagNames: [] }));
   for (const label of ['America/Sao_Paulo', '22:00', '06:00', 'do dia seguinte', 'bolsão da fila']) assert.ok(html.includes(label), label);
   assert.ok(!html.includes('08:00'));
+});
+
+test("unavailable queue schedule renders its state without schedule management controls", () => {
+  const unavailable = renderToStaticMarkup(React.createElement(DistributionQueueScheduleSection, { available: false, onChange() {}, onPoolNotificationsChange() {} }));
+  assert.ok(unavailable.includes('escala semanal ainda não está disponível'));
+  assert.ok(unavailable.includes('salvar uma fila sem escala semanal'));
+  assert.ok(!unavailable.includes('Definir horário da fila'));
+  assert.ok(!/<(?:button|input|select)\b|role="switch"/.test(unavailable));
 });
 
 test("WhatsApp reply preview requires its campaign condition and enabled setting", () => {

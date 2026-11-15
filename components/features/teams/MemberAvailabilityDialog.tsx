@@ -299,6 +299,7 @@ export function MemberAvailabilityDialog({
                 </div>
                 <Switch
                   checked={globalAllDay}
+                  aria-label="Marcar todos os dias como 24h"
                   onCheckedChange={toggleGlobalAllDay}
                   disabled={readOnly || bulkUpdate.isPending}
                 />
@@ -329,6 +330,7 @@ export function MemberAvailabilityDialog({
                     >
                       <Switch
                         checked={schedule.is_active}
+                        aria-label={`Ativar ${getDayName(schedule.day_of_week)}`}
                         onCheckedChange={() => toggleDay(schedule.day_of_week)}
                         className="shrink-0"
                         disabled={readOnly || bulkUpdate.isPending}
@@ -345,6 +347,7 @@ export function MemberAvailabilityDialog({
                           <div className="flex items-center gap-1">
                             <Switch
                               id={`all-day-${schedule.day_of_week}`}
+                              aria-label={`Atender 24h em ${getDayName(schedule.day_of_week)}`}
                               checked={schedule.is_all_day}
                               onCheckedChange={(checked) =>
                                 toggleDayAllDay(schedule.day_of_week, checked)

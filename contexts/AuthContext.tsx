@@ -577,6 +577,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let isMounted = true;
     let apiTokenAuthEventGeneration = 0;
+    let initialSessionPending = true;
+    let initialSessionSuperseded = false;
     let membershipRefreshInFlight = false;
     let lastMembershipRefreshAt = 0;
     authDebug('AuthProvider mounted');
@@ -711,10 +713,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     authDebug('getSession started');
     const initialAPITokenGeneration = apiTokenAuthEventGeneration;
     supabase.auth.getSession().then(async ({ data: { session }, error }) => {
-      if (!isMounted) return;
+      if (!isMounted || initialSessionSuperseded) return;
+      if (sessionRef.current) {
+        if (getGlobalSignOutSessionKey(sessionRef.current) !== getGlobalSignOutSessionKey(session)) return;
+        session = sessionRef.current;
+      }
       authDebug('getSession finished, session:', !!session, 'error:', error?.message);
 
       if (error || !session) {
+        initialSessionPending = false;
         clearAllStates();
         setLoading(false);
         setAuthInitialized(true);
@@ -724,6 +731,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (isolatePasswordRecoverySession(session)) {
+        initialSessionPending = false;
         authDebug('[AuthContext] recovery session isolated from application auth');
         return;
       }
@@ -741,6 +749,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         // Sequencial to ensure organizations are loaded before setting initialized
         const profileLoaded = await fetchProfileRef.current(session.user.id);
+        if (initialSessionSuperseded) return;
         if (profileLoaded && userRef.current?.id === session.user.id) {
           await checkMultiOrgRef.current(session.user.id);
         } else if (userRef.current?.id === session.user.id) {
@@ -749,7 +758,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (err) {
         console.error('[AuthContext] Error during initial auth data fetch:', err);
       } finally {
-        if (isMounted) {
+        initialSessionPending = false;
+        if (isMounted && !initialSessionSuperseded) {
           setLoading(false);
           setAuthInitialized(true);
           authDebug('[AuthContext] Auth initialization complete naturally');
@@ -762,6 +772,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!isMounted) return;
 
         const authEvent = event as string;
+        const sessionChanged = getGlobalSignOutSessionKey(sessionRef.current) !== getGlobalSignOutSessionKey(session);
         authDebug('Auth event:', authEvent, 'Session:', !!session);
 
         // CRITICAL: Never use async/await with Supabase calls inside this callback.
@@ -769,6 +780,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // synchronously here, and defer any Supabase calls via setTimeout(..., 0).
         apiTokenAuthEventGeneration += 1;
         if (session && isolatePasswordRecoverySession(session)) {
+          initialSessionPending = false;
+          initialSessionSuperseded = true;
           authDebug('[AuthContext] recovery auth event isolated:', authEvent);
           return;
         }
@@ -776,6 +789,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           session?.access_token ?? null,
           session?.user.id ?? null,
         );
+
+        // INITIAL_SESSION and same-session renewal still need the pending bootstrap.
+        if (initialSessionPending && authEvent !== 'INITIAL_SESSION'
+          && (authEvent !== 'TOKEN_REFRESHED' || !session || sessionChanged)) {
+          initialSessionPending = false;
+          initialSessionSuperseded = true;
+          fetchProfileRequestRef.current += 1;
+          organizationListRequestRef.current += 1;
+        }
 
         // Initial profile loading is handled by the getSession() block above. The
         // API token still needs to be synchronized for this auth generation.
@@ -821,7 +843,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         }
 
-        if (authEvent === 'SIGNED_IN' || authEvent === 'USER_UPDATED') {
+        if (authEvent === 'SIGNED_IN' || authEvent === 'USER_UPDATED'
+          || (authEvent === 'TOKEN_REFRESHED' && session && sessionChanged)) {
           if (session) {
             const forceSelectorForMultiOrg = shouldForceOrganizationSelectionForAuthEvent({
               authEvent,
@@ -829,6 +852,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             });
             const isSameInitializedUser =
               authStateRef.current.authInitialized &&
+              !sessionChanged &&
               userRef.current?.id === session.user.id;
 
             if (isSameInitializedUser) {
@@ -846,24 +870,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setLoading(true);
             setOrganizationsLoaded(false);
             setIsInitializingOrg(true);
+            if (sessionChanged) {
+              fetchProfileRequestRef.current += 1;
+              organizationListRequestRef.current += 1;
+              validatedAccessUserRef.current = null;
+              markAccessValidationStale(false);
+              profileRef.current = null;
+              organizationRef.current = null;
+              setProfile(null);
+              setOrganization(null);
+              setTenantContext(null);
+              setIsSuperAdmin(false);
+              setUserOrganizations([]);
+            }
             setSession(session);
             setUser(session.user);
             userRef.current = session.user;
+            const sessionGeneration = logoutLifecycleRef.current.generation;
 
             // Defer Supabase calls to avoid deadlock with the auth listener
             setTimeout(() => {
-              if (!isMounted) return;
+              if (!isMounted || sessionGeneration !== logoutLifecycleRef.current.generation) return;
               void initializeSignedInUserContext(
                 () => fetchProfileRef.current(session.user.id),
-                () => checkMultiOrgRef.current(session.user.id, {
-                  forceSelectorForMultiOrg,
-                }),
+                async () => {
+                  if (!isMounted || sessionGeneration !== logoutLifecycleRef.current.generation) return;
+                  await checkMultiOrgRef.current(session.user.id, { forceSelectorForMultiOrg });
+                },
               )
                 .catch((error) => {
                   console.error('[AuthContext] Error loading signed-in user context:', error);
                 })
                 .finally(() => {
-                  if (!isMounted) return;
+                  if (!isMounted || sessionGeneration !== logoutLifecycleRef.current.generation) return;
                   setIsInitializingOrg(false);
                   setLoading(false);
                   setAuthInitialized(true);
@@ -884,8 +923,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             userRef.current = session.user;
             // Run outside the Auth callback to avoid holding the Supabase auth lock.
             setTimeout(() => revalidateCurrentMembership(), 0);
+            return;
           }
-          return;
         }
 
         if (!session) {

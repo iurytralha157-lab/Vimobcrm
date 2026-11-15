@@ -35,6 +35,7 @@ function harness(api) {
     "@/contexts/AuthContext": { useAuth: () => ({ activeOrganization: { organizationId: org } }) },
     "@/lib/pipeline-reliability": { shouldRetryPipelineQuery: () => false },
     "@/lib/auth/global-sign-out": { getGlobalSignOutSessionId },
+    "@/lib/access/query-client-access": { captureQueryClientAccess: () => () => true },
     "@/lib/teams/team-editor-snapshot": snapshotHelpers,
     "@/lib/api/management-request": { captureManagementRequestIntent: capture, assertManagementRequestIntent(intent) {
       if (intent.expectedUserId !== actor.user || intent.expectedSessionId !== actor.session) throw new Error("identity changed");

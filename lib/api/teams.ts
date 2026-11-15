@@ -263,8 +263,9 @@ export const teamsAPI = {
     return response.data;
   },
 
-  async deleteTeam(id: string, organizationId?: string | null) {
+  async deleteTeam(id: string, organizationId?: string | null, intent: VimobAPIRequestIntent = {}) {
     await managementAPIRequest<null>(`/v1/teams/${id}`, {
+      ...intent,
       method: "DELETE",
       organizationId,
     });
@@ -273,10 +274,12 @@ export const teamsAPI = {
   async updateTeamStatus(
     input: { id: string; is_active: boolean },
     organizationId?: string | null,
+    intent: VimobAPIRequestIntent = {},
   ) {
     const response = await managementAPIRequest<Envelope<Team>>(
       `/v1/teams/${input.id}/status`,
       {
+        ...intent,
         method: "PATCH",
         organizationId,
         body: { is_active: input.is_active },

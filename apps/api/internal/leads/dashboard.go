@@ -780,6 +780,10 @@ func (repo Repository) dashboardDealsEvolutionAggregate(ctx context.Context, que
 		args = append(args, intervals[index+1])
 		caseParts = append(caseParts, fmt.Sprintf("when event_at < $%d::timestamptz then %d", len(args), index))
 	}
+	// PostgreSQL requires a WHEN even when every row belongs to the only bucket.
+	if len(intervals) == 1 {
+		caseParts = append(caseParts, "when true then 0")
+	}
 	caseParts = append(caseParts, fmt.Sprintf("else %d", len(intervals)-1))
 
 	rows, err := queryer.Query(ctx, `

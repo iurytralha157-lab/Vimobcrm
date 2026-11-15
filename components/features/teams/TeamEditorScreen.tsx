@@ -1373,6 +1373,7 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
                       <div className="flex items-center gap-2">
                         <Switch
                           checked={day.is_active}
+                          aria-label={`Ativar ${DAYS_OF_WEEK[day.day_of_week]}`}
                           onCheckedChange={(checked) =>
                             updateSchedule(
                               activeScheduleUser.id,
@@ -1392,6 +1393,7 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
                           <label className="flex shrink-0 items-center gap-1.5 text-[10px] text-[var(--app-text-tertiary)]">
                             <Switch
                               checked={day.is_all_day}
+                              aria-label={`Atender 24h em ${DAYS_OF_WEEK[day.day_of_week]}`}
                               onCheckedChange={(checked) =>
                                 updateSchedule(
                                   activeScheduleUser.id,

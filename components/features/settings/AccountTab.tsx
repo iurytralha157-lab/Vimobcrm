@@ -556,6 +556,7 @@ export function AccountTab() {
                   variant="secondary"
                   className="absolute -bottom-1 -right-1 h-7 w-7 rounded-full"
                   onClick={() => document.getElementById("avatar-upload")?.click()}
+                  aria-label="Alterar foto do perfil"
                   disabled={uploadingAvatar}
                 >
                   {uploadingAvatar ? <Loader2 className="h-3 w-3 animate-spin" /> : <Camera className="h-3 w-3" />}
