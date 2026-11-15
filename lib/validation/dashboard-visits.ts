@@ -9,6 +9,7 @@ export const dashboardVisitSchema = z.object({
   title: text(500),
   event_type: z.enum(['visit', 'meeting']),
   status: text(80),
+  outcome: text(80).nullable().optional(),
   created_at: z.string().nullable(),
   start_time: z.string().min(1),
   end_time: z.string().min(1),

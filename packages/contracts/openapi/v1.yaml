@@ -21985,6 +21985,10 @@ components:
           enum: [visit, meeting]
         status:
           type: string
+        outcome:
+          type: [string, "null"]
+          maxLength: 80
+          description: Additive. Schedule outcome; rescheduled distinguishes a replaced event from a cancellation. Absent on older API releases.
         created_at:
           type: [string, "null"]
           format: date-time

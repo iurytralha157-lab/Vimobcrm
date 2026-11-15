@@ -1,6 +1,7 @@
 package leads
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -9,6 +10,28 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
+
+func TestDashboardVisitOutcomeSurvivesResponseSerialization(t *testing.T) {
+	for _, outcome := range []string{`"rescheduled"`, `"cancelled"`, `null`} {
+		t.Run(outcome, func(t *testing.T) {
+			var visit DashboardVisit
+			if err := json.Unmarshal([]byte(`{"status":"cancelled","outcome":`+outcome+`}`), &visit); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(visit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if string(fields["outcome"]) != outcome || string(fields["status"]) != `"cancelled"` {
+				t.Fatalf("status/outcome lost in response: %s", raw)
+			}
+		})
+	}
+}
 
 func TestDashboardVisitsShareScopedKPIWhere(t *testing.T) {
 	from := time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)

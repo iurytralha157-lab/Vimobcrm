@@ -79,6 +79,13 @@ func TestDashboardVisitPrivacyAndRawSourcesReadOnlyIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// CTE leads have no queue pool. Stub only that external helper's
+			// non-pooled NULL result; preserve the complete visibility fallback.
+			const poolLookup = "private.queue_pool_read_access(l.organization_id, l.id, $3::uuid)"
+			if strings.Count(query, poolLookup) != 1 {
+				t.Fatal("expected one explicit non-pooled fixture boundary")
+			}
+			query = strings.Replace(query, poolLookup, "null::boolean", 1)
 			query = strings.NewReplacer(
 				"public.organization_attention_settings", "fixture_settings",
 				"public.schedule_event_assignees", "fixture_assignees",
@@ -144,6 +151,20 @@ func TestDashboardVisitPrivacyAndRawSourcesReadOnlyIntegration(t *testing.T) {
 			if len(counts) != 3 || counts[alpha] != 2 || counts[beta] != 1 || counts[longUnicode] != 1 {
 				t.Fatal("raw source identities or complete counts were changed")
 			}
+			outcomes := map[string]int{}
+			for _, visit := range report.Visits {
+				outcome := "legacy_null"
+				if visit.Outcome != nil {
+					outcome = *visit.Outcome
+				}
+				outcomes[outcome]++
+				if (outcome == "rescheduled" || outcome == "cancelled") && visit.Status != "cancelled" {
+					t.Fatal("closed history status changed")
+				}
+			}
+			if outcomes["rescheduled"] != 1 || outcomes["cancelled"] != 1 || outcomes["legacy_null"] != 2 || report.Upcoming != 2 || report.Overdue != 0 {
+				t.Fatalf("outcome or historical counts changed: outcomes=%v total=%d upcoming=%d overdue=%d", outcomes, report.Total, report.Upcoming, report.Overdue)
+			}
 		})
 	}
 }
@@ -169,7 +190,9 @@ fixture_leads(id,organization_id,assigned_user_id,team_id,name,source,created_at
 fixture_events as (
   select md5(l.id::text||n)::uuid as id,l.organization_id,l.id as lead_id,c.owner_id as user_id,
     'a2222222-2222-4222-8222-222222222222'::uuid as created_by,'Visita QA'::text as title,'visit'::text as event_type,
-    c.visibility,'scheduled'::text as status,statement_timestamp() as created_at,
+    c.visibility,case when n=2 or l.id='a6666666-6666-4666-8666-666666666666'::uuid then 'cancelled' else 'scheduled' end::text as status,
+    case when n=2 then 'rescheduled' when l.id='a6666666-6666-4666-8666-666666666666'::uuid then 'cancelled' else null end::text as outcome,
+    statement_timestamp() as created_at,
     statement_timestamp()+interval '1 day' as start_time,statement_timestamp()+interval '1 day 1 hour' as end_time,false as is_all_day
   from fixture_leads l cross join fixture_case c cross join generate_series(1,2) n
   where n=1 or l.id='a5555555-5555-4555-8555-555555555555'::uuid),

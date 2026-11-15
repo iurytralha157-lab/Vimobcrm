@@ -211,6 +211,14 @@ jobs:
           PIPELINE_ARCHIVE_TEST_DATABASE_URL: postgresql://postgres:membership_test@127.0.0.1:5432/postgres?sslmode=disable
         run: go test -count=1 -v ./apps/api/internal/leads -run '^TestDashboardEvolutionSingleBucketPostgres$'
 
+      - name: Test visit outcomes and privacy with read-only PostgreSQL CTEs
+        env:
+          VIMOB_RUN_DASHBOARD_VISIT_SQL_TESTS: LOCAL_READ_TEST
+          DASHBOARD_VISIT_TEST_URL: postgresql://postgres:membership_test@127.0.0.1:5432/postgres?sslmode=disable
+        run: >-
+          go test -count=1 -v ./apps/api/internal/leads
+          -run '^TestDashboardVisitPrivacyAndRawSourcesReadOnlyIntegration$'
+
   whatsapp-contracts:
     name: WhatsApp disposable PostgreSQL and mobile contracts
     runs-on: ubuntu-24.04
@@ -245,6 +253,13 @@ jobs:
 
       - name: Test team commands, wizard previews and schedule accessibility
         run: npm run test:form-wizards
+
+      - name: Test visit outcome labels and backwards-compatible response contracts
+        run: >-
+          node --experimental-strip-types --import ./scripts/tests/typescript-alias-hooks.mjs --test
+          components/features/dashboard/dashboard-dialogs.runtime.test.mjs
+          lib/validation/dashboard-visits.test.mts
+          lib/schedule-outcome.test.ts
 
       - name: Download locked Go dependencies before the closed test phase
         run: |

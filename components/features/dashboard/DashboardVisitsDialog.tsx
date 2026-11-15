@@ -16,6 +16,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useDashboardVisits } from '@/hooks/use-dashboard-visits'
 import { getDashboardSourceLabel } from '@/lib/analytics/dashboard-source-label'
+import { getScheduleOutcomeLabel } from '@/lib/schedule-outcome'
 import { useOrganizationModules } from '@/hooks/use-organization-modules'
 import { useUserPermissions } from '@/hooks/use-user-permissions'
 import type { DashboardAPIFilters } from '@/lib/api/dashboard'
@@ -53,7 +54,8 @@ function initials(name: string) {
   return `${parts[0]?.[0] ?? '?'}${parts.length > 1 ? parts.at(-1)?.[0] ?? '' : ''}`
 }
 
-function statusLabel(status: string) {
+function statusLabel(status: string, outcome?: string | null) {
+  if (outcome === 'rescheduled') return getScheduleOutcomeLabel(outcome)
   switch (status) {
     case 'scheduled': return 'Agendada'
     case 'completed': return 'Concluída'
@@ -110,7 +112,7 @@ function VisitRow({ visit, timezone, canOpenAgenda, canOpenLead, onNavigate }: {
       <div className="min-w-0 text-[11px] leading-4 text-[var(--app-text-secondary)]">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className={`shrink-0 rounded-[5px] px-1.5 py-0.5 text-[10px] ${visit.is_overdue ? 'bg-destructive/10 text-destructive' : 'bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]'}`}>
-            {visit.is_overdue ? 'Atrasada' : statusLabel(visit.status)}
+            {visit.is_overdue ? 'Atrasada' : statusLabel(visit.status, visit.outcome)}
           </span>
           <span className="min-w-0 truncate font-normal text-[var(--app-text-primary)]" title={startLabel}>{startLabel}</span>
         </div>

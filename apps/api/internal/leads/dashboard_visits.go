@@ -78,6 +78,7 @@ type DashboardVisit struct {
 	Title           string  `json:"title"`
 	EventType       string  `json:"event_type"`
 	Status          string  `json:"status"`
+	Outcome         *string `json:"outcome"`
 	CreatedAt       *string `json:"created_at"`
 	StartTime       string  `json:"start_time"`
 	EndTime         string  `json:"end_time"`
@@ -168,6 +169,7 @@ func (repo Repository) buildDashboardVisitsQuery(tenantContext tenant.Context, f
 				left(coalesce(nullif(btrim(se.title), ''), 'Visita'), 500) as title,
 				se.event_type,
 				coalesce(se.status, 'scheduled') as status,
+				se.outcome as outcome,
 				se.created_at,
 				se.start_time,
 				se.end_time,

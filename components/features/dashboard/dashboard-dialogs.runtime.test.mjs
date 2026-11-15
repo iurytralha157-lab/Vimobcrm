@@ -27,6 +27,8 @@ fixture = fixture.slice(0, firstCase)
   .replace("accessSignature:'synthetic-access'", "accessSignature:window.h.accessSignature??'synthetic-access'")
   .replace('useDashboardLeadEntries=()=>({...result({pages:[]}),hasNextPage:false})', 'useDashboardLeadEntries=()=>({...result(window.h.entries??{pages:[]}),hasNextPage:false})')
   .replace('useDashboardVisits=()=>result(undefined)', 'useDashboardVisits=()=>result(window.h.visits)')
+  .replace('import Dashboard from ', "import{dashboardVisitsSchema}from'@/lib/validation/dashboard-visits';import Dashboard from ")
+  .replace('h.render=()=>root.render(', 'h.setVisits=visits=>{h.visits=dashboardVisitsSchema.parse(visits);h.render();};h.render=()=>root.render(')
   .replace('const h=window.h={source:null,metrics:[]', 'const h=window.h={source:null,routes:[],metrics:[]')
   .replace("join(repository, 'components/features/dashboard/DashboardScreen.tsx')", "(process.env.DASHBOARD_DIALOGS_TEST_SCREEN_SOURCE || join(repository, 'components/features/dashboard/DashboardScreen.tsx'))");
 fixture += `
@@ -47,6 +49,51 @@ const { pageAt } = await import(pathToFileURL(join(wrapper, 'fixture.mjs')).href
 after(async () => {
   assert.equal(dirname(resolve(wrapper)), resolve(tmpdir())); assert.match(basename(wrapper), /^vimob-dashboard-dialog-tests-/);
   await rm(wrapper, { recursive: true, force: true });
+});
+
+const visitBase = {
+  event_type: 'visit', title: 'Visita sintética', status: 'cancelled',
+  start_time: '2026-11-16T22:45:00Z', end_time: '2026-11-16T23:45:00Z', created_at: '2026-11-15T22:41:00Z',
+  lead_id: '11111111-1111-4111-8111-111111111111', lead_name: 'Lead QA', source: 'Origem QA',
+  created_by_id: null, created_by_name: 'Autor QA', created_by_avatar: null,
+  owner_id: '22222222-2222-4222-8222-222222222222', owner_name: 'Responsável QA', owner_avatar: null,
+  is_upcoming: false, is_overdue: false,
+};
+async function loadVisits(page, rows) {
+  const visits = rows.map((row, i) => ({ ...visitBase, id: `33333333-3333-4333-8333-${String(i + 1).padStart(12, '0')}`, ...row }));
+  await page.evaluate(visits => {
+    window.h.setVisits({ total: visits.length, upcoming: 0, overdue: 0, reportTimezone: 'America/Sao_Paulo',
+      visits, visitsTruncated: false, upcomingVisits: [], overdueVisits: [], creators: [], sources: [] });
+  }, visits);
+  await page.locator('[data-tour="dashboard-kpi-visits"]').click();
+  const dialog = page.getByRole('dialog', { name: 'Visitas e reuniões' }); await dialog.waitFor();
+  return dialog;
+}
+for (const width of [390, 1280]) test(`visit outcome distinguishes rescheduled history from cancellation at ${width}px`, async () => {
+  const { page, errors, requests } = await pageAt(width);
+  try {
+    const dialog = await loadVisits(page, [{ title: 'Original QA', outcome: 'rescheduled' }, { title: 'Substituto QA', outcome: 'cancelled' }]);
+    const rows = dialog.locator('.dashboard-dialog-list-row');
+    await rows.filter({ hasText: 'Original QA' }).waitFor();
+    await dialog.screenshot({ path: join(artifacts, `visit-outcome-${width}.png`) });
+    assert.equal(await rows.filter({ hasText: 'Original QA' }).getByText('Remarcado', { exact: true }).count(), 1);
+    assert.equal(await rows.filter({ hasText: 'Substituto QA' }).getByText('Cancelada', { exact: true }).count(), 1);
+    assert.equal(await dialog.getByText('2 registros', { exact: true }).count(), 1, 'historical booked count is unchanged');
+    assert.equal(await dialog.getByRole('link', { name: 'Abrir compromisso de Lead QA na Agenda' }).count(), 2);
+    assert.deepEqual(errors, []); assert.deepEqual(requests, []);
+  } finally { await page.close(); }
+});
+test('visit status fallback accepts old API omission, null outcomes, aliases and unknown legacy outcomes', async () => {
+  const { page, errors, requests } = await pageAt(1280);
+  try {
+    const dialog = await loadVisits(page, [{ title: 'Campo omitido' }, { title: 'Campo nulo', outcome: null },
+      { title: 'Alias legado', status: 'canceled' }, { title: 'Resultado legado', outcome: 'historical_result' },
+      { title: 'Realizada QA', status: 'completed', outcome: 'visit_completed' }, { title: 'Futura QA', status: 'scheduled' }]);
+    assert.equal(await dialog.getByText('Cancelada', { exact: true }).count(), 4);
+    assert.equal(await dialog.getByText('Concluída', { exact: true }).count(), 1);
+    assert.equal(await dialog.getByText('Agendada', { exact: true }).count(), 1);
+    assert.deepEqual(errors, []); assert.deepEqual(requests, []);
+  } finally { await page.close(); }
 });
 
 for (const width of [390, 1280]) test(`Space opens all five KPI dialogs and preserves focus at ${width}px`, async () => {
