@@ -155,7 +155,9 @@ nos retries. Registros já capturados ou suprimidos conservam sua decisão.
    execução. Reserve `stop_grace_period: 140s` na API e na bridge que também
    consumir filas. A primeira versão a ser retirada pode ainda cancelar jobs
    ao receber `SIGTERM`. Confirme o fim dos claims dessa réplica e seus jobs em
-   voo antes de desligá-la, enquanto outra segue processando. Quando essa
+   voo antes de desligá-la, enquanto outra segue processando. Os leases dos
+   workers que drenam mantêm os prefixos existentes e acrescentam `graceful-`
+   antes do identificador aleatório do processo. Quando essa
    transição não puder ser observada, mantenha a captura corrigida desativada
    e valide o procedimento de troca antes de prosseguir. Remova a versão antiga
    dos consumidores antes de habilitar a captura corrigida. Confirme imagens por réplica, ausência de execução antiga

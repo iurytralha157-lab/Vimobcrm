@@ -16,7 +16,8 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
-var whatsappOutboxWorkerID = "vimob-api-whatsapp-outbox-" + randomHex(8)
+// The lease identifies workers that can finish claimed jobs during shutdown.
+var whatsappOutboxWorkerID = "vimob-api-whatsapp-outbox-graceful-" + randomHex(8)
 var whatsappOutboxFastWorkerWake = make(chan struct{}, maxWhatsAppOutboxWorkerConcurrency)
 var whatsappOutboxMediaWorkerWake = make(chan struct{}, 1)
 var whatsappOutboxFastWorkerCount atomic.Int64

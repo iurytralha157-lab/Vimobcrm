@@ -18,7 +18,8 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/supabasehttp"
 )
 
-var whatsappWebhookWorkerID = "vimob-api-evolution-webhook-epoch1-" + randomHex(8)
+// Retain the epoch prefix checked by the database and distinguish drainable workers.
+var whatsappWebhookWorkerID = "vimob-api-evolution-webhook-epoch1-graceful-" + randomHex(8)
 var errEvolutionEdgeExecutionStillActive = errors.New("Edge webhook execution remains active after HTTP failure")
 var whatsappWebhookLiveWorkerWake = newEvolutionWebhookWorkerSignal()
 var whatsappWebhookBacklogWorkerWake = newEvolutionWebhookWorkerSignal()
