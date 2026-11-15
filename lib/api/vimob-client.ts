@@ -145,7 +145,10 @@ export async function vimobAPIRequest<T>(path: string, options: RequestOptions =
   }
 
   throwIfAborted(options.signal)
-  assertExpectedRequestIdentity(options)
+  // A denied renewal clears identity; preserve its 401 so consumers retire scoped access.
+  if (result.response.status !== 401 || activeAccessTokenIdentity !== null) {
+    assertExpectedRequestIdentity(options)
+  }
 
   if (!result.response.ok) {
     const envelope = result.payload as APIErrorEnvelope | null

@@ -1,6 +1,7 @@
 # Retestes por perfil — registro técnico parcial de 15/11/2026
 
-Este registro descreve seis correções locais sobre a base `fbd08e89`.
+Este registro descreve seis correções sobre a base `fbd08e89`, publicadas na
+main em `30d47ce4`, e a correção adicional identificada pelo gate dessa publicação.
 Não encerra a auditoria: a UI de produção ainda executava essa base durante as
 observações, e o reteste visual das correções permanece pendente de publicação.
 A matriz Taskmaster de **668 casos por perfil** e as evidências saneadas ficam
@@ -92,6 +93,35 @@ Não se deve converter teste local aprovado em caso visual de produção aprovad
 - **Verificação:** causa confirmada no DOM e no caller; lint focado aprovado.
   Não foi criado harness que apenas espelhasse esse atributo trivial. O nome
   acessível corrigido ainda precisa de reteste visual após publicação.
+
+### 7. R2-API-TERMINAL401-REGRESSION — renovação recusada mascarada como mudança de identidade
+
+- **Reprodução:** a CI de `30d47ce4` (run `43768446406`) bloqueou os builds no
+  caso original `401 without a refreshed session retires history without
+  signing out another scope`. O mesmo harness local passou 17 de 18 casos;
+  o histórico sintético permaneceu após a renovação sem sessão. Não foi falha
+  de infraestrutura e o teste original não foi alterado.
+- **Causa:** a renovação recusada limpa a identidade ativa. O novo fence final
+  do transporte transformava o `401` original em `409 api_request_identity_changed`;
+  os consumidores de histórico tratam a revogação terminal e o erro transitório
+  de forma diferente. Essa dependência do transporte global exigiu executar o
+  harness de WhatsApp, sem abrir Conversas ou enviar mensagem real.
+- **Mudança mínima:** preservar o `401` somente quando a identidade ativa ficou
+  nula. Com usuário ou SID substituto, o fence continua retornando `409`; respostas
+  antigas bem-sucedidas também continuam cercadas. Validação antes de envio e
+  replay não mudou. Nenhum logout global ou outro consumidor foi acrescentado.
+- **RED/GREEN:** seis casos novos no transporte reproduzem renovação sem sessão,
+  com erro e com exceção; troca para outro usuário ou SID em microtask após a
+  limpeza; e `401` genuíno após renovar a mesma SID. Antes do patch, três falharam
+  com o `409` incorreto. Depois, transporte **43/43** e harness original **18/18**,
+  sem pulos. Os casos de troca mantêm a identidade substituta e não fazem replay.
+- **Tarefa e reteste:** implementação, revisão independente e regressão local
+  concluídas. Na retomada, `validation:auth-admin` passou com 266/266 na etapa
+  Auth; typecheck e lint terminaram com exit0 (zero erros/oito avisos legados);
+  inventários regenerados e `audit:check` passaram com quatro contratos. A CI
+  completa ainda deve aprovar o commit complementar antes de publicar imagens.
+  Reteste visual depende do novo release. A tentativa CI anterior
+  permanece registrada como falha, sem liberar build ou enfraquecer o gate.
 
 ## Comandos e resultados registrados
 
