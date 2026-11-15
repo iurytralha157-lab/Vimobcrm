@@ -128,10 +128,12 @@ export function CommercialCosts({ property }: { property: WorkspaceProperty }) {
 
 /** Internal fields reach the page only for roles the API allows; absent keys stay hidden. */
 export function CommercialConditions({ property }: { property: WorkspaceProperty }) {
+  const commission = (value: number | null | undefined) => value == null ? null
+    : property.tipo_comissao === "valor_fixo" ? formatPropertyMoney(value) : `${value}%`;
   const fields = filledFields([
     { label: "Comissão", value: property.commission_percentage != null ? `${property.commission_percentage}%` : null },
-    { label: "Comissão de venda", value: money(property.comissao_venda) },
-    { label: "Comissão de locação", value: money(property.comissao_locacao) },
+    { label: "Comissão de venda", value: commission(property.comissao_venda) },
+    { label: "Comissão de locação", value: commission(property.comissao_locacao) },
     { label: "Tipo de comissão", value: property.tipo_comissao },
     { label: "Início da comissão", value: property.data_inicio_comissao ? formatPropertyDate(property.data_inicio_comissao) : null },
     { label: "Condição comercial", value: property.condicao_comercial },
