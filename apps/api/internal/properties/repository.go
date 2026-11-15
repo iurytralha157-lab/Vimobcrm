@@ -36,6 +36,8 @@ type propertySnapshot struct {
 	Title                string
 	Code                 string
 	Status               string
+	Price                *float64
+	RentalPrice          *float64
 	PublishedOnSite      bool
 	OwnerID              string
 	OwnerName            string
@@ -1373,6 +1375,8 @@ func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, orga
 			title,
 			code,
 			coalesce(status, 'active'),
+			preco,
+			valor_locacao,
 			coalesce(published_on_site, false),
 			coalesce(owner_id::text, ''),
 			coalesce(owner_name, ''),
@@ -1406,6 +1410,8 @@ func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, orga
 		&title,
 		&code,
 		&status,
+		&snapshot.Price,
+		&snapshot.RentalPrice,
 		&snapshot.PublishedOnSite,
 		&ownerID,
 		&ownerName,
@@ -1732,7 +1738,9 @@ func (repo Repository) insertPropertyUpdatedActivity(ctx context.Context, tx pgx
 		message = fmt.Sprintf(`Imovel "%s" editado: %s`, title, strings.Join(updatedFields, ", "))
 	}
 
-	if value, ok := input["status"].(string); ok {
+	previousStatus, _ := normalizePropertyStatus(current.Status)
+	nextStatus, _ := normalizePropertyStatus(input["status"])
+	if value, ok := input["status"].(string); ok && nextStatus != previousStatus {
 		changes["status"] = map[string]any{
 			"from": displayPropertyStatus(current.Status),
 			"to":   displayPropertyStatus(value),
@@ -1740,28 +1748,28 @@ func (repo Repository) insertPropertyUpdatedActivity(ctx context.Context, tx pgx
 		eventType = "property_status_changed"
 		message = fmt.Sprintf(`Imovel "%s" alterado para %s`, title, displayPropertyStatus(value))
 	}
-	if value, ok := input["preco"]; ok {
+	if value, ok := input["preco"]; ok && !samePropertyHistoryNumber(value, current.Price) {
 		changes["preco"] = value
 		if eventType == "property_updated" {
 			eventType = "property_price_updated"
 			message = fmt.Sprintf(`Valor de venda do imovel "%s" atualizado`, title)
 		}
 	}
-	if value, ok := input["valor_locacao"]; ok {
+	if value, ok := input["valor_locacao"]; ok && !samePropertyHistoryNumber(value, current.RentalPrice) {
 		changes["valor_locacao"] = value
 		if eventType == "property_updated" {
 			eventType = "property_price_updated"
 			message = fmt.Sprintf(`Valor de locacao do imovel "%s" atualizado`, title)
 		}
 	}
-	if value, ok := input["published_on_site"]; ok {
+	if value, ok := input["published_on_site"]; ok && value != current.PublishedOnSite {
 		changes["published_on_site"] = value
 		if eventType == "property_updated" {
 			eventType = "property_publication_changed"
 			message = fmt.Sprintf(`Publicacao do imovel "%s" atualizada`, title)
 		}
 	}
-	if value, ok := input["anunciar"]; ok {
+	if value, ok := input["anunciar"]; ok && value != current.PublishedOnSite {
 		changes["anunciar"] = value
 		if eventType == "property_updated" {
 			eventType = "property_publication_changed"
@@ -1811,6 +1819,14 @@ func (repo Repository) insertPropertyUpdatedActivity(ctx context.Context, tx pgx
 		"updated_fields":  updatedFields,
 	}))
 	return err
+}
+
+func samePropertyHistoryNumber(value any, previous *float64) bool {
+	if value == nil || previous == nil {
+		return value == nil && previous == nil
+	}
+	number, ok := numericPropertyValue(value)
+	return ok && number == *previous
 }
 
 func propertyHistoryUpdatedFields(input propertyRequest) []string {

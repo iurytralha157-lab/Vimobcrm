@@ -55,7 +55,7 @@ func TestGetSiteFallsBackWhenSearchConsoleColumnIsMissing(t *testing.T) {
 	if len(queryer.queries) != 2 {
 		t.Fatalf("getSite() executed %d queries, want canonical read plus one fallback", len(queryer.queries))
 	}
-	if !strings.Contains(queryer.queries[0], "\n\t\tgoogle_search_console_verification,") {
+	if !strings.Contains(queryer.queries[0], "\n\t\tnullif(btrim(google_search_console_verification), '') as google_search_console_verification,") {
 		t.Fatal("canonical site read must continue selecting the stored Search Console value")
 	}
 	if !strings.Contains(queryer.queries[1], "\n\t\tnull::text as google_search_console_verification,") {

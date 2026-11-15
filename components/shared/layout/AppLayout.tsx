@@ -95,10 +95,9 @@ function AppLayoutContent({ children, title, belowHeader, disableMainScroll = fa
           {belowHeader}
 
           {/* Conteúdo da página */}
-          <main className={cn(
-            "min-h-0 min-w-0 flex-1",
-            disableMainScroll ? "overflow-hidden relative px-5 md:px-6 pt-2 md:pt-3 pb-3" : "overflow-y-auto overflow-x-hidden px-5 md:px-6 pt-2 md:pt-3 pb-6",
-            isMobile && "pb-[calc(4rem_+_1px_+_env(safe-area-inset-bottom))]"
+          <main data-main-scroll={disableMainScroll ? "locked" : "scroll"} className={cn(
+            "app-main-content min-h-0 min-w-0 flex-1",
+            disableMainScroll ? "overflow-hidden relative px-5 md:px-6 pt-2 md:pt-3" : "overflow-y-auto overflow-x-hidden px-5 md:px-6 pt-2 md:pt-3"
           )}>
             {children}
           </main>

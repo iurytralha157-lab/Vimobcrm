@@ -1,10 +1,10 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "eaa8a019c6139f7ee713c070b351aae48dbf052b8f7aaf6ee57c25032f4c9a95",
-  "surfaceInventoryDigestSha256": "da2e735cac5fecdb9c5ee7cc18c682914317038f180b8ac947673e8f23228a50",
+  "sourceDigestSha256": "c2ae9cc52997db5771e7ae35aba0405e846931706d742471877919e07cc5cd8f",
+  "surfaceInventoryDigestSha256": "aac73cb3441e9a17571636e8604e94a090cad56f05811cf7c94f7ff98cbe07c3",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 675,
+    "filesScanned": 676,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
@@ -1848,7 +1848,7 @@
     },
     {
       "file": "components/features/settings/IntegrationsTab.tsx",
-      "line": 1319,
+      "line": 1360,
       "match": "font-semibold",
       "priority": "P1",
       "rule": "heavy-font",

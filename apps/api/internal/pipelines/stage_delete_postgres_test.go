@@ -56,7 +56,7 @@ func openStageDeletePostgresFixture(t *testing.T) stageDeletePostgresFixture {
 		t.Fatal("delete fixture did not select its owned disposable database")
 	}
 	config := conn.Config()
-	poolURL := url.URL{Scheme: "postgres", User: url.User("postgres"), Host: net.JoinHostPort(config.Host, strconv.Itoa(int(config.Port))), Path: "/" + ownedDatabase, RawQuery: "sslmode=disable"}
+	poolURL := url.URL{Scheme: "postgres", User: url.UserPassword(config.User, config.Password), Host: net.JoinHostPort(config.Host, strconv.Itoa(int(config.Port))), Path: "/" + ownedDatabase, RawQuery: "sslmode=disable"}
 	database, err := dbpkg.NewPostgres(ctx, dbpkg.Config{URL: poolURL.String(), MaxConns: 4, HealthTimeout: 2 * time.Second})
 	if err != nil {
 		t.Fatal(err)

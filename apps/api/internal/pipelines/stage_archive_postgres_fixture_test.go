@@ -152,7 +152,7 @@ var stageArchivePostgresSchema = []string{
 	`create table public.automation_flow_versions (id uuid primary key, organization_id uuid not null,
 	  automation_id uuid not null, graph jsonb not null, requires_review boolean not null default false)`,
 	`create table public.automation_nodes (id uuid primary key, automation_id uuid not null,
-	  node_type text not null, action_type text, config jsonb not null default '{}')`,
+	  node_type text not null, action_type text, node_config jsonb not null default '{}')`,
 	`create table public.automation_executions (id uuid primary key, organization_id uuid not null,
 	  automation_id uuid not null, flow_version_id uuid, status text not null)`,
 }

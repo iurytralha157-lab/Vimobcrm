@@ -175,7 +175,7 @@ export function EventsList({
 
   return (
     <div className="space-y-4">
-      {paginate && <p aria-live="polite" className="text-[11px] text-[var(--app-text-tertiary)]">{page.items.length} de {page.total} atividades</p>}
+      {paginate && <p aria-live="polite" className="text-[11px] text-[var(--app-text-tertiary)]">{page.items.length} de {page.total} {page.total === 1 ? "atividade" : "atividades"}</p>}
       {groupedEvents.map(([dateKey, dayEvents]) => (
         <div key={dateKey}>
           <h3 className="mb-3 ml-1 text-[12px] font-light capitalize text-[var(--app-text-tertiary)]">

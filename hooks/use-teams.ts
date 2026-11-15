@@ -101,6 +101,7 @@ export function useTeams(options?: TeamQueryOptions) {
     enabled: Boolean(organizationId) && (!catalog || Boolean(userId && sessionId)) && (options?.enabled ?? true),
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 60,
+    refetchOnMount: true,
     refetchOnWindowFocus: false,
     retry: shouldRetryPipelineQuery,
     retryDelay: 800,

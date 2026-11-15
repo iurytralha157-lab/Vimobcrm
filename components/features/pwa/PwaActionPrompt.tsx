@@ -1,6 +1,7 @@
 import NextImage from "next/image";
 import { X, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useEffect, useRef } from "react";
 
 export const PWA_INSTALL_PROMPT_VISIBILITY_EVENT =
   "vimob:pwa-install-prompt-visibility";
@@ -30,8 +31,40 @@ export function PwaActionPrompt({
   ariaLabel,
   promptKind,
 }: PwaActionPromptProps) {
+  const promptRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const prompt = promptRef.current;
+    if (!prompt) return;
+    const updateSpace = (excluded?: HTMLElement) => {
+      const space = Math.max(0, ...Array.from(document.querySelectorAll<HTMLElement>("[data-pwa-prompt]"), (candidate) => {
+        if (candidate === excluded || !candidate.offsetHeight) return 0;
+        const style = getComputedStyle(candidate);
+        if (style.visibility === "hidden") return 0;
+        const bottom = Number.parseFloat(style.bottom) || 0;
+        return Math.ceil(candidate.offsetHeight + bottom + 12);
+      }));
+      if (space) {
+        document.documentElement.style.setProperty("--vimob-pwa-prompt-space", `${space}px`);
+      } else {
+        document.documentElement.style.removeProperty("--vimob-pwa-prompt-space");
+      }
+    };
+    const handleResize = () => updateSpace();
+    const observer = new ResizeObserver(handleResize);
+    observer.observe(prompt);
+    window.addEventListener("resize", handleResize);
+    updateSpace();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", handleResize);
+      updateSpace(prompt);
+    };
+  }, []);
+
   return (
     <div
+      ref={promptRef}
       data-pwa-prompt={promptKind}
       className="pointer-events-none fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] left-1/2 z-50 w-[calc(100vw-1.5rem)] max-w-lg -translate-x-1/2 animate-in slide-in-from-bottom duration-300 md:bottom-[calc(1rem+env(safe-area-inset-bottom))]"
     >

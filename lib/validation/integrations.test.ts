@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import { organizationSiteMutationSchema } from "./auxiliary";
+import { apiOrganizationSiteResponseSchema, organizationSiteMutationSchema } from "./auxiliary";
 
 import {
   INTEGRATION_BRAND_ASSETS,
@@ -121,6 +121,27 @@ test("contrato generico do site valida os tres identificadores Google", () => {
     }).success,
     false,
   );
+});
+
+test("resposta Google aceita ausencia canonica e preserva validacao dos valores preenchidos", () => {
+  const fields = apiOrganizationSiteResponseSchema.shape.data.pick({
+    google_analytics_id: true,
+    google_search_console_verification: true,
+    gtm_id: true,
+  });
+  const empty = { google_analytics_id: null, google_search_console_verification: null, gtm_id: null };
+  assert.deepEqual(fields.parse(empty), empty);
+  assert.equal(fields.safeParse({
+    google_analytics_id: "G-ABC12345",
+    google_search_console_verification: "abcDEF_1234567890-token",
+    gtm_id: "GTM-ABCD1234",
+  }).success, true);
+  for (const field of Object.keys(empty)) {
+    for (const value of ["", "   ", "<script>invalid</script>"]) {
+      assert.equal(fields.safeParse({ ...empty, [field]: value }).success, false);
+      assert.equal(organizationSiteMutationSchema.safeParse({ [field]: value }).success, false);
+    }
+  }
 });
 
 test("logo opcional do rodapé aceita URL segura ou remoção", () => {

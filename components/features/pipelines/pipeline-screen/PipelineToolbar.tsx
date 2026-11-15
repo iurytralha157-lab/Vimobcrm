@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import {
   BellRing,
   Check,
   ChevronDown,
   LayoutGrid,
+  Pencil,
   Plus,
   RefreshCw,
   Settings,
@@ -23,6 +25,7 @@ import type { DatePreset } from '@/hooks/use-dashboard-filters';
 import { cn } from '@/lib/utils';
 
 import type { PipelineSummary } from './model';
+import { PipelineRenameDialog } from './PipelineRenameDialog';
 
 type FilterOption = { id: string; name: string };
 type SourceOption = { value: string; label: string };
@@ -161,8 +164,12 @@ export function PipelineToolbar({
   onRefresh,
   onCreateLead,
 }: PipelineToolbarProps) {
+  const [pipelineToRename, setPipelineToRename] = useState<PipelineSummary | null>(null);
   return (
     <div className={cn('flex flex-col gap-2 px-2', isMobile ? 'mb-2 pt-2' : 'mb-3')}>
+      {pipelineToRename && (
+        <PipelineRenameDialog pipeline={pipelineToRename} selectedPipelineId={selectedPipelineId} canEdit={canEditPipeline} onClose={() => setPipelineToRename(null)} />
+      )}
       <div className="flex flex-row flex-wrap items-center justify-between gap-2 lg:gap-3">
         <div className="flex min-w-0 max-w-full items-center gap-2">
           <div className="flex h-10 min-w-0 items-center overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] p-1 text-[var(--app-text-primary)] shadow-none">
@@ -266,6 +273,12 @@ export function PipelineToolbar({
                     align="start"
                     className="app-header-popover w-56 rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-1"
                   >
+                    {canEditPipeline && currentPipeline && (
+                      <DropdownMenuItem onSelect={() => setPipelineToRename({ ...currentPipeline })} className="cursor-pointer rounded-[6px] px-2.5 py-2 text-[12px] font-light focus:bg-[var(--app-surface-hover)]">
+                        <Pencil className="mr-2 h-3.5 w-3.5 text-[var(--app-text-secondary)]" />
+                        Renomear pipeline
+                      </DropdownMenuItem>
+                    )}
                     {canManageAttention && (
                       <DropdownMenuItem
                         onSelect={onRequestAttentionSettings}

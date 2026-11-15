@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 
 import { formatLocalizedBRLCurrency } from "./utils/formatting";
+import { getFinancialOutstandingAmount, getFinancialPaidAmount } from "@/lib/financial/entry-amount";
 
 interface ExportData {
   [key: string]: string | number | boolean | null | undefined;
@@ -135,6 +136,7 @@ export function getStatusLabel(status: string): string {
     pending: "Pendente",
     paid: "Pago",
     overdue: "Vencido",
+    partial: "Parcialmente pago",
     cancelled: "Cancelado",
     forecast: "Prevista",
     approved: "Aprovada",
@@ -156,9 +158,10 @@ export function prepareFinancialEntriesExport(
         ? entry.category
         : entry.category?.name || "-",
     Valor: formatCurrency(entry.amount),
+    "Saldo aberto": formatCurrency(getFinancialOutstandingAmount({ ...entry, amount: entry.amount ?? 0 })),
     Vencimento: formatDate(entry.due_date),
     Status: entry.status ? getStatusLabel(entry.status) : "-",
-    "Valor Pago": formatCurrency(entry.paid_value ?? entry.paid_amount),
+    "Valor Pago": formatCurrency(getFinancialPaidAmount({ ...entry, amount: entry.amount ?? 0 })),
     "Data Pagamento": formatDate(entry.paid_date),
     Parcela:
       entry.installment_number && entry.total_installments

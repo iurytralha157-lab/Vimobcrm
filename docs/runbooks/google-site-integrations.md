@@ -51,6 +51,13 @@ Referência oficial: [verificar a propriedade de um site](https://support.google
 
 ## Cache e rollout
 
+A projeção da API normaliza identificadores Google legados vazios ou compostos
+somente por espaços para `null`, sem alterar o valor armazenado. Essa mesma
+projeção atende GET e as respostas de criação e atualização. GA4, GTM e Search
+Console compartilham a leitura de configuração do site. Uma falha da consulta
+continua aparecendo como status indisponível nos três cartões, com retentativa.
+Valores preenchidos continuam sujeitos à validação específica de cada campo.
+
 A leitura de configuração do site no Next.js usa `revalidate: 0`. O fallback
 de disponibilidade pode preservar conteúdo antigo, mas remove GA, GTM, pixels,
 scripts customizados e o token do Search Console até a API canônica voltar.

@@ -262,6 +262,7 @@ function RealEstateFinancialDashboard({
       { Metrica: "A Receber (30d)", Valor: formatCurrency(data.receivable30) },
       { Metrica: "A Pagar", Valor: formatCurrency(data.totalPayable) },
       { Metrica: "Vencidos", Valor: formatCurrency(totalOverdue) },
+      { Metrica: "Taxa de inadimplência", Valor: formatPercentage(data.defaultRate) },
       {
         Metrica: "Comissões Previstas",
         Valor: formatCurrency(data.forecastCommissions),
@@ -440,14 +441,14 @@ function RealEstateFinancialDashboard({
           <FinancialMetricCard
             title="Vencidos"
             value={formatCurrency(totalOverdue)}
-            description="Recebimentos e pagamentos atrasados"
+            description="Saldo vencido de recebimentos e pagamentos"
             icon={AlertTriangle}
             variant="destructive"
           />
           <FinancialMetricCard
             title="Taxa de inadimplência"
             value={formatPercentage(data.defaultRate)}
-            description="Vencidos sobre o total previsto"
+            description="Saldo vencido a receber sobre o nominal já vencido"
             icon={AlertTriangle}
             variant="destructive"
           />

@@ -43,9 +43,13 @@ export const useScheduleDashboard=()=>({data:window.fixtureDashboard,isPending:f
 export const useScheduleDashboardEvents=()=>({data:{pages:[scheduleDashboardEventsPageSchema.parse({items:window.fixtureEvents.slice(0,20).map(event=>({...event,user_name:own.name,user_avatar_url:null,lead_name:null,property_code:null,property_title:null,is_overdue:false})),total:51,limit:20,offset:0,has_more:true})]},isPending:false,isError:false,isFetching:false,hasNextPage:true,fetchNextPage:()=>{},refetch:()=>{}});
 export const scheduleAPI={getComments:async()=>{if(window.fixtureState.commentError)throw Error('synthetic failure');if(window.fixtureState.commentDelay)await new Promise(resolve=>window.releaseComments=resolve);return []},addComment:async(id,content,organizationId,requestId)=>{window.fixtureWrites.push({name:'comment',input:{id,content,organizationId,requestId}});if(window.fixtureState.writeFail)throw Error('synthetic failure');return {id:requestId,content}}};
 export const GoogleCalendarConnect=()=>null;
+export const useGoogleCalendarStatus=()=>{const state=useContext(State);return {data:{connection:{id:'40000000-0000-4000-8000-000000000001',account_email:'qa@example.invalid',calendar_summary:'Agenda sintética',calendar_id:'primary',sync_status:'error',last_error:state.googleError},can_connect:false,can_use_schedule:true},isLoading:false,isError:false,refetch:()=>window.fixtureReads.push('google-calendar-status')}};
+export const useConnectGoogleCalendar=()=>mutation('google-connect');
+export const useDisconnectGoogleCalendar=()=>mutation('google-disconnect');
+export const isGoogleCalendarServiceUnavailable=()=>false;
 export const MetaCreativePreview=()=>null;
 export const AppLayout=({children})=><main style={{height:'100vh',padding:12}}>{children}</main>;
-export const useRouter=()=>({push:()=>{},replace:()=>{}});export const useSearchParams=()=>new URLSearchParams();
+export const useRouter=()=>({push:()=>{},replace:()=>{}});export const useSearchParams=()=>new URLSearchParams();export const usePathname=()=>'/agenda';
 export default function Link({children,href,...props}){return <a href={href} {...props}>{children}</a>}
 export const dynamic=()=>()=>null;
 `;
@@ -59,6 +63,7 @@ import {EventSheet} from '@/components/features/schedule/EventSheet';
 import {CalendarView} from '@/components/features/schedule/CalendarView';
 import {EventsList} from '@/components/features/schedule/EventsList';
 import {CompactScheduleEventsList} from '@/components/features/schedule/CompactScheduleEventsList';
+import {GoogleCalendarConnect as GoogleCalendarStatusPanel} from ${JSON.stringify(path.join(root, "components/features/schedule/GoogleCalendarConnect.tsx").replaceAll("\\", "/"))};
 import {ptBR} from 'date-fns/locale';
 import {AgendaSourceDistributionPanel} from '@/components/features/schedule/dashboard/AgendaDashboardPanels';
 import {AgendaDashboardKpis} from '@/components/features/schedule/dashboard/AgendaDashboardKpis';
@@ -81,7 +86,7 @@ function Fixture({mode,eventType,duration,revision,canManage=true,propertyId,mas
 const [open,setOpen]=useState(true);window.fixtureClosed=!open;
 const event={...baseEvent,is_masked:masked,event_type:eventType||'task',end_time:new Date(Date.parse(baseEvent.start_time)+(duration||540)*60000).toISOString(),property_id:propertyId||null,property:propertyId?{id:propertyId,title:'Imóvel fora da primeira página',code:'S51'}:null,...eventOverrides};
 return <Provider initialState={initialState}><div data-fixture={revision} className="app-shell" style={{height:'100vh'}}>
-{mode==='period'?<Period timeZone={calendarTimeZone}/>:mode==='sheet'?<EventSheet open={open} onOpenChange={setOpen} event={event} defaultUserId={event.user_id}/>:mode==='create'?<EventSheet open={open} onOpenChange={setOpen} defaultUserId={event.user_id} defaultDate={new Date(2030,9,12)} defaultTime="09:00"/>:mode==='week'||mode==='month'?<section style={{height:580}}><CalendarView events={[event]} selectedDate={calendarDate?new Date(...calendarDate):new Date(2026,mode==='week'?9:7,mode==='week'?12:1)} pivotDate={calendarDate?new Date(...calendarDate):new Date(2026,mode==='week'?9:7,mode==='week'?12:1)} onDateSelect={day=>window.fixtureSelected=day.getDate()} onPivotChange={()=>{}} viewMode={mode} canManageEvents={canManage} onEventUpdate={(id,input)=>window.fixtureWrites.push({name:'timing',input:{id,...input}})} onEditEvent={()=>window.fixtureOpened++} timeZone={calendarTimeZone}/></section>:mode==='list'?<EventsList events={window.fixtureEvents} paginate canManage={canManage} onEditEvent={()=>window.fixtureOpened++} timeZone="America/Sao_Paulo"/>:mode==='compact'?<CompactScheduleEventsList events={window.fixtureEvents} locale={ptBR} onEditEvent={()=>window.fixtureOpened++}/>:mode==='sources'?<AgendaSourceDistributionPanel items={Array.from({length:12},(_,index)=>({key:'source'+index,label:'Origem sintética '+index,count:12-index}))}/>:mode==='kpis'?<section className="@container/agenda-dashboard" style={{width:'100%'}}><AgendaDashboardKpis kpis={kpis} dateBasis="start_time"/></section>:mode==='dashboard'?<AgendaDashboard syncFiltersToUrl={false} initialFilters={{dateFrom:'2026-10-11',dateTo:'2026-10-17'}}/>:mode==='quality'?<AgendaDataQualityNotice quality={quality}/>:mode==='comments'?<Comments/>:<Agenda/>}
+{mode==='google-status'?<GoogleCalendarStatusPanel/>:mode==='period'?<Period timeZone={calendarTimeZone}/>:mode==='sheet'?<EventSheet open={open} onOpenChange={setOpen} event={event} defaultUserId={event.user_id}/>:mode==='create'?<EventSheet open={open} onOpenChange={setOpen} defaultUserId={event.user_id} defaultDate={new Date(2030,9,12)} defaultTime="09:00"/>:mode==='week'||mode==='month'?<section style={{height:580}}><CalendarView events={[event]} selectedDate={calendarDate?new Date(...calendarDate):new Date(2026,mode==='week'?9:7,mode==='week'?12:1)} pivotDate={calendarDate?new Date(...calendarDate):new Date(2026,mode==='week'?9:7,mode==='week'?12:1)} onDateSelect={day=>window.fixtureSelected=day.getDate()} onPivotChange={()=>{}} viewMode={mode} canManageEvents={canManage} onEventUpdate={(id,input)=>window.fixtureWrites.push({name:'timing',input:{id,...input}})} onEditEvent={()=>window.fixtureOpened++} timeZone={calendarTimeZone}/></section>:mode==='list'?<EventsList events={window.fixtureEvents} paginate canManage={canManage} onEditEvent={()=>window.fixtureOpened++} timeZone="America/Sao_Paulo"/>:mode==='compact'?<CompactScheduleEventsList events={window.fixtureEvents} locale={ptBR} onEditEvent={()=>window.fixtureOpened++}/>:mode==='sources'?<AgendaSourceDistributionPanel items={Array.from({length:12},(_,index)=>({key:'source'+index,label:'Origem sintética '+index,count:12-index}))}/>:mode==='kpis'?<section className="@container/agenda-dashboard" style={{width:'100%'}}><AgendaDashboardKpis kpis={kpis} dateBasis="start_time"/></section>:mode==='dashboard'?<AgendaDashboard syncFiltersToUrl={false} initialFilters={{dateFrom:'2026-10-11',dateTo:'2026-10-17'}}/>:mode==='quality'?<AgendaDataQualityNotice quality={quality}/>:mode==='comments'?<Comments/>:<Agenda/>}
 </div></Provider>}
 const app=createRoot(document.getElementById('app'));let revision=0;
 window.showFixture=options=>{window.fixtureWrites=[];window.fixturePeriodChanges=[];window.fixtureReads=[];window.fixtureOpened=0;window.fixtureEvents=Array.from({length:options.eventCount??51},(_,i)=>({...baseEvent,id:'30000000-0000-4000-8000-'+String(i+2).padStart(12,'0'),title:'Evento sintético '+i,start_time:new Date(Date.parse(baseEvent.start_time)+i*60000).toISOString(),status:i%2?'completed':'scheduled',...options.eventOverrides}));const next=++revision;const client=new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}});window.fixtureClient=client;app.render(<QueryClientProvider client={client}><Fixture key={next} revision={next} {...options}/></QueryClientProvider>);return next};
@@ -95,6 +100,8 @@ before(async () => {
   await writeFile(path.join(directory, "loader.cjs"), `const ts=require(${JSON.stringify(path.join(root,"node_modules/typescript"))});module.exports=source=>ts.transpileModule(source,{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2020}}).outputText;`);
   const names = ["components/features/meta","contexts/AuthContext","hooks/use-user-permissions","hooks/use-organization-modules","hooks/use-schedule-users","hooks/use-teams","hooks/use-leads","hooks/use-properties","hooks/use-schedule-event-assignees","hooks/use-schedule-events","hooks/schedule/use-schedule-dashboard","hooks/schedule/use-schedule-dashboard-events","hooks/use-toast","lib/api/schedule","components/features/properties/PropertyPreviewDialog","components/features/properties/PropertyPickerDialog","components/features/schedule/GoogleCalendarConnect","components/shared/layout/AppLayout"];
   const alias = Object.fromEntries(names.map(name=>[`@/${name}$`,path.join(directory,"synthetic.tsx")]));
+  alias["@/hooks/use-google-calendar$"] = path.join(directory,"synthetic.tsx");
+  alias["@/lib/api/google-calendar$"] = path.join(directory,"synthetic.tsx");
   // Same installed icons through the CJS entry, without thousands of ESM barrel modules.
   alias["lucide-react$"]=require.resolve("lucide-react");
   alias["next/navigation$"]=path.join(directory,"synthetic.tsx");
@@ -133,6 +140,25 @@ async function show(options,width=1024,height=768){
   const revision=await page.evaluate(options=>window.showFixture(options),options);
   await expect(page.locator(`[data-fixture="${revision}"]`)).toBeAttached();
 }
+
+test("activity pagination uses singular only for one activity", async () => {
+  await show({mode:"list",eventCount:1});
+  await expect(page.getByText("1 de 1 atividade",{exact:true})).toBeVisible();
+  await show({mode:"list",eventCount:2});
+  await expect(page.getByText("2 de 2 atividades",{exact:true})).toBeVisible();
+});
+
+test("Google status preserves legacy and outbound diagnostics without guessing the error origin", async () => {
+  for (const googleError of ["Google Calendar sync error 404", "Google Agenda HTTP 503"]) {
+    await show({mode:"google-status",initialState:{googleError}});
+    await expect(page.getByText(/A sincronização com o Google Agenda registrou um erro/)).toBeVisible();
+    await expect(page.getByText(googleError,{exact:true})).toBeVisible();
+    await page.getByRole("button",{name:"Atualizar status",exact:true}).click();
+    assert.deepEqual(await page.evaluate(()=>window.fixtureReads),["google-calendar-status"]);
+    assert.equal(await page.evaluate(()=>window.fixtureWrites.length),0);
+    await expect(page.getByRole("button",{name:"Conectar Google Agenda",exact:true})).toHaveCount(0);
+  }
+});
 
 for (const width of [320,390,1024,1440]) for (const theme of ["light","dark"]) test(`Agenda period uses shared Dashboard presentation at ${width}px/${theme}`,async()=>{
   // Compare resting colors rather than arbitrary frames of theme/hover transitions.

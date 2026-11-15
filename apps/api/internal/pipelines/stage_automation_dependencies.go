@@ -123,7 +123,7 @@ with stage_scope as (
   cross join lateral jsonb_array_elements(case when jsonb_typeof(graph.graph->'nodes') = 'array'
     then graph.graph->'nodes' else '[]'::jsonb end) node
   union all
-  select a.name, jsonb_build_object('type', node.node_type, 'action_type', node.action_type, 'config', node.config)
+  select a.name, jsonb_build_object('type', node.node_type, 'action_type', node.action_type, 'config', node.node_config)
   from public.automations a
   join public.automation_nodes node on node.automation_id = a.id
   where a.organization_id = $1::uuid and (

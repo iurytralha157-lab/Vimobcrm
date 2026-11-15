@@ -27,6 +27,7 @@ function harness(api) {
   const actor = { user: "synthetic-user", session: "session-a" };
   const capture = (signal) => ({ expectedUserId: actor.user, expectedSessionId: actor.session, signal });
   const hooks = evaluate("./use-teams.ts", {
+    "@/hooks/shared/use-query-data-trust": { useQueryWithDataTrust: (options) => options },
     "@tanstack/react-query": { useQueryClient: () => queryClient, useMutation: (options) => options, useQuery: (options) => options, useInfiniteQuery: (options) => options },
     "@/lib/api/teams": { teamsAPI: api },
     sonner: { toast: { success() {} } },

@@ -232,6 +232,7 @@ export default function Settings() {
   const hasAPIModule = hasModule("api");
   const hasPortalsModule = hasModule("portals");
   const hasSiteModule = hasModule("site");
+  const hasCampaignsModule = hasModule("campaigns");
   const canManageSite =
     hasSiteModule &&
     (canManageOrganization || hasPermission("settings_site"));
@@ -397,6 +398,7 @@ export default function Settings() {
                 hasAPIModule={hasAPIModule}
                 hasPortalsModule={hasPortalsModule}
                 hasSiteModule={hasSiteModule}
+                hasCampaignsModule={hasCampaignsModule}
                 canManageIntegrations={canManageIntegrations}
                 canViewWhatsApp={canViewWhatsApp}
                 canManageAI={canManageAI}

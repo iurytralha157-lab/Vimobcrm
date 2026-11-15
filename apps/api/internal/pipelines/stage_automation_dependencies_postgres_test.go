@@ -93,7 +93,7 @@ func TestStageAutomationDependenciesPostgres(t *testing.T) {
 				fixture.exec(`insert into public.automation_flow_versions(id,organization_id,automation_id,graph) values($1,$2,$3,$4::jsonb)`, stageArchiveFixtureID(testCase.execVersion), stageArchiveFixtureID(org), stageArchiveFixtureID(801), graph(201, true))
 			}
 			if testCase.legacy {
-				fixture.exec(`insert into public.automation_nodes(id,automation_id,node_type,action_type,config) values($1,$2,'action','move_lead',$3::jsonb)`, stageArchiveFixtureID(950), stageArchiveFixtureID(801), fmt.Sprintf(`{"stage_id":"%s","pipeline_id":"%s"}`, stageArchiveFixtureID(201), stageArchiveFixtureID(101)))
+				fixture.exec(`insert into public.automation_nodes(id,automation_id,node_type,action_type,node_config) values($1,$2,'action','move_lead',$3::jsonb)`, stageArchiveFixtureID(950), stageArchiveFixtureID(801), fmt.Sprintf(`{"stage_id":"%s","pipeline_id":"%s"}`, stageArchiveFixtureID(201), stageArchiveFixtureID(101)))
 			}
 			if testCase.status != "" {
 				fixture.exec(`insert into public.automation_executions(id,organization_id,automation_id,flow_version_id,status) values($1,$2,$3,$4,$5)`, stageArchiveFixtureID(960), stageArchiveFixtureID(org), stageArchiveFixtureID(801), stageArchiveNullableID(testCase.execVersion), testCase.status)

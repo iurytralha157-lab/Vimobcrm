@@ -47,6 +47,7 @@ import { formatCurrency, formatDate, exportToExcel, prepareFinancialEntriesExpor
 import { searchTextIncludes } from '@/lib/search-text';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
+import { getFinancialOutstandingAmount } from '@/lib/financial/entry-amount';
 import {
   Plus,
   Search,
@@ -121,6 +122,7 @@ function EntryCard({ entry, onPay, onEdit, onDelete, canManage }: {
             <p className={`text-sm font-normal sm:text-base ${entry.type === 'receivable' ? 'text-success' : 'text-destructive'}`}>
               {formatCurrency(entry.amount)}
             </p>
+            <p className="text-[10px] sm:text-xs text-muted-foreground">Saldo {formatCurrency(getFinancialOutstandingAmount(entry))}</p>
             <p className="text-[10px] sm:text-xs text-muted-foreground flex items-center justify-end gap-1 mt-0.5">
               <Calendar className="h-3 w-3" />
               {formatDate(entry.due_date)}
@@ -257,6 +259,7 @@ export default function FinancialEntries() {
         </div>
 
         {/* Filters */}
+        {statusFilter === 'overdue' && <p className="text-xs text-muted-foreground">Contas a receber e pagar com saldo positivo e vencimento anterior ao dia atual em Brasília.</p>}
         <Card className="app-card">
           <CardContent className="p-3 md:p-4">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
@@ -409,9 +412,9 @@ export default function FinancialEntries() {
                     <TableHead>Descrição</TableHead>
                     <TableHead>Tipo</TableHead>
                     <TableHead>Categoria</TableHead>
-                    <TableHead className="text-right">Valor</TableHead>
+                    <TableHead className="text-right">Valor nominal / saldo</TableHead>
                     <TableHead>Vencimento</TableHead>
-                    <TableHead>Status</TableHead>
+                    <TableHead>Status registrado</TableHead>
                     <TableHead>Parcela</TableHead>
                     {canManage && <TableHead className="w-10"></TableHead>}
                   </TableRow>
@@ -442,6 +445,7 @@ export default function FinancialEntries() {
                         <TableCell>{entry.category || '-'}</TableCell>
                         <TableCell className="text-right font-medium">
                           {formatCurrency(entry.amount)}
+                          <p className="text-xs font-normal text-muted-foreground">Saldo {formatCurrency(getFinancialOutstandingAmount(entry))}</p>
                         </TableCell>
                         <TableCell>{formatDate(entry.due_date)}</TableCell>
                         <TableCell>

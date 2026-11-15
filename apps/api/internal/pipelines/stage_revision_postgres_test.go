@@ -39,7 +39,7 @@ func TestStageUpdateRevisionPostgres(t *testing.T) {
 	config := conn.Config()
 	// pgx.Config.ConnString retains the originally parsed admin DSN even after
 	// Database changes; construct a fresh URL and verify the pool before writes.
-	poolURL := url.URL{Scheme: "postgres", User: url.User("postgres"), Host: net.JoinHostPort(config.Host, strconv.Itoa(int(config.Port))), Path: "/" + ownedDatabase, RawQuery: "sslmode=disable"}
+	poolURL := url.URL{Scheme: "postgres", User: url.UserPassword(config.User, config.Password), Host: net.JoinHostPort(config.Host, strconv.Itoa(int(config.Port))), Path: "/" + ownedDatabase, RawQuery: "sslmode=disable"}
 	database, err := dbpkg.NewPostgres(ctx, dbpkg.Config{URL: poolURL.String(), MaxConns: 4, HealthTimeout: 2 * time.Second})
 	if err != nil {
 		t.Fatal(err)

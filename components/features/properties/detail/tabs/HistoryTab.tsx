@@ -104,7 +104,9 @@ export function HistoryTab({
     const fromEvents = (events ?? []).map((event): TimelineItem => ({
       id: event.id,
       title: event.title,
-      detail: typeof event.metadata?.message === "string" ? event.metadata.message : null,
+      detail: typeof event.metadata?.message === "string" && event.metadata.message.trim() !== event.title.trim()
+        ? event.metadata.message
+        : null,
       at: event.created_at,
       category: historyCategory(event.type),
     }));

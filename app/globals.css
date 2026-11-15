@@ -2,6 +2,21 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+.app-main-content {
+  padding-bottom: max(1.5rem, var(--vimob-pwa-prompt-space, 0px));
+}
+
+.app-main-content[data-main-scroll="locked"] {
+  padding-bottom: max(0.75rem, var(--vimob-pwa-prompt-space, 0px));
+}
+
+@media (width < 48rem) {
+  .app-main-content,
+  .app-main-content[data-main-scroll="locked"] {
+    padding-bottom: max(calc(4rem + 1px + env(safe-area-inset-bottom)), var(--vimob-pwa-prompt-space, 0px));
+  }
+}
+
 :root {
   --background: #121212;
   --foreground: #ffffff;

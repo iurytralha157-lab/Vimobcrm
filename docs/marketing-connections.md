@@ -49,6 +49,13 @@ Marketing: o OAuth de leads continua desligado e nada desconecta uma Página rea
 
 A tela fica em Configurações > Integrações > Meta Marketing.
 
+O cartão usa a disponibilidade `enabled` e `meta_configured` da mesma listagem
+de conexões usada pela página de gestão. Sem liberação da organização ou sem
+configuração do app, a ação de configurar fica indisponível com o motivo
+exibido. Erros de consulta continuam com status indisponível e retentativa.
+O módulo `campaigns` e a permissão de integrações são exigidos também para
+consultar esse status no catálogo. A autorização permanece na API.
+
 ## Homologação
 
 1. Aplicar `20261104120000_add_marketing_connections.sql` no banco de homologação.

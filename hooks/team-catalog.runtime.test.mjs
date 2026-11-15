@@ -79,3 +79,27 @@ test('unsubscribing a real team observer aborts the old request and late data st
   const next = new QueryObserver(client, f.options({ catalog: true }));
   try { assert.equal(next.getCurrentResult().data, undefined); } finally { observer.destroy(); next.destroy(); client.clear(); }
 });
+
+for (const catalog of [false, true]) test(`returning to an invalidated ${catalog ? 'catalog' : 'management list'} reloads created and renamed teams`, async () => {
+  const updated = { ...legacyTeamResponse, name: 'Equipe renomeada' };
+  const created = { ...legacyTeamResponse, id: '50000000-0000-4000-8000-000000000003', name: 'Equipe criada' };
+  const f = fixture({ catalog: async () => [updated, created], listTeams: async () => [updated, created] });
+  const client = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity, refetchOnMount: false } } });
+  const options = f.options({ catalog });
+  const otherOrganization = ['teams', '50000000-0000-4000-8000-000000000002', { includeInactive: false }];
+  client.setQueryData(options.queryKey, [legacyTeamResponse]);
+  client.setQueryData(otherOrganization, [{ name: 'Outra organização' }]);
+  await client.invalidateQueries({ queryKey: ['teams', teamCatalogOrganization] });
+  const observer = new QueryObserver(client, options);
+  let unsubscribe;
+  try {
+    const result = await new Promise(resolve => {
+      unsubscribe = observer.subscribe(next => {
+        if (!next.isFetching) resolve(next);
+      });
+      if (!observer.getCurrentResult().isFetching) resolve(observer.getCurrentResult());
+    });
+    assert.deepEqual(result.data.map(team => team.name), ['Equipe renomeada', 'Equipe criada']);
+    assert.equal(client.getQueryState(otherOrganization).isInvalidated, false);
+  } finally { unsubscribe?.(); observer.destroy(); client.clear(); }
+});

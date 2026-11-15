@@ -11,6 +11,7 @@ export function EntryStatusBadge({ status, className }: EntryStatusBadgeProps) {
   const statusConfig: Record<string, { label: string; variant: string }> = {
     pending: { label: 'Pendente', variant: 'bg-warning/10 text-warning border-warning/20' },
     paid: { label: 'Pago', variant: 'bg-success/10 text-success border-success/20' },
+    partial: { label: 'Parcialmente pago', variant: 'bg-warning/10 text-warning border-warning/20' },
     overdue: { label: 'Vencido', variant: 'bg-destructive/10 text-destructive border-destructive/20' },
     cancelled: { label: 'Cancelado', variant: 'bg-muted text-muted-foreground border-muted' },
   };

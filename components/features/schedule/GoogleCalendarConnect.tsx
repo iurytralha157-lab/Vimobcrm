@@ -410,8 +410,9 @@ export function GoogleCalendarConnect({
               {canUseSchedule ? (
                 calendarStatus.sync_status === "error" ? (
                   <>
-                    Um envio ao Google Agenda falhou. Confira o erro abaixo e revise a
-                    conexão; compromissos podem continuar pendentes na fila.
+                    A sincronização com o Google Agenda registrou um erro. Confira
+                    os detalhes abaixo e o estado da conexão; pode haver
+                    compromissos pendentes na fila.
                   </>
                 ) : (
                   <>
@@ -449,6 +450,15 @@ export function GoogleCalendarConnect({
                   </p>
                 )}
               </div>
+              {calendarStatus.sync_status === "error" && <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 shrink-0 rounded-[6px] bg-[var(--app-surface-soft)] text-[12px] font-light"
+                onClick={() => void refetchStatus()}
+              >
+                <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                Atualizar status
+              </Button>}
             </div>
           </>
         ) : (

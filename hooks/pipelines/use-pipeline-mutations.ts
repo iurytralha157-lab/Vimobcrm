@@ -95,23 +95,12 @@ export function useStagesReorderMutation() {
 }
 
 export function usePipelineUpdateMutation() {
-  const scope = usePipelineMutationIntent<PipelineUpdateData>(undefined, 'pipeline');
-  const mutation = useMutation({
-    mutationFn: async (variables: PipelineUpdateData) => {
-      const operation = scope.require(variables);
-      const { id, ...input } = variables;
-      const result = await pipelinesAPI.updatePipeline(id, input, operation.organizationId, operation.intent);
-      scope.require(variables);
-      if (result.id !== id || result.organization_id !== operation.organizationId) throw new Error('A resposta não corresponde à pipeline solicitada.');
-      return result;
-    },
-    retry: false,
-    onSettled: (_data, _error, variables) => scope.settled(variables, false),
+  return useScopedPipelineMutation(async (variables: PipelineUpdateData, organizationId, intent) => {
+    const { id, ...input } = variables;
+    const result = await pipelinesAPI.updatePipeline(id, input, organizationId, intent);
+    if (result.id !== id || result.organization_id !== organizationId) throw new Error('A resposta não corresponde à pipeline solicitada.');
+    return result;
   });
-  return { ...mutation,
-    mutate: (variables: PipelineUpdateData, options?: Parameters<typeof mutation.mutate>[1]) => mutation.mutate(scope.capture(variables), options),
-    mutateAsync: (variables: PipelineUpdateData, options?: Parameters<typeof mutation.mutateAsync>[1]) => mutation.mutateAsync(scope.capture(variables), options),
-  };
 }
 
 export function usePipelineDeleteMutation() {

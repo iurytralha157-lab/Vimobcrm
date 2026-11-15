@@ -24,6 +24,20 @@ func (repo Repository) Dashboard(ctx context.Context, tenantContext tenant.Conte
 		entries as (
 			select * from public.financial_entries where organization_id = $1::uuid
 		),
+		overdue_totals as (
+			select
+				coalesce(sum(`+financialOutstandingSQL("e")+`) filter (where e.type = 'receivable'), 0) as receivables,
+				coalesce(sum(`+financialOutstandingSQL("e")+`) filter (where e.type = 'payable'), 0) as payables
+			from entries e
+			where `+financialOverdueSQL("e", financialOverdueTodaySQL)+`
+		),
+		matured_receivables as (
+			select coalesce(sum(greatest(coalesce(amount, 0), 0)), 0) as nominal
+			from entries
+			where type = 'receivable'
+			  and due_date < `+financialOverdueTodaySQL+`
+			  and lower(btrim(coalesce(status, ''))) in ('pending', 'pendente', 'partial', 'parcial', 'overdue', 'vencido', 'paid', 'paga')
+		),
 		pending_receivables as (
 			select amount, due_date from entries where type = 'receivable' and status = 'pending'
 		),
@@ -79,8 +93,8 @@ func (repo Repository) Dashboard(ctx context.Context, tenantContext tenant.Conte
 			'forecastCommissions', (select forecast from commission_totals),
 			'pendingCommissions', (select pending from commission_totals),
 			'paidCommissions', (select paid from commission_totals),
-			'overdueReceivables', coalesce((select sum(amount) from pending_receivables, bounds where due_date < bounds.today), 0),
-			'overduePayables', coalesce((select sum(amount) from pending_payables, bounds where due_date < bounds.today), 0),
+			'overdueReceivables', (select receivables from overdue_totals),
+			'overduePayables', (select payables from overdue_totals),
 			'monthlyData', (select data from monthly),
 			'totalLeadsValue', coalesce((select sum(valor_interesse) from won_leads), 0),
 			'vgvBruto', coalesce((select sum(value) from contracts), 0),
@@ -91,7 +105,9 @@ func (repo Repository) Dashboard(ctx context.Context, tenantContext tenant.Conte
 			'avgTicket', coalesce((select avg(value) from contracts), 0),
 			'conversionRate', case when (select count(*) from won_leads) > 0 then ((select count(*) from contracts)::numeric / (select count(*) from won_leads)::numeric) * 100 else 0 end,
 			'annualProjection', 0,
-			'defaultRate', 0
+			'defaultRate', case when (select nominal from matured_receivables) > 0
+				then (select receivables from overdue_totals) / (select nominal from matured_receivables) * 100
+				else 0 end
 		)
 	`, tenantContext.OrganizationID)
 }

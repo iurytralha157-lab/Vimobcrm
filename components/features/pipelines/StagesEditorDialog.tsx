@@ -307,7 +307,7 @@ export function StagesEditorDialog({
       closeDeletion(target);
     } catch (error: unknown) {
       if (deletion.current !== target || !deleteStageMutation.isCurrent(target.input)) return;
-      const conflict = typeof error === 'object' && error !== null && 'status' in error && error.status === 409;
+      const conflict = typeof error === 'object' && error !== null && 'status' in error && error.status === 409 && 'code' in error && error.code === 'pipeline_stages_changed';
       if (conflict) {
         deleteStageMutation.discard(target.input);
         setDeleteConflict(true);

@@ -41,7 +41,11 @@ func (repo Repository) ListEntries(ctx context.Context, tenantContext tenant.Con
 		if !ok {
 			return nil, ErrInvalidInput
 		}
-		add(statuses, "lower(btrim(coalesce(fe.status, ''))) = any($%d::text[])")
+		if normalizedFinancialEntryStatus(value) == "overdue" {
+			where = append(where, financialOverdueSQL("fe", financialOverdueTodaySQL))
+		} else {
+			add(statuses, "lower(btrim(coalesce(fe.status, ''))) = any($%d::text[])")
+		}
 	}
 	if value := strings.TrimSpace(values.Get("startDate")); value != "" {
 		add(value, "fe.due_date >= $%d::date")

@@ -1,4 +1,4 @@
-type PaymentEntry = {
+export type PaymentEntry = {
   amount: number
   value?: number | null
   paid_amount?: number | null

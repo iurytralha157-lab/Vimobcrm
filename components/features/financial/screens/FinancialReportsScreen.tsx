@@ -35,6 +35,7 @@ import { useCommissionsByBroker } from "@/hooks/use-commissions";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { DateFilterPopover } from "@/components/ui/date-filter-popover";
 import { getFinancialPaidAmount, getFinancialOutstandingAmount } from "@/lib/financial/entry-amount";
+import { getFinancialToday, isFinancialEntryOverdue } from "@/lib/financial/entry-overdue";
 import {
   DatePreset,
   getDateRangeFromPreset,
@@ -347,7 +348,7 @@ export default function FinancialReports() {
           : null,
     };
   }, [customDateRange, datePreset]);
-  const todayStartTime = startOfDay(new Date()).getTime();
+  const today = getFinancialToday();
   const handleDatePresetChange = (preset: DatePreset | null) => {
     setDatePreset(preset || "thisMonth");
   };
@@ -393,20 +394,7 @@ export default function FinancialReports() {
         return rightTime - leftTime;
       });
     const overdue = sourceEntries
-      .filter((entry) => {
-        if (entry.status === "paid" || entry.status === "cancelled") {
-          return false;
-        }
-        const dueDate = parseFinancialDate(entry.due_date);
-        if (!dueDate || !isWithinDateRange(entry.due_date, start, end)) {
-          return false;
-        }
-        return (
-          entry.status === "overdue" ||
-          ((entry.status === "pending" || entry.status === "partial") &&
-            dueDate.getTime() < todayStartTime)
-        );
-      })
+      .filter((entry) => isFinancialEntryOverdue(entry, today) && isWithinDateRange(entry.due_date, start, end))
       .sort((left, right) => {
         const leftTime = parseFinancialDate(left.due_date)?.getTime() ?? 0;
         const rightTime = parseFinancialDate(right.due_date)?.getTime() ?? 0;
@@ -461,7 +449,7 @@ export default function FinancialReports() {
       ),
       propertyRevenue: propertySummary,
     };
-  }, [end, entries, start, todayStartTime]);
+  }, [end, entries, start, today]);
   const exportPeriodLabel =
     start && Number.isFinite(start.getTime())
       ? format(start, "yyyy-MM")

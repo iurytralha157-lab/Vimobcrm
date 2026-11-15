@@ -58,6 +58,7 @@ import { useGoogleTagManagerIntegration } from "@/hooks/integrations/google-tag-
 import { useAPIKeys } from "@/hooks/integrations/api-access";
 import { useWebhooks } from "@/hooks/integrations/webhooks";
 import { useChavesNaMaoIntegration } from "@/hooks/integrations/chaves-na-mao";
+import { useMarketingConnections } from "@/hooks/marketing";
 import { FEATURES } from "@/config/constants";
 import {
   INTEGRATION_CAPABILITY_LABELS,
@@ -230,6 +231,7 @@ interface IntegrationsTabProps {
   hasAPIModule: boolean;
   hasPortalsModule: boolean;
   hasSiteModule: boolean;
+  hasCampaignsModule: boolean;
   canManageIntegrations: boolean;
   canViewWhatsApp: boolean;
   canManageAI: boolean;
@@ -246,6 +248,7 @@ export function IntegrationsTab({
   hasAPIModule,
   hasPortalsModule,
   hasSiteModule,
+  hasCampaignsModule,
   canManageIntegrations,
   canViewWhatsApp,
   canManageAI,
@@ -266,6 +269,14 @@ export function IntegrationsTab({
     isError: metaIntegrationsLoadFailed,
     refetch: refetchMetaIntegrations,
   } = useMetaIntegrations({ enabled: canManageIntegrations });
+  const {
+    data: marketingConnections,
+    isLoading: marketingConnectionsLoading,
+    isError: marketingConnectionsLoadFailed,
+    refetch: refetchMarketingConnections,
+  } = useMarketingConnections({
+    enabled: canManageIntegrations && hasCampaignsModule,
+  });
   const {
     data: whatsappSessions = [],
     isLoading: whatsappSessionsLoading,
@@ -354,10 +365,12 @@ export function IntegrationsTab({
       if (moduleKey === "api") return hasAPIModule;
       if (moduleKey === "portals") return hasPortalsModule;
       if (moduleKey === "site") return hasSiteModule;
+      if (moduleKey === "campaigns") return hasCampaignsModule;
       return true;
     },
     [
       hasAIModule,
+      hasCampaignsModule,
       hasAPIModule,
       hasPortalsModule,
       hasSiteModule,
@@ -649,6 +662,30 @@ export function IntegrationsTab({
             connectedMetaPages === 1 ? "" : "s"
           } ativa${connectedMetaPages === 1 ? "" : "s"} de ${metaIntegrations.length}`;
           break;
+        case "meta-marketing": {
+          const connections = marketingConnections?.connections ?? [];
+          const connected = connections.filter(
+            (connection) => connection.status === "active",
+          ).length;
+          loading = marketingConnectionsLoading;
+          loadError = marketingConnectionsLoadFailed;
+          retry = () => void refetchMarketingConnections();
+          status =
+            connections.length === 0
+              ? "not-connected"
+              : connected === connections.length
+                ? "connected"
+                : "reconnect-required";
+          detail = `${connected} login${connected === 1 ? "" : "s"} conectado${connected === 1 ? "" : "s"} de ${connections.length}`;
+          if (marketingConnections?.enabled === false) {
+            status = "unavailable";
+            detail = "Ainda não liberado para esta organização";
+          } else if (marketingConnections?.meta_configured === false) {
+            status = "unavailable";
+            detail = "O app da Meta para Marketing ainda não foi configurado neste ambiente";
+          }
+          break;
+        }
         case "grupo-olx":
           status = grupoOLXRuntimeStatus;
           loading = grupoOLXLoading;
@@ -850,6 +887,10 @@ export function IntegrationsTab({
     metaIntegrations,
     metaIntegrationsLoadFailed,
     metaIntegrationsLoading,
+    marketingConnections,
+    marketingConnectionsLoading,
+    marketingConnectionsLoadFailed,
+    refetchMarketingConnections,
     refetchAPIKeys,
     refetchChavesNaMao,
     refetchGoogleAnalytics,

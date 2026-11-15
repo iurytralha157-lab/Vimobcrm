@@ -45,7 +45,7 @@ async function moduleFromFile(relative, imports) {
   });
   return moduleRecord.exports;
 }
-async function createHarness(kind) {
+async function createHarness(kind, failure) {
   const client = new QueryClient({ defaultOptions: {
     queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity },
   } });
@@ -70,8 +70,8 @@ async function createHarness(kind) {
     assert.equal(rowId, id); assert.equal(organizationId, org); assert.equal(intent.expectedSessionId, 'synthetic-sid');
     assert.equal(intent.signal.aborted, false);
     requests.push(revision);
-    if (revision === r1) throw new errors.VimobAPIError('Synthetic concurrent change', {
-      status: 409, code: kind === 'stage' ? 'pipeline_stages_changed' : 'stage_automation_changed',
+    if (revision === r1) throw new errors.VimobAPIError(failure?.message ?? 'Synthetic concurrent change', {
+      status: 409, code: failure?.code ?? (kind === 'stage' ? 'pipeline_stages_changed' : 'stage_automation_changed'),
     });
     assert.equal(revision, r2);
   };
@@ -109,7 +109,7 @@ async function createHarness(kind) {
       setDeleteStage: value => { state.target = value; }, setDeleteError: value => { state.error = value; },
       setDraftStages: stages => { state.draft = stages; },
     } : { ...shared,
-      deleteAutomation: hook, deletingAutomation: state.target, canEdit: true, isSaving: false,
+      deleteAutomation: hook, deletingAutomation: state.target, automations: [row], canEdit: true, canEditAutomation: () => true, isSaving: false,
       needsVersionRefresh: state.refresh, mutationInFlight: inFlight, mounted: { current: true },
       query: { isError: false, refetch: async () => { state.reads++; return {}; } },
       onSavingChange: () => {}, setPendingAutomationId: () => {},
@@ -163,6 +163,26 @@ for (const kind of ['stage', 'automation']) {
       assert.equal(h.state.blocked, false);
       if (kind === 'stage') assert.deepEqual(h.state.draft, []);
       assert(h.notices.some(notice => notice.type === 'success'));
+    } finally { h.cleanup(); }
+  });
+}
+
+for (const code of ['pipeline_has_dependencies', 'stage_has_automation_dependencies', 'stage_has_active_routing', 'stage_has_move_rule_dependencies']) {
+  test(`stage: ${code} preserves the dependency cause instead of claiming concurrent changes`, async () => {
+    const reason = 'Esta etapa possui histórico ou configurações vinculadas. Revise esses vínculos antes de excluir.';
+    const h = await createHarness('stage', { code, message: reason });
+    try {
+      h.render().requestDeleteStage(h.row());
+      const target = h.state.target;
+      await h.render().handleDeleteStage();
+      await h.drain();
+      assert.equal(h.state.blocked, false);
+      assert.equal(h.state.target, target);
+      assert.equal(h.hook.isCurrent(target.input), true);
+      assert(h.state.error.includes(reason));
+      assert.doesNotMatch(h.state.error, /mudou em outra sessão|Feche esta confirmação/);
+      assert(h.notices.some(notice => notice.type === 'error' && notice.message.includes(reason)));
+      assert.deepEqual(h.requests, [r1]);
     } finally { h.cleanup(); }
   });
 }

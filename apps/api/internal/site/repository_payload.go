@@ -298,13 +298,14 @@ func siteSelectSQL() string {
 func siteSelectSQLWithoutGoogleSearchConsoleVerification() string {
 	return "select " + strings.Replace(
 		siteReturningColumns(),
-		"\n\t\tgoogle_search_console_verification,",
+		"\n\t\tnullif(btrim(google_search_console_verification), '') as google_search_console_verification,",
 		"\n\t\tnull::text as google_search_console_verification,",
 		1,
 	)
 }
 
 func siteReturningColumns() string {
+	// Legacy blank Google identifiers are absent configuration in response projections.
 	return `
 		id::text,
 		organization_id::text,
@@ -340,8 +341,8 @@ func siteReturningColumns() string {
 		seo_title,
 		seo_description,
 		seo_keywords,
-		google_analytics_id,
-		google_search_console_verification,
+		nullif(btrim(google_analytics_id), '') as google_analytics_id,
+		nullif(btrim(google_search_console_verification), '') as google_search_console_verification,
 		hero_image_url,
 		hero_title,
 		hero_subtitle,
@@ -362,7 +363,7 @@ func siteReturningColumns() string {
 		about_stats,
 		about_checkmarks,
 		about_features,
-		gtm_id,
+		nullif(btrim(gtm_id), '') as gtm_id,
 		meta_pixel_id,
 		google_ads_id,
 		head_scripts,
