@@ -195,12 +195,14 @@ const listFocusSQL = `
 			lt.title,
 			coalesce(nullif(btrim(lt.description), ''), 'Lead: ' || l.name) as description,
 			coalesce(lt.due_at, lt.due_date::timestamptz) as due_at,
-			case
-			  when coalesce(lt.due_at, lt.due_date::timestamptz) <= now() then 'breached'
+			case task_state.severity_rank
+			  when 0 then 'breached'
+			  when 1 then 'warning'
 			  else 'due'
 			end as status,
-			case
-			  when coalesce(lt.due_at, lt.due_date::timestamptz) <= now() then 'critical'
+			case task_state.severity_rank
+			  when 0 then 'critical'
+			  when 1 then 'warning'
 			  else 'neutral'
 			end as tone,
 			case
@@ -213,10 +215,7 @@ const listFocusSQL = `
 			s.name as stage_name,
 			coalesce(lt.assigned_user_id, l.assigned_user_id) as assigned_user_id,
 			1 as source_priority,
-			case
-			  when coalesce(lt.due_at, lt.due_date::timestamptz) <= now() then 0
-			  else 2
-			end as severity_rank
+			task_state.severity_rank
 		from public.lead_tasks lt
 		join public.leads l
 		  on l.organization_id = lt.organization_id and l.id = lt.lead_id
@@ -229,6 +228,23 @@ const listFocusSQL = `
 		 and current_stage_cycle.exited_at is null
 		left join public.cadence_enrollments ce
 		  on ce.organization_id = lt.organization_id and ce.id = lt.cadence_enrollment_id
+		cross join lateral (
+		  select case
+		    when lt.cadence_enrollment_id is not null
+		      and lt.due_at is not null
+		      and coalesce(lower(ce.metadata->>'historical_backfill'), 'false') = 'false'
+		      and lt.metadata->>'warning_minutes' ~ '^[1-9][0-9]{0,6}$'
+		    then lt.due_at - make_interval(mins => (lt.metadata->>'warning_minutes')::integer)
+		  end as warning_at
+		) cadence_schedule
+		cross join lateral (
+		  select case
+		    when coalesce(lt.due_at, lt.due_date::timestamptz) <= now() then 0
+		    when cadence_schedule.warning_at > current_stage_cycle.entered_at
+		      and cadence_schedule.warning_at <= now() then 1
+		    else 2
+		  end as severity_rank
+		) task_state
 		where lt.organization_id = $1::uuid
 		  and l.deal_status = 'open'
 		  and lt.status = 'pending'
