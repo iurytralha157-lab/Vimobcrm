@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "9d717d6689e7943c6c69de7b73ffd09b564c624ccf05be70e048b97c3e651f0d",
+  "sourceDigestSha256": "c6bb3a39591e09417dd9b59fd4f07cec266a988de7737c5798e2005d6098c59f",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -3103,10 +3103,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:5ff266dbeb76902d7ff7",
+          "id": "overlay:91e0b786fe8eece113b3",
           "column": 5,
           "file": "components/features/properties/PropertyHistoryDialog.tsx",
-          "line": 220,
+          "line": 224,
           "owner": "PropertyHistoryDialog",
           "routes": [
             "/properties",
@@ -23538,10 +23538,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:1ef1a6361020645531a9",
+          "id": "cta:bd50c48f9402f69ab5c5",
           "column": 19,
           "file": "components/features/properties/PropertyHistoryDialog.tsx",
-          "line": 260,
+          "line": 264,
           "owner": "PropertyHistoryDialog",
           "routes": [
             "/properties",
@@ -47530,7 +47530,7 @@
         }
       ]
     },
-    "digestSha256": "1e5d91a26c57466af968ed8484925c5dc0997481bb893581e172634396e208dc"
+    "digestSha256": "fa4a8029d591ad7010a8ebdf842273028568cd2e67c13b9e9a4749aeb223bb58"
   },
   "routes": [
     {

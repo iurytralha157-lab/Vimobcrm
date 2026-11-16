@@ -131,7 +131,11 @@ function historyAction(
   eventType: string,
   metadata: Record<string, unknown>,
   property: Property | null,
+  title: string,
 ) {
+  if (eventType === "property_publication_job") {
+    return { before: title, property: "", after: "" };
+  }
   const label = propertyLabel(metadata, property);
   const status =
     statusLabel(changedTo(metadata, "status")) ||
@@ -281,8 +285,11 @@ export function PropertyHistoryDialog({
                   event.type,
                   event.metadata,
                   property,
+                  title,
                 );
+                const isPublicationJob = event.type === "property_publication_job";
                 const actorId =
+                  (isPublicationJob && metadataString(event.metadata?.requested_by)) ||
                   metadataString(event.metadata?.actor_user_id) ||
                   metadataString(event.metadata?.user_id) ||
                   metadataString(event.metadata?.created_by);
@@ -291,7 +298,7 @@ export function PropertyHistoryDialog({
                   event.metadata?.user_name,
                 );
                 const actorName =
-                  actor?.name || actor?.email || fallbackActorName;
+                  actor?.name || (!isPublicationJob && actor?.email) || fallbackActorName;
                 const lowerTitle = title.toLowerCase();
                 const lowerMessage = message?.toLowerCase() || "";
                 const isAutomation =
@@ -301,7 +308,9 @@ export function PropertyHistoryDialog({
                   lowerTitle.includes("automaticamente") ||
                   lowerMessage.includes("automaticamente");
                 const displayActor = isAutomation ? null : actor;
-                const actorLabel = isAutomation
+                const actorLabel = isPublicationJob
+                  ? `Solicitante: ${actorName || "Sistema"}`
+                  : isAutomation
                   ? "Automatico"
                   : actorName || "Sistema";
 

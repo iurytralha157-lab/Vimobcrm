@@ -1318,6 +1318,51 @@ func (repo Repository) ListHistory(ctx context.Context, tenantContext tenant.Con
 			join visible_property p
 			  on p.organization_id = se.organization_id
 			 and p.id = se.property_id
+		),
+		publication_rows as (
+			select
+				'publication-job:' || job.id::text as id,
+				'property_publication_job' as event_type,
+				jsonb_build_object(
+					'job_id', job.id::text,
+					'channel', job.channel,
+					'action', job.action,
+					'status', job.status,
+					'version', version.version,
+					'attempts', job.attempts,
+					'max_attempts', job.max_attempts,
+					'requested_by', job.requested_by::text,
+					'completed_at', job.completed_at
+				) as payload,
+				job.created_at,
+				concat(
+					case job.action
+						when 'publish' then 'Solicitação de publicação'
+						when 'update' then 'Solicitação de atualização'
+						when 'unpublish' then 'Solicitação de remoção'
+						when 'revalidate' then 'Solicitação de revalidação'
+						else 'Solicitação de processamento'
+					end,
+					' no ', case job.channel when 'site' then 'Site' when 'grupo_olx' then 'Grupo OLX' else 'canal de publicação' end,
+					' — ', case job.status
+						when 'pending' then 'Na fila'
+						when 'processing' then 'Processando'
+						when 'retry' then 'Nova tentativa agendada'
+						when 'succeeded' then 'Concluída'
+						when 'superseded' then 'Substituída'
+						when 'dead' then 'Falhou'
+						else 'Estado não informado'
+					end
+				) as title
+			from public.property_channel_publication_jobs job
+			join visible_property p
+			  on p.organization_id = job.organization_id
+			 and p.id = job.property_id
+			left join public.property_channel_publication_versions version
+			  on version.id = job.version_id
+			 and version.organization_id = job.organization_id
+			 and version.property_id = job.property_id
+			 and version.publication_id = job.publication_id
 		)
 		select id, event_type, title, payload::text, created_at::text
 		from (
@@ -1326,6 +1371,8 @@ func (repo Repository) ListHistory(ctx context.Context, tenantContext tenant.Con
 			select * from property_created_row
 			union all
 			select * from schedule_rows
+			union all
+			select * from publication_rows
 		) history
 		order by created_at desc
 		limit 100

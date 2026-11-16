@@ -224,6 +224,14 @@ jobs:
           go test -count=1 -v ./apps/api/internal/leads
           -run '^TestDashboardVisitPrivacyAndRawSourcesReadOnlyIntegration$'
 
+      - name: Test canonical publication history and property visibility
+        env:
+          VIMOB_PROPERTY_REMEDIATION_WRITE_TEST: LOCAL_WRITE_TEST
+          VIMOB_PROPERTY_REMEDIATION_ADMIN_URL: postgresql://postgres:membership_test@127.0.0.1:5432/postgres?sslmode=disable
+        run: >-
+          go test -count=1 -v ./apps/api/internal/properties
+          -run '^TestPropertyPublicationHistoryPostgres$'
+
   whatsapp-contracts:
     name: WhatsApp disposable PostgreSQL and mobile contracts
     runs-on: ubuntu-24.04

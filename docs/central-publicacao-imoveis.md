@@ -255,6 +255,13 @@ amplia a visibilidade silenciosamente com bairro ou CEP.
 
 ## Observabilidade
 
+`GET /v1/properties/{id}/history` tambem projeta cada pedido canonico como
+`property_publication_job`, com ID `publication-job:<uuid>`, canal, acao e estado
+explicitos. A linha corresponde ao pedido e usa seu horario de criacao; retry
+nao cria uma linha por tentativa. `requested_by` identifica somente o solicitante.
+A projecao respeita a visibilidade do imovel e nao expoe snapshot, URL, segredo
+ou erro bruto. Eventos legados permanecem separados sem correlacao presumida.
+
 Cada canal deve expor na Ficha 360 o ultimo pedido, tentativa, sucesso, erro,
 versoes atual e publicada, prontidao e historico recente de jobs. As metricas
 minimas do worker sao jobs pendentes, idade do job mais antigo, taxa de sucesso,
