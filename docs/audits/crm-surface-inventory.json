@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "899e6bcafcbfdaaccb44f789acb8aea65d7d1a2c27c7dccb20f9c80da344a7be",
+  "sourceDigestSha256": "9d717d6689e7943c6c69de7b73ffd09b564c624ccf05be70e048b97c3e651f0d",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -28558,10 +28558,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0b3d277e0906ff8021fa",
+          "id": "cta:ccd266ec36e8cfdcbf6d",
           "column": 19,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 1156,
+          "line": 1157,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -28570,10 +28570,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:94564d6888ed9e47559f",
+          "id": "cta:d11d64fa36dab5dca924",
           "column": 17,
           "file": "components/features/settings/AccountTab.tsx",
-          "line": 1172,
+          "line": 1173,
           "owner": "AccountTab",
           "routes": [
             "/settings"
@@ -47530,7 +47530,7 @@
         }
       ]
     },
-    "digestSha256": "5a7878cf2dffca326eac599889133b0e01c14474efb691191132a05356d3a041"
+    "digestSha256": "1e5d91a26c57466af968ed8484925c5dc0997481bb893581e172634396e208dc"
   },
   "routes": [
     {
