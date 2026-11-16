@@ -18,19 +18,22 @@ before(async () => {
   directory = await mkdtemp(join(tmpdir(), 'vimob-lead-tag-picker-'));
   const stub = join(directory, 'stub.tsx'), api = join(directory, 'api.ts'), entry = join(directory, 'entry.tsx'), loader = join(directory, 'loader.cjs');
   await writeFile(stub, `import{createContext,useContext}from'react';export const Auth=createContext(null);export const useAuth=()=>useContext(Auth);export const useUserPermissions=()=>{const auth=useAuth();return{hasPermission:key=>auth.permissions.includes(key)}};`);
-  await writeFile(api, `export const tagsAPI={catalog:(org,options)=>window.h.request('catalog',{org,options}),create:(input,org)=>window.h.request('create',{org,input})};`);
+  await writeFile(api, `export const tagsAPI={list:org=>window.h.request('list',{org}),catalog:(org,options)=>window.h.request('catalog',{org,options}),create:(input,org)=>window.h.request('create',{org,input})};`);
   await writeFile(loader, `const ts=require(${JSON.stringify(require.resolve('typescript'))});module.exports=source=>ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext,jsx:ts.JsxEmit.ReactJSX}}).outputText;`);
   await writeFile(entry, `import React,{useState}from'react';import{createRoot}from'react-dom/client';import{QueryClient,QueryClientProvider}from'@tanstack/react-query';
-    import{LeadTagPickerContent}from'@/components/features/leads/lead-detail/LeadTagPickerContent';import{Popover,PopoverContent,PopoverTrigger}from'@/components/ui/popover';import{Auth}from'./stub';
+    import{LeadTagPickerContent}from'@/components/features/leads/lead-detail/LeadTagPickerContent';import{TagSelector,InlineTagSelector,TagSelectorPopoverContent}from'@/components/ui/tag-selector';import{useTags}from'@/hooks/use-tags';import{Popover,PopoverContent,PopoverTrigger}from'@/components/ui/popover';import{Auth}from'./stub';
     const token=(uid,sid)=>'header.'+btoa(JSON.stringify({sub:uid,session_id:sid}))+'.synthetic';
-    const h=window.h={requests:[],added:[],closed:0};h.request=(kind,input)=>new Promise((resolve,reject)=>h.requests.push({kind,input,resolve,reject}));
+    const h=window.h={requests:[],added:[],removed:[],toggled:[],closed:0};h.request=(kind,input)=>new Promise((resolve,reject)=>h.requests.push({kind,input,resolve,reject}));
     const client=h.client=new QueryClient({defaultOptions:{queries:{retry:false,gcTime:Infinity},mutations:{retry:false}}});
-    function Fixture(){const[scope,setScope]=useState({org:'org-a',uid:'user-a',sid:'sid-a',permissions:['tag_manage']}),[assigned,setAssigned]=useState(['assigned']),[shown,setShown]=useState(false),[disabled,setDisabled]=useState(false),[lead,setLead]=useState('lead-a');
-      h.scope=scope;h.currentLead=lead;h.replace=patch=>setScope(old=>({...old,...patch}));h.assigned=setAssigned;h.disable=setDisabled;h.show=setShown;h.lead=setLead;
+    function LegacyPopover({assigned,add,close}){const{data=[]}=useTags();return <TagSelectorPopoverContent availableTags={data.filter(tag=>!assigned.includes(tag.id))} onAddTag={add} onClose={close}/>}
+    function Fixture(){const[scope,setScope]=useState({org:'org-a',uid:'user-a',sid:'sid-a',permissions:['tag_manage']}),[assigned,setAssigned]=useState(['assigned']),[shown,setShown]=useState(false),[disabled,setDisabled]=useState(false),[lead,setLead]=useState('lead-a'),[kind,setKind]=useState('modern');
+      h.scope=scope;h.currentLead=lead;h.replace=patch=>setScope(old=>({...old,...patch}));h.assigned=setAssigned;h.disable=setDisabled;h.show=setShown;h.lead=setLead;h.kind=kind;h.pickKind=setKind;h.selection=assigned;
+      const add=id=>{h.added.push(id);setAssigned(old=>old.includes(id)?old:[...old,id])},remove=id=>{h.removed.push(id);setAssigned(old=>old.filter(value=>value!==id))},toggle=id=>{h.toggled.push(id);setAssigned(old=>old.includes(id)?old.filter(value=>value!==id):[...old,id])},close=()=>{h.closed++;setShown(false)};
       return <Auth.Provider value={{activeOrganization:{organizationId:scope.org},user:{id:scope.uid},session:{access_token:token(scope.uid,scope.sid)},permissions:scope.permissions}}><QueryClientProvider client={client}>
-        <Popover open={shown} onOpenChange={setShown}><PopoverTrigger asChild><button>Adicionar tag</button></PopoverTrigger><PopoverContent className='w-64 max-w-[calc(100vw-24px)] p-0' align='start' collisionPadding={12}>
+        {kind==='selector'?<TagSelector selectedTagIds={assigned} onSelectTag={add} onRemoveTag={remove} placeholder='Adicionar tag'/>:kind==='inline'?<InlineTagSelector selectedTagIds={assigned} onToggleTag={toggle}/>:<Popover open={shown} onOpenChange={setShown}><PopoverTrigger asChild><button>Adicionar tag</button></PopoverTrigger><PopoverContent className='w-64 max-w-[calc(100vw-24px)] p-0' align='start' collisionPadding={12}>
+          {kind==='popover'?<LegacyPopover assigned={assigned} add={add} close={close}/>:
           <LeadTagPickerContent leadId={lead} assignedTagIds={assigned} disabled={disabled} onAddTag={tag=>{h.added.push(tag);if(h.rejectAddition)return Promise.reject(Error('Synthetic association rejection'));if(h.deferAddition)return new Promise(resolve=>{h.finishAddition=resolve})}} onClose={()=>{h.closed++;setShown(false)}}/>
-        </PopoverContent></Popover></QueryClientProvider></Auth.Provider>}
+          }</PopoverContent></Popover>}</QueryClientProvider></Auth.Provider>}
     createRoot(document.getElementById('app')).render(<Fixture/>);`);
   const { webpack } = require('next/dist/compiled/webpack/webpack');
   await new Promise((done, reject) => {
@@ -165,4 +168,111 @@ for (const replacement of ['close', 'organization', 'session', 'permission', 'le
   if (replacement === 'lead') { await page.evaluate(() => window.h.lead('lead-b')); await page.waitForFunction(() => window.h.currentLead === 'lead-b'); }
   await page.evaluate(tag => window.h.requests.find(request => request.kind === 'create').resolve(tag), { ...tags[1], name: 'Nova' });
   await page.waitForTimeout(75); assert.equal(await page.evaluate(() => window.h.added.length), 0); assert.equal(await page.evaluate(() => window.h.closed), 0);
+});
+
+const legacyKinds = ['selector', 'inline', 'popover'];
+async function legacy(kind) {
+  await page.evaluate(kind => window.h.pickKind(kind), kind);
+  await page.waitForFunction(kind => window.h.kind === kind, kind);
+  if (kind === 'popover') await page.getByRole('button', { name: 'Adicionar tag', exact: true }).click();
+  await page.waitForFunction(() => window.h.requests.some(request => request.kind === 'list'));
+  const index = await page.evaluate(() => window.h.requests.findIndex(request => request.kind === 'list'));
+  await respond(index);
+  if (kind === 'selector') await page.getByRole('button', { name: 'Adicionar', exact: true }).click();
+  await page.getByText('Visitação', { exact: true }).waitFor();
+}
+function legacyInput(kind) {
+  return kind === 'inline' ? page.getByPlaceholder('Nome da nova tag...') : page.getByRole('textbox', { name: /^Buscar/ });
+}
+function legacyCreateButton(kind) {
+  return kind === 'inline'
+    ? page.getByPlaceholder('Nome da nova tag...').locator('..').getByRole('button')
+    : page.getByRole('button', { name: /^Criar/ });
+}
+async function createRequestCount() {
+  return page.evaluate(() => window.h.requests.filter(request => request.kind === 'create').length);
+}
+
+for (const kind of legacyKinds) {
+  test(`${kind}: no tag_manage hides global creation but keeps catalog selection`, async () => {
+    await replace({ permissions: [] }); await legacy(kind);
+    if (kind === 'inline') assert.equal(await legacyInput(kind).count(), 0);
+    else {
+      assert.equal(await page.getByRole('button', { name: /^Criar/ }).count(), 0);
+      assert.equal(await legacyInput(kind).getAttribute('placeholder'), 'Buscar tag...');
+    }
+    assert.equal(await page.getByText('Visitação', { exact: true }).isVisible(), true);
+    assert.equal(await createRequestCount(), 0);
+  });
+
+  test(`${kind}: Enter without tag_manage cannot submit a create request`, async () => {
+    await replace({ permissions: [] }); await legacy(kind);
+    const input = legacyInput(kind);
+    if (await input.count()) { await input.fill('Sem permissão'); await input.press('Enter'); }
+    await page.waitForTimeout(50);
+    assert.equal(await createRequestCount(), 0);
+    assert.deepEqual(await page.evaluate(() => window.h.selection), ['assigned']);
+  });
+
+  test(`${kind}: an existing tag remains selectable without tag_manage`, async () => {
+    await replace({ permissions: [] }); await legacy(kind);
+    await page.getByText('Visitação', { exact: true }).click();
+    await page.waitForFunction(() => window.h.selection.includes('available'));
+    assert.equal(await createRequestCount(), 0);
+  });
+
+  for (const gesture of ['button', 'Enter']) test(`${kind}: tag_manage preserves creation by ${gesture}`, async () => {
+    await legacy(kind); await legacyInput(kind).fill('  Nova permitida  ');
+    if (gesture === 'Enter') await legacyInput(kind).press('Enter');
+    else await legacyCreateButton(kind).click();
+    await page.waitForFunction(() => window.h.requests.some(request => request.kind === 'create'));
+    const request = await page.evaluate(() => window.h.requests.find(request => request.kind === 'create').input);
+    assert.equal(request.org, 'org-a'); assert.equal(request.input.name, 'Nova permitida');
+    assert.equal(await createRequestCount(), 1);
+    await page.evaluate(tag => window.h.requests.find(request => request.kind === 'create').resolve(tag), { ...tags[1], id: 'created', name: 'Nova permitida' });
+    await page.waitForFunction(() => window.h.selection.includes('created'));
+  });
+
+  test(`${kind}: revoking permission in an open picker blocks Enter without removing associations`, async () => {
+    await legacy(kind); await legacyInput(kind).fill('Nova revogada');
+    await replace({ permissions: [] });
+    if (kind === 'inline') assert.equal(await legacyInput(kind).count(), 0);
+    else {
+      await legacyInput(kind).press('Enter');
+      assert.equal(await page.getByRole('button', { name: /^Criar/ }).count(), 0);
+    }
+    await page.waitForTimeout(50);
+    assert.equal(await createRequestCount(), 0);
+    assert.deepEqual(await page.evaluate(() => window.h.selection), ['assigned']);
+    await replace({ permissions: ['tag_manage'] });
+    assert.equal(await legacyInput(kind).isVisible(), true);
+    assert.equal(await createRequestCount(), 0, 'restoring permission does not submit automatically');
+  });
+
+  test(`${kind}: another tenant without tag_manage cannot inherit the old creation affordance`, async () => {
+    await legacy(kind); await legacyInput(kind).fill('Rascunho do tenant A');
+    await replace({ org: 'org-b', permissions: [] });
+    await page.waitForFunction(() => window.h.requests.some(request => request.kind === 'list' && request.input.org === 'org-b'));
+    const index = await page.evaluate(() => window.h.requests.findIndex(request => request.kind === 'list' && request.input.org === 'org-b'));
+    await respond(index, []);
+    if (kind === 'inline') {
+      assert.equal(await legacyInput(kind).count(), 0);
+      await page.getByText('Nenhuma tag disponível.', { exact: true }).waitFor();
+    } else {
+      assert.equal(await page.getByRole('button', { name: /^Criar/ }).count(), 0);
+      await legacyInput(kind).press('Enter');
+    }
+    assert.equal(await createRequestCount(), 0);
+    assert.deepEqual(await page.evaluate(() => window.h.selection), ['assigned']);
+  });
+}
+
+for (const kind of ['selector', 'inline']) test(`${kind}: removal of an existing association does not require global tag management`, async () => {
+  await replace({ permissions: [] }); await legacy(kind);
+  if (kind === 'selector') {
+    await page.keyboard.press('Escape');
+    await page.getByText('Já atribuída', { exact: true }).getByRole('button').click();
+  } else await page.getByText('Já atribuída', { exact: true }).click();
+  await page.waitForFunction(() => !window.h.selection.includes('assigned'));
+  assert.equal(await createRequestCount(), 0);
 });

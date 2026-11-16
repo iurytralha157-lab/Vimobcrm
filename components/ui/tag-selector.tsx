@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useTags, useCreateTag } from '@/hooks/use-tags';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -54,6 +55,8 @@ export function TagSelector({
 }: TagSelectorProps) {
   const { data: allTags = [], isLoading: tagsLoading } = useTags();
   const createTag = useCreateTag();
+  const { hasPermission } = useUserPermissions();
+  const canCreateTags = hasPermission('tag_manage');
 
   const [open, setOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -83,7 +86,7 @@ export function TagSelector({
     : filteredTags;
 
   const handleCreateTag = async () => {
-    if (!searchTerm.trim() || exactMatch) return;
+    if (!canCreateTags || !searchTerm.trim() || exactMatch) return;
 
     setIsCreating(true);
     try {
@@ -107,7 +110,7 @@ export function TagSelector({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && searchTerm.trim() && !exactMatch) {
+    if (e.key === 'Enter' && canCreateTags && searchTerm.trim() && !exactMatch) {
       e.preventDefault();
       handleCreateTag();
     }
@@ -202,8 +205,8 @@ export function TagSelector({
               <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 ref={inputRef}
-                aria-label="Buscar ou criar tag"
-                placeholder="Buscar ou criar tag..."
+                aria-label={canCreateTags ? 'Buscar ou criar tag' : 'Buscar tag'}
+                placeholder={canCreateTags ? 'Buscar ou criar tag...' : 'Buscar tag...'}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -256,7 +259,7 @@ export function TagSelector({
           </div>
 
           {/* Create new tag — fixed footer, same pattern as "Criar nova origem" */}
-          <div className="shrink-0 rounded-b-md border-t border-[var(--app-border)] bg-popover p-1">
+          {canCreateTags && <div className="shrink-0 rounded-b-md border-t border-[var(--app-border)] bg-popover p-1">
             <button
               type="button"
               onClick={() => {
@@ -280,7 +283,7 @@ export function TagSelector({
                 'Criar nova tag'
               )}
             </button>
-          </div>
+          </div>}
         </PopoverContent>
       </Popover>
     </div>
@@ -303,12 +306,14 @@ export function InlineTagSelector({
 }: InlineTagSelectorProps) {
   const { data: allTags = [], isLoading } = useTags();
   const createTag = useCreateTag();
+  const { hasPermission } = useUserPermissions();
+  const canCreateTags = hasPermission('tag_manage');
 
   const [newTagName, setNewTagName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
 
   const handleCreateTag = async () => {
-    if (!newTagName.trim()) return;
+    if (!canCreateTags || !newTagName.trim()) return;
 
     // Check if tag already exists
     const exists = allTags.some(
@@ -349,13 +354,13 @@ export function InlineTagSelector({
   return (
     <div className={cn("space-y-3", className)}>
       {/* Create new tag input */}
-      <div className="flex gap-2">
+      {canCreateTags && <div className="flex gap-2">
         <Input
           placeholder="Nome da nova tag..."
           value={newTagName}
           onChange={(e) => setNewTagName(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && canCreateTags) {
               e.preventDefault();
               handleCreateTag();
             }
@@ -375,13 +380,13 @@ export function InlineTagSelector({
             <Plus className="h-3.5 w-3.5" />
           )}
         </Button>
-      </div>
+      </div>}
 
       {/* Tags grid */}
       <div className="flex flex-wrap gap-2">
         {allTags.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Nenhuma tag disponível. Crie uma acima.
+            {canCreateTags ? 'Nenhuma tag disponível. Crie uma acima.' : 'Nenhuma tag disponível.'}
           </p>
         ) : (
           allTags.map(tag => {
@@ -423,6 +428,8 @@ export function TagSelectorPopoverContent({
   onClose
 }: TagSelectorPopoverContentProps) {
   const createTag = useCreateTag();
+  const { hasPermission } = useUserPermissions();
+  const canCreateTags = hasPermission('tag_manage');
   const [searchTerm, setSearchTerm] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -440,7 +447,7 @@ export function TagSelectorPopoverContent({
   );
 
   const handleCreateTag = async () => {
-    if (!searchTerm.trim() || exactMatch) return;
+    if (!canCreateTags || !searchTerm.trim() || exactMatch) return;
 
     setIsCreating(true);
     try {
@@ -482,12 +489,12 @@ export function TagSelectorPopoverContent({
           <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             ref={inputRef}
-            aria-label="Buscar ou criar tag"
-            placeholder="Buscar ou criar tag..."
+            aria-label={canCreateTags ? 'Buscar ou criar tag' : 'Buscar tag'}
+            placeholder={canCreateTags ? 'Buscar ou criar tag...' : 'Buscar tag...'}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && searchTerm.trim() && !exactMatch) {
+              if (e.key === 'Enter' && canCreateTags && searchTerm.trim() && !exactMatch) {
                 e.preventDefault();
                 handleCreateTag();
               }
@@ -530,7 +537,7 @@ export function TagSelectorPopoverContent({
       </div>
 
       {/* Create new tag — fixed footer, same pattern as "Criar nova origem" */}
-      <div className="shrink-0 rounded-b-md border-t border-[var(--app-border)] bg-popover p-1">
+      {canCreateTags && <div className="shrink-0 rounded-b-md border-t border-[var(--app-border)] bg-popover p-1">
         <button
           type="button"
           onClick={() => {
@@ -554,7 +561,7 @@ export function TagSelectorPopoverContent({
             'Criar nova tag'
           )}
         </button>
-      </div>
+      </div>}
     </div>
   );
 }
