@@ -320,6 +320,7 @@ export function useProperty(id: string | null) {
     },
     enabled: !!id && allowed,
     staleTime: 0,
+    refetchOnMount: "always",
   });
   return { ...query, data: allowed ? query.data : null };
 }
