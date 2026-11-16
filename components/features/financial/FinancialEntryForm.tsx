@@ -37,7 +37,9 @@ const formSchema = z
     type: z.enum(['receivable', 'payable']),
     category: z.string().trim().min(1, 'Categoria é obrigatória').max(180),
     description: z.string().trim().min(1, 'Descrição é obrigatória').max(2_000),
-    amount: z.number().finite().min(0.01, 'Valor deve ser maior que zero'),
+    amount: z.number({
+      error: issue => issue.input === undefined ? 'Valor é obrigatório' : 'Informe um valor numérico válido',
+    }).finite().min(0.01, 'Valor deve ser maior que zero'),
     due_date: financialCalendarDateSchema,
     payment_method: z.string().trim().max(180).optional(),
     contract_id: z.string().optional(),

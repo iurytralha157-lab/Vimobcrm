@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "227ab8beaccf0760f3d9d2d47e8fe5b7ebc5824fbc1df56104e86c32a172ac08",
+  "sourceDigestSha256": "9e7550743e10fcdb679565b2ed1e095f20d67cd3f6ecb6fcbe94e9639640bb7e",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -6399,10 +6399,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:610c2a1ba047636aa101",
+          "id": "form:941e6f8127854cdb6099",
           "column": 7,
           "file": "components/features/financial/FinancialEntryForm.tsx",
-          "line": 226,
+          "line": 228,
           "owner": "FinancialEntryForm",
           "routes": [
             "/financeiro/contas"
@@ -14639,10 +14639,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a2685d54104f02970e2d",
+          "id": "cta:92feac9879e30e622f87",
           "column": 21,
           "file": "components/features/financial/FinancialEntryForm.tsx",
-          "line": 395,
+          "line": 397,
           "owner": "FinancialEntryForm",
           "routes": [
             "/financeiro/contas"
@@ -14651,10 +14651,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:eacd1e02c0b90ed22349",
+          "id": "cta:ab3dee6d73b8c846329e",
           "column": 11,
           "file": "components/features/financial/FinancialEntryForm.tsx",
-          "line": 539,
+          "line": 541,
           "owner": "FinancialEntryForm",
           "routes": [
             "/financeiro/contas"
@@ -14663,10 +14663,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:5fe8922197cecd2f0b31",
+          "id": "cta:010d046f81e63840fac2",
           "column": 11,
           "file": "components/features/financial/FinancialEntryForm.tsx",
-          "line": 542,
+          "line": 544,
           "owner": "FinancialEntryForm",
           "routes": [
             "/financeiro/contas"
@@ -47530,7 +47530,7 @@
         }
       ]
     },
-    "digestSha256": "72a5ab2c191f00295e8e872fcd490699e77f752761fc9da4ae3a22465de73952"
+    "digestSha256": "0a3aee77d5527d2097bc194c950dec70518e64e49788a7ef265dec227778ce00"
   },
   "routes": [
     {
