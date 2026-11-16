@@ -45,6 +45,11 @@ jobs:
       - name: Test validation contracts
         run: npm run validation:test
 
+      - name: Test lead history projection
+        run: |
+          npx tsc -p hooks/lead-history/tsconfig.test.json --outDir .validation-tests
+          node --import ./scripts/tests/typescript-alias-hooks.mjs --test .validation-tests/hooks/lead-history/*.test.js
+
       - name: Test team revision OpenAPI contract
         run: node --test packages/contracts/openapi/team-revision-contract.test.mjs
 

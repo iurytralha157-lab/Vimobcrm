@@ -6,7 +6,7 @@
   "include": [
     "./activity-deduplication.ts",
     "./audit.ts",
-    "./build-history.test.ts",
+    "./*.test.ts",
     "./build-history.ts",
     "./forms.ts",
     "./metadata.ts",

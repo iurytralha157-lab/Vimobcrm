@@ -50,10 +50,29 @@ const AUDIT_FIELD_LABELS: Record<string, string> = {
 const AUDIT_IGNORED_FIELDS = new Set(['origin', 'is_own_resource']);
 const AUDIT_FEMININE_FIELDS = new Set(['birth_date', 'source', 'empresa', 'profissao', 'renda_familiar', 'commission_percentage']);
 
+function auditValuesEqual(previous: unknown, next: unknown): boolean {
+  // Redaction hides the actual values, so matching placeholders prove nothing.
+  if (previous === '[valor protegido]' || next === '[valor protegido]') return false;
+  if (Array.isArray(previous) || Array.isArray(next)) {
+    return Array.isArray(previous) && Array.isArray(next) && previous.length === next.length
+      && previous.every((value, index) => auditValuesEqual(value, next[index]));
+  }
+  if (previous && next && typeof previous === 'object' && typeof next === 'object') {
+    const before = asMetadata(previous);
+    const after = asMetadata(next);
+    const keys = Object.keys(before);
+    return keys.length === Object.keys(after).length
+      && keys.every(key => Object.hasOwn(after, key) && auditValuesEqual(before[key], after[key]));
+  }
+  return previous === next;
+}
+
 function auditChangedKeys(audit: AuditLogRow) {
+  const oldData = asMetadata(audit.old_data);
   const newData = asMetadata(audit.new_data);
   return Object.keys(newData)
     .filter((key) => !AUDIT_IGNORED_FIELDS.has(key) && key in AUDIT_FIELD_LABELS)
+    .filter((key) => !Object.hasOwn(oldData, key) || !auditValuesEqual(oldData[key], newData[key]))
     .sort();
 }
 

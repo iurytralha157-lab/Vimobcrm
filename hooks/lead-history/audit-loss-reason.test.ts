@@ -134,11 +134,15 @@ for (const meta of [
   assert.deepEqual(keys(statusAudit('open', 'lost', { operation_id: operationId }),
     [activity({}, { metadata: { ...meta, operation_id: operationId } })]), ['deal_status', 'lost_reason']);
 });
-for (const [from, to] of [['lost', 'lost'], [protectedValue, 'lost'], ['open', protectedValue], ['', 'lost']]) {
-  test(`unchanged or noncanonical audit status is never deduplicated: ${from}/${to}`, () => {
+for (const [from, to] of [[protectedValue, 'lost'], ['open', protectedValue], ['', 'lost']]) {
+  test(`noncanonical audit status is never deduplicated: ${from}/${to}`, () => {
     assert.deepEqual(keys(statusAudit(from, to, { request_id: requestId }), [activity({ request_id: requestId, from_status: from, to_status: to })]), ['deal_status', 'lost_reason']);
   });
 }
+test('proven unchanged status is hidden while matching protected loss reasons remain', () => {
+  assert.deepEqual(keys(statusAudit('lost', 'lost', { request_id: requestId }),
+    [activity({ request_id: requestId, from_status: 'lost', to_status: 'lost' })]), ['lost_reason']);
+});
 
 test('a repeated same-actor status cycle cannot absorb the next reason-only edit by time or pair', () => {
   const activities = [activity(), activity({ from_status: 'lost', to_status: 'open' }, { id: 'reopen', created_at: '2026-10-19T10:01:05.000Z' }),
