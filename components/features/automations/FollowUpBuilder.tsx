@@ -702,9 +702,10 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
             ...pos,
           });
         } else if (node.type === 'tag') {
+          const selectedTag = tags?.find(t => t.id === node.data.tag_id);
           dbNodes.push({
             id: node.id, node_type: 'action', action_type: node.data.tag_action === 'remove' ? 'remove_tag' : 'add_tag',
-            config: { tag_id: node.data.tag_id, tag_action: node.data.tag_action || 'add', actionType: node.data.tag_action === 'remove' ? 'remove_tag' : 'add_tag' },
+            config: { tag_id: node.data.tag_id, tag_action: node.data.tag_action || 'add', tag_name: selectedTag?.name || node.data.tag_name, actionType: node.data.tag_action === 'remove' ? 'remove_tag' : 'add_tag' },
             ...pos,
           });
         } else if (node.type === 'move_stage') {

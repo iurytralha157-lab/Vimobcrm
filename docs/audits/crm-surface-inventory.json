@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "d80036884776413a711fcdab14720af52eb3676be7d6acae8e5af3ec7128730f",
+  "sourceDigestSha256": "899e6bcafcbfdaaccb44f789acb8aea65d7d1a2c27c7dccb20f9c80da344a7be",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -11589,10 +11589,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a73be30cc468cb3096cb",
+          "id": "cta:a33e9d4589359133e921",
           "column": 11,
           "file": "components/features/automations/FollowUpBuilder.tsx",
-          "line": 796,
+          "line": 797,
           "owner": "FollowUpBuilderInner",
           "routes": [
             "/automations"
@@ -11601,10 +11601,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:9d0ce13aec8f63c57a29",
+          "id": "cta:ac23fe7c8746b0577016",
           "column": 11,
           "file": "components/features/automations/FollowUpBuilder.tsx",
-          "line": 809,
+          "line": 810,
           "owner": "FollowUpBuilderInner",
           "routes": [
             "/automations"
@@ -11613,10 +11613,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:35487a52dca946ba2527",
+          "id": "cta:6f96a1dc70f363b9695a",
           "column": 11,
           "file": "components/features/automations/FollowUpBuilder.tsx",
-          "line": 817,
+          "line": 818,
           "owner": "FollowUpBuilderInner",
           "routes": [
             "/automations"
@@ -11625,10 +11625,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2f1e1a595eb8400205c9",
+          "id": "cta:215d6422cd519fe6f8cf",
           "column": 21,
           "file": "components/features/automations/FollowUpBuilder.tsx",
-          "line": 841,
+          "line": 842,
           "owner": "FollowUpBuilderInner",
           "routes": [
             "/automations"
@@ -11637,10 +11637,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:f766547a6caa4111cf06",
+          "id": "cta:deddd7ed0d681f137f6b",
           "column": 29,
           "file": "components/features/automations/FollowUpBuilder.tsx",
-          "line": 856,
+          "line": 857,
           "owner": "FollowUpBuilderInner",
           "routes": [
             "/automations"
@@ -11649,10 +11649,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:e47f136482d76df02b94",
+          "id": "cta:79012f8693bed708cd9e",
           "column": 15,
           "file": "components/features/automations/FollowUpBuilder.tsx",
-          "line": 883,
+          "line": 884,
           "owner": "FollowUpBuilderInner",
           "routes": [
             "/automations"
@@ -47530,7 +47530,7 @@
         }
       ]
     },
-    "digestSha256": "0a3aee77d5527d2097bc194c950dec70518e64e49788a7ef265dec227778ce00"
+    "digestSha256": "5a7878cf2dffca326eac599889133b0e01c14474efb691191132a05356d3a041"
   },
   "routes": [
     {
