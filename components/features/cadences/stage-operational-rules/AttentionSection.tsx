@@ -238,8 +238,8 @@ export function AttentionSection({
                 <div className="mt-3 flex items-start gap-2 rounded-[8px] bg-warning/10 px-3 py-2.5">
                   <Eye className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" strokeWidth={1.5} />
                   <p className="text-[12px] font-light leading-[17px] text-[var(--app-text-secondary)]">
-                    Modo observação: acompanha os prazos sem exibir cobranças em
-                    Prioridades e atenções. Use para calibrar as regras antes de ativá-las.
+                    O modo de observação acompanha os prazos sem enviar alertas.
+                    Use para calibrar as regras antes de ativá-las.
                   </p>
                 </div>
               )}
@@ -386,7 +386,7 @@ function GlobalAttentionNotice({
     && globalAttention.notificationsEnabled === false
   ) {
     title = 'Notificações globais desativadas'
-    description = 'Os itens continuam ativos em Prioridades e atenções, mas não enviam notificações.'
+    description = 'As regras continuam acompanhando os prazos. As notificações estão desativadas.'
     Icon = BellRing
     tone = 'warning'
   }

@@ -9,7 +9,7 @@ Transformar a cadência em um acordo operacional simples:
 - o lead continua livre para mudar de etapa;
 - tarefas não executadas ficam auditadas, sem bloquear o funil;
 - ganho, perda e reabertura possuem comportamento previsível;
-- alertas de tempo e tarefas aparecem em um único foco operacional.
+- o roteiro do lead mostra tarefas, prazos e resultados da cadência.
 
 ## Modelo
 
@@ -18,7 +18,7 @@ Cada etapa pode ter:
 1. **Cadência**
    - ativada ou desativada;
    - zero ou mais tarefas explícitas;
-   - prazo e aviso em minutos;
+   - prazo em minutos;
    - tarefa obrigatória ou opcional;
    - resultado operacional obrigatório ou opcional;
    - instrução, observação e mensagem recomendada.
@@ -36,7 +36,7 @@ Etapa sem cadência ativa ou sem tarefas explícitas gera **zero obrigações**.
 Um template global ou antigo nunca ativa uma etapa sozinho: o opt-in acontece
 somente quando o gestor salva as novas regras daquela etapa.
 
-Os quatro limites opcionais de atenção e os avisos de tarefas de cadência são
+Os quatro limites opcionais de atenção e os prazos de tarefas de cadência são
 independentes. Uma cadência ativa e com tarefas sempre cria sua política técnica
 de prazo; escolher `inherit` ou desativar os quatro limites locais não silencia
 as tarefas pendentes. O kill switch global do motor de atenção continua sendo a
@@ -116,11 +116,6 @@ as tarefas pendentes. O kill switch global do motor de atenção continua sendo 
   - exige `lead_operate`;
   - conclui pela identificação exata da tarefa materializada;
   - exige resultado somente quando a regra da tarefa exigir.
-- `GET /v1/home/focus`
-  - reúne atenção, cadência e tarefas;
-  - elimina duplicidade entre alerta e tarefa;
-  - respeita organização, equipe e responsável.
-
 ## Regras de segurança
 
 - Nenhuma chamada Supabase parte dos componentes.
@@ -174,10 +169,8 @@ Executar apenas em uma organização e usuários de teste:
     - pendências atuais canceladas;
     - nenhuma matrícula criada no ciclo já aberto;
     - nova matrícula somente depois de sair e entrar novamente na etapa.
-12. Confirmar foco da página inicial:
-   - sem duplicidade;
-   - prioridade por atraso/aviso/prazo;
-   - item removido após conclusão.
+12. Abrir o roteiro no card do lead e conferir prazo, progresso e histórico da
+    conclusão após recarregar, sem duplicar a tarefa.
 13. Confirmar escopo:
    - corretor vê apenas leads permitidos;
    - líder vê sua equipe;
@@ -198,8 +191,8 @@ Executar apenas em uma organização e usuários de teste:
     - `inherit` usa a política mais específica do pipeline ou organização;
     - `local` com limite vazio bloqueia apenas aquele tipo herdado;
     - voltar para `inherit` remove o bloqueio local.
-18. Ativar uma cadência sem limites locais e confirmar que tarefas pendentes
-    ainda possuem aviso e vencimento pela política `cadence_task`.
+18. Ativar uma cadência sem limites locais e confirmar o vencimento das tarefas
+    pendentes pela política `cadence_task`.
 19. Manter um enrollment legado incompatível com a etapa e confirmar que suas
     tarefas continuam visíveis, sem tornar a etapa automaticamente ativa.
 20. Criar uma política pela Central de Atenção e confirmar que Regras da etapa

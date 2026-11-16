@@ -1366,7 +1366,6 @@ export default function Pipelines() {
 
       queryClient.invalidateQueries({ queryKey: ['activities', draggableId] });
       queryClient.invalidateQueries({ queryKey: ['lead-timeline', draggableId] });
-      queryClient.invalidateQueries({ queryKey: ['home'] });
       queryClient.invalidateQueries({ queryKey: ['stages-with-leads'], refetchType: 'none' });
       moveRollbackSnapshotByLeadRef.current.delete(draggableId);
     }).catch(async (error: unknown) => {

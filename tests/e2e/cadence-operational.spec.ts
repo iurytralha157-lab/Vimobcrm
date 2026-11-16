@@ -80,14 +80,6 @@ type CadenceState = {
   };
 };
 
-type HomeFocusItem = {
-  id: string;
-  kind: 'attention' | 'task';
-  lead_id: string;
-  title: string;
-  target_url: string;
-};
-
 type Envelope<T> = { data: T };
 
 type NotificationState = {
@@ -306,7 +298,7 @@ test.describe.serial('cadencias operacionais por etapa', () => {
     }
   });
 
-  test('corretor recebe o foco, visualiza o roteiro e conclui sem duplicidade', async ({ browser }) => {
+  test('corretor visualiza o roteiro pelo lead e conclui sem duplicidade', async ({ browser }) => {
     test.setTimeout(cadenceTestTimeout);
     const adminContext = await browser.newContext();
     const userContext = await browser.newContext();
@@ -325,18 +317,8 @@ test.describe.serial('cadencias operacionais por etapa', () => {
       expect(state.summary).toMatchObject({ total: 2, completed: 0, pending: 2 });
       expect(state.tasks.every((task) => task.status === 'pending')).toBe(true);
 
-      const focus = await parseResponse<Envelope<HomeFocusItem[]>>(
-        await authenticatedAPIRequest(userPage, 'GET', '/v1/home/focus?scope=mine&limit=20'),
-      );
-      const leadFocus = focus.data.filter((item) => item.lead_id === E2E_CADENCE_LEADS.primary);
-      expect(leadFocus).toHaveLength(2);
-      expect(leadFocus.every((item) => item.kind === 'task')).toBe(true);
-
-      await userPage.goto('/inicio');
-      const focusLink = userPage.locator(`a[href*="lead=${E2E_CADENCE_LEADS.primary}"]`).first();
-      await expect(focusLink).toBeVisible({ timeout: routeReadyTimeout });
-      await focusLink.click();
-      await expect(userPage.getByText('Cadência / Primeiro contato E2E')).toBeVisible();
+      await userPage.goto(`/crm/pipelines?lead=${E2E_CADENCE_LEADS.primary}`);
+      await expect(userPage.getByText('Cadência / Primeiro contato E2E')).toBeVisible({ timeout: routeReadyTimeout });
       await expect(userPage.getByText('Ligar para o lead', { exact: true })).toBeVisible();
 
       const directTask = state.tasks.find((task) => !task.outcome_required)!;
@@ -365,11 +347,6 @@ test.describe.serial('cadencias operacionais por etapa', () => {
         notificationsCreatedByCadenceFlow.filter(isCadenceNotification),
         'moving a lead and completing cadence tasks must not enqueue cadence notifications',
       ).toEqual([]);
-
-      const refreshedFocus = await parseResponse<Envelope<HomeFocusItem[]>>(
-        await authenticatedAPIRequest(userPage, 'GET', '/v1/home/focus?scope=mine&limit=20'),
-      );
-      expect(refreshedFocus.data.some((item) => item.lead_id === E2E_CADENCE_LEADS.primary)).toBe(false);
     } finally {
       await userContext.close();
       await adminContext.close();

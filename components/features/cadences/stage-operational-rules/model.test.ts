@@ -124,6 +124,7 @@ test('ordena a cadência no rascunho e recompõe posições no payload', () => {
 
   assert.deepEqual(payload.cadence.tasks.map((task) => task.position), [0, 1])
   assert.equal('clientKey' in payload.cadence.tasks[0], false)
+  assert.equal(payload.cadence.tasks[1].warning_minutes, 30)
 })
 
 test('normaliza posições sem alterar a ordem recebida', () => {
@@ -145,6 +146,7 @@ test('cria a próxima tarefa com defaults e respeita o limite operacional', () =
   const capped = createTask(2, MAX_OPERATIONAL_RULE_MINUTES)
 
   assert.equal(first.due_minutes, 60)
+  assert.equal('warning_minutes' in first, false)
   assert.equal(next.due_minutes, 1_500)
   assert.equal(capped.due_minutes, MAX_OPERATIONAL_RULE_MINUTES)
   assert.match(first.clientKey, /^new-\d+-0$/)
@@ -233,6 +235,6 @@ test('texto da prévia mantém a precedência do estado global', () => {
       isLoading: false,
       isError: false,
     }),
-    'Aparece em Prioridades e atenções, mas as notificações globais estão desativadas.',
+    'As regras continuam acompanhando os prazos. As notificações globais estão desativadas.',
   )
 })

@@ -24,7 +24,6 @@ export type HomeQuickAction = {
 };
 
 export const HOME_PAGE_SECTIONS = {
-  focus: true,
   publications: true,
 } as const;
 

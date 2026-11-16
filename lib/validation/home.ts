@@ -301,54 +301,12 @@ export const homeAssistantInputSchema = z
   })
   .strict();
 
-export const homeFocusKindSchema = z.enum(["attention", "task"]);
-export const homeFocusToneSchema = z.enum(["critical", "warning", "neutral"]);
 export const homeNoticeSourceSchema = z.enum(["billing", "announcement"]);
 export const homeNoticeSeveritySchema = z.enum([
   "critical",
   "warning",
   "announcement",
 ]);
-export const homeFocusPolicyTypeSchema = z.enum([
-  "unassigned",
-  "first_contact",
-  "first_effective_contact",
-  "stage_inactivity",
-  "stage_age",
-  "cadence_task",
-]);
-
-export const apiHomeFocusItemSchema = z
-  .object({
-    id: z.string().trim().min(1),
-    kind: homeFocusKindSchema,
-    obligation_key: z.string().trim().min(1),
-    lead_id: uuidSchema,
-    lead_name: z.string().trim().min(1),
-    title: z.string().trim().min(1),
-    description: z.string().trim(),
-    due_at: publicationTimestampSchema,
-    status: z.enum(["due", "warning", "breached"]),
-    tone: homeFocusToneSchema,
-    policy_type: homeFocusPolicyTypeSchema.nullish(),
-    task_type: z.string().trim().min(1).nullish(),
-    target_url: z
-      .string()
-      .trim()
-      .min(1)
-      .max(2_048)
-      .refine(
-        (value) => value.startsWith("/")
-          && !value.startsWith("//")
-          && !value.includes("\\")
-          && !/[\u0000-\u001F\u007F]/.test(value),
-        { message: "Use uma rota interna válida." },
-      ),
-    stage_id: uuidSchema.nullish(),
-    stage_name: z.string().trim().min(1).nullish(),
-  })
-  .strict();
-
 const homeNoticeActionURLSchema = z
   .string()
   .trim()
@@ -428,9 +386,6 @@ export const apiHomePublicationResponseSchema = apiEnvelopeSchema(
 export const apiHomeAssistantResponseSchema = apiEnvelopeSchema(
   apiHomeAssistantAnswerSchema.nullable(),
 );
-export const apiHomeFocusResponseSchema = apiEnvelopeSchema(
-  z.array(apiHomeFocusItemSchema),
-);
 export const apiHomeNoticeListResponseSchema = apiEnvelopeSchema(
   z.array(apiHomeNoticeSchema),
 );
@@ -468,9 +423,6 @@ export type UpdateHomePublicationInput = z.input<
   typeof updateHomePublicationInputSchema
 >;
 export type HomeAssistantAnswer = z.infer<typeof apiHomeAssistantAnswerSchema>;
-export type HomeFocusFeedItem = z.infer<typeof apiHomeFocusItemSchema>;
-export type HomeFocusFeedKind = z.infer<typeof homeFocusKindSchema>;
-export type HomeFocusFeedTone = z.infer<typeof homeFocusToneSchema>;
 export type HomeNotice = z.infer<typeof apiHomeNoticeSchema>;
 export type HomeNoticeSource = z.infer<typeof homeNoticeSourceSchema>;
 export type HomeNoticeSeverity = z.infer<typeof homeNoticeSeveritySchema>;

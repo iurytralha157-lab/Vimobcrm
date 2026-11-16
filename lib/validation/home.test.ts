@@ -6,7 +6,6 @@ import {
   HOME_PUBLICATION_CTA_HREFS,
   apiDeleteHomePublicationImageResponseSchema,
   apiHomeAssistantResponseSchema,
-  apiHomeFocusResponseSchema,
   apiHomeNoticeListResponseSchema,
   apiHomePublicationCardListResponseSchema,
   apiHomePublicationListResponseSchema,
@@ -297,86 +296,6 @@ test("assistente limita e normaliza a pergunta e aceita ausência de resposta", 
     }).success,
     true,
   );
-});
-
-test("feed operacional valida a obrigação e o ciclo atual com contrato estável", () => {
-  assert.equal(
-    apiHomeFocusResponseSchema.safeParse({
-      data: [
-        {
-          id: `attention:${ID}`,
-          kind: "attention",
-          obligation_key: `first_effective_contact:${SECOND_ID}`,
-          lead_id: ORGANIZATION_ID,
-          lead_name: "Maria",
-          title: "Contato efetivo com Maria",
-          description: "Pipeline · Atendimento",
-          due_at: "2026-07-31T12:00:00Z",
-          status: "warning",
-          tone: "warning",
-          policy_type: "first_effective_contact",
-          task_type: null,
-          target_url: `/crm/pipelines?lead=${ORGANIZATION_ID}`,
-          stage_id: SECOND_ID,
-          stage_name: "Atendimento",
-        },
-      ],
-    }).success,
-    true,
-  );
-
-  assert.equal(
-    apiHomeFocusResponseSchema.safeParse({
-      data: [
-        {
-          id: "task:fora-do-ciclo",
-          kind: "task",
-          obligation_key: "cadence_task:fora-do-ciclo",
-          lead_id: ORGANIZATION_ID,
-          lead_name: "Maria",
-          title: "Ligar",
-          description: "",
-          due_at: "2026-07-31T12:00:00Z",
-          status: "pending",
-          tone: "neutral",
-          target_url: "https://externo.example",
-        },
-      ],
-    }).success,
-    false,
-  );
-
-  for (const unsafeTarget of [
-    "//externo.example/roubo",
-    "/\\externo.example/roubo",
-    "/crm/pipelines\u0000?lead=roubo",
-  ]) {
-    assert.equal(
-      apiHomeFocusResponseSchema.safeParse({
-        data: [
-          {
-            id: `attention:${ID}`,
-            kind: "attention",
-            obligation_key: `first_effective_contact:${SECOND_ID}`,
-            lead_id: ORGANIZATION_ID,
-            lead_name: "Maria",
-            title: "Contato efetivo com Maria",
-            description: "Pipeline · Atendimento",
-            due_at: "2026-07-31T12:00:00Z",
-            status: "warning",
-            tone: "warning",
-            policy_type: "first_effective_contact",
-            task_type: null,
-            target_url: unsafeTarget,
-            stage_id: SECOND_ID,
-            stage_name: "Atendimento",
-          },
-        ],
-      }).success,
-      false,
-      unsafeTarget,
-    );
-  }
 });
 
 test("avisos da página inicial preservam severidade, ação e descarte seguros", () => {

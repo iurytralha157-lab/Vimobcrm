@@ -1,4 +1,4 @@
-package homefocus
+package homenotices
 
 import (
 	"os"

@@ -68,7 +68,7 @@ before(async () => {
   await writeFile(entry, `import React from'react';import{createRoot}from'react-dom/client';import{StageSettingsDialog}from'@/components/features/pipelines/StageSettingsDialog';import{StagesEditorDialog}from'@/components/features/pipelines/StagesEditorDialog';import{AutomationsList}from'@/components/features/automations/AutomationsList';import{AutomationForm}from'@/components/features/automations/AutomationForm';import{StageColumnMenu}from'@/components/features/pipelines/pipeline-screen/StageColumnMenu';
     const id='11111111-1111-4111-8111-111111111111',pipeline='33333333-3333-4333-8333-333333333333';
     const h=window.h={open:true,mode:'settings',list:[],stages:[],moveTargets:[{id:'44444444-4444-4444-8444-444444444444',name:'Retomar contato'}],listError:false,retries:0,calls:[],pending:null,stage:{id,name:'Novo',color:'#123456',stage_key:'new',pipeline_id:pipeline,position:0,updated_at:'2026-10-12T12:00:00Z'}};
-    h.rules={stage_id:id,pipeline_id:pipeline,revision:7,cadence:{enabled:true,tasks:[{id:'55555555-5555-4555-8555-555555555555',position:0,type:'call',title:'Ligar',due_minutes:60,warning_minutes:0,is_required:true,outcome_required:true}]},attention:{source_mode:'inherit',mode:'enabled',warning_minutes:0,business_hours_only:false},lifecycle:{on_stage_move:'skip_pending',on_won:'cancel_pending',on_lost:'cancel_pending',on_reopen:'new_cycle'}};
+    h.rules={stage_id:id,pipeline_id:pipeline,revision:7,cadence:{enabled:true,tasks:[{id:'55555555-5555-4555-8555-555555555555',position:0,type:'call',title:'Ligar',due_minutes:60,warning_minutes:30,is_required:true,outcome_required:true}]},attention:{source_mode:'inherit',mode:'enabled',warning_minutes:0,business_hours_only:false},lifecycle:{on_stage_move:'skip_pending',on_won:'cancel_pending',on_lost:'cancel_pending',on_reopen:'new_cycle'}};
     h.mutate=(kind,payload)=>{h.calls.push({kind,payload});return new Promise((resolve,reject)=>{h.pending={resolve:response=>resolve(response??(kind==='rules'?{...h.rules,...payload,revision:8}:{})),reject:()=>reject(Error('Falha sintética'))}})};
     const root=createRoot(document.getElementById('root'));
     h.render=()=>root.render(h.mode==='menu'?React.createElement(React.Fragment,null,React.createElement(StageColumnMenu,{stageName:h.stage.name,isMobile:false,onSelect:(tab,returnFocusElement)=>{h.initialTab=tab;h.returnFocusElement=returnFocusElement;h.open=true;h.render()}}),h.open?React.createElement(StageSettingsDialog,{key:h.stage.id+':'+h.initialTab,initialTab:h.initialTab,returnFocusElement:h.returnFocusElement,open:true,stage:h.stage,onOpenChange:open=>{h.open=open;h.render()},onStageUpdate:()=>{h.open=false;h.render()}}):null):h.mode==='settings'?React.createElement(StageSettingsDialog,{initialTab:h.initialTab,open:h.open,stage:h.stage,onOpenChange:open=>{h.open=open;h.render()},onStageUpdate:()=>{h.open=false;h.render()}}):h.mode==='editor'?React.createElement(StagesEditorDialog,{open:h.open,pipelineId:pipeline,pipelineName:'Vendas',stages:[h.stage],archivedStages:h.archivedStages||[],onOpenChange:open=>{h.open=open;h.render()}}):h.mode==='list'?React.createElement(AutomationsList,{stageId:id,canEdit:true,stageNames:{'44444444-4444-4444-8444-444444444444':'Retomar contato'},hideManagedAlert:h.hideManagedAlert}):React.createElement(AutomationForm,{stageId:id,pipelineId:pipeline,moveTargets:h.moveTargets,onSuccess:()=>{h.success=true},onCancel:()=>{h.cancelled=true}}));`);
@@ -322,15 +322,12 @@ test('a legacy inactivity alert is prepared disabled before activation with the 
   } finally { await page.close(); }
 });
 
-test('cadence edits show no warning for a saved zero and submit a short warning in days', async () => {
+test('cadence edits keep the deadline and a valid legacy warning without a warning control', async () => {
   const page = await open('settings', { initialTab: 'cadence' });
   try {
-    await page.getByText('Sem aviso', { exact: true }).waitFor();
     await page.getByLabel('Prazo após entrar na etapa', { exact: true }).fill('0.03');
-    await page.getByRole('switch', { name: 'Ativar antecedência em prioridades' }).click();
-    await page.getByRole('combobox', { name: 'Unidade de antecedência em prioridades' }).click();
-    await page.getByRole('option', { name: 'Dias', exact: true }).click();
-    assert.equal(await page.getByLabel('Antecedência em Prioridades', { exact: true }).inputValue(), '0.0007');
+    assert.equal(await page.getByRole('switch', { name: 'Ativar antecedência em prioridades' }).count(), 0);
+    assert.equal(await page.getByLabel('Antecedência em Prioridades', { exact: true }).count(), 0);
     await page.getByRole('button', { name: 'Salvar regras', exact: true }).click();
     await page.waitForFunction(() => window.h.calls.length === 1);
     const task = await page.evaluate(() => window.h.calls[0].payload.cadence.tasks[0]);

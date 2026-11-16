@@ -2,7 +2,6 @@ import {
   apiDeleteHomePublicationImageResponseSchema,
   apiDeleteHomePublicationResponseSchema,
   apiHomeAssistantResponseSchema,
-  apiHomeFocusResponseSchema,
   apiHomeNoticeListResponseSchema,
   apiHomePublicationCardListResponseSchema,
   apiHomePublicationListResponseSchema,
@@ -17,7 +16,6 @@ import {
   validateDomainResponse,
   type CreateHomePublicationInput,
   type HomeAssistantAnswer,
-  type HomeFocusFeedItem,
   type HomeNotice,
   type HomePublication,
   type HomePublicationAccent,
@@ -36,8 +34,6 @@ import { vimobAPIRequest } from "./vimob-client";
 type Envelope<T> = {
   data: T;
 };
-
-export type HomeFocusScope = "mine" | "team" | "organization";
 
 export type DeleteHomePublicationResult = {
   ok: true;
@@ -65,31 +61,6 @@ export const homeAPI = {
       apiHomeNoticeListResponseSchema,
       response,
       "home.notices.list",
-    );
-    return response.data;
-  },
-
-  async listFocus(
-    organizationId?: string | null,
-    signal?: AbortSignal,
-    limit = 8,
-    scope: HomeFocusScope = "mine",
-  ): Promise<HomeFocusFeedItem[]> {
-    const response = await vimobAPIRequest<Envelope<HomeFocusFeedItem[]>>(
-      "/v1/home/focus",
-      {
-        organizationId,
-        signal,
-        query: {
-          scope,
-          limit: Math.min(20, Math.max(1, Math.trunc(limit))),
-        },
-      },
-    );
-    validateDomainResponse(
-      apiHomeFocusResponseSchema,
-      response,
-      "home.focus.list",
     );
     return response.data;
   },
@@ -331,7 +302,6 @@ export const homeAPI = {
 export type {
   CreateHomePublicationInput,
   HomeAssistantAnswer,
-  HomeFocusFeedItem,
   HomeNotice,
   HomePublication,
   HomePublicationAccent,

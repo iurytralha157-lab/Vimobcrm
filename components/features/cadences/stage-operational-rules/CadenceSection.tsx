@@ -30,7 +30,6 @@ import {
   EmptyRuleState,
   Field,
   IconButton,
-  OptionalDurationField,
   ToggleRow,
 } from './RuleFields'
 import {
@@ -276,41 +275,19 @@ function TaskCard({
             </Field>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <DurationField
-              id={`task-due-${task.clientKey}`}
-              label="Prazo após entrar na etapa"
-              minutes={task.due_minutes}
-              minMinutes={0}
-              disabled={!canEdit}
-              onChange={(minutes) => onUpdate({
-                due_minutes: minutes,
-                ...(task.warning_minutes != null
-                  ? {
-                      warning_minutes: minutes <= 1
-                        ? undefined
-                        : Math.min(
-                            Math.max(1, task.warning_minutes),
-                            minutes - 1,
-                          ),
-                    }
-                  : {}),
-              })}
-            />
-            <OptionalDurationField
-              id={`task-warning-${task.clientKey}`}
-              label="Antecedência em Prioridades"
-              minutes={task.warning_minutes}
-              defaultMinutes={Math.min(30, Math.max(1, task.due_minutes - 1))}
-              minMinutes={1}
-              maxMinutes={Math.max(1, task.due_minutes - 1)}
-              disabled={!canEdit || task.due_minutes <= 1}
-              onChange={(minutes) => onUpdate({ warning_minutes: minutes })}
-            />
-          </div>
-          <p className="text-[12px] font-light text-[var(--app-text-tertiary)]">
-            O aviso aparece em Prioridades; não envia mensagem ou notificação externa.
-          </p>
+          <DurationField
+            id={`task-due-${task.clientKey}`}
+            label="Prazo após entrar na etapa"
+            minutes={task.due_minutes}
+            minMinutes={0}
+            disabled={!canEdit}
+            onChange={(minutes) => onUpdate({
+              due_minutes: minutes,
+              warning_minutes: task.warning_minutes != null && minutes > 1
+                ? Math.min(task.warning_minutes, minutes - 1)
+                : undefined,
+            })}
+          />
 
           <div className="grid gap-2 sm:grid-cols-2">
             <ToggleRow

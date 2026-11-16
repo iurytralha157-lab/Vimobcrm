@@ -22,7 +22,7 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/gamification"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/health"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/help"
-	"github.com/vimob-crm/vimob-crm/apps/api/internal/homefocus"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/homenotices"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/integrations"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/leads"
@@ -210,7 +210,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		attentionRepository.StartWorker(ctx, logger)
 	})
 	attentionHandler := attention.NewHandler(attentionRepository)
-	homeFocusHandler := homefocus.NewHandler(homefocus.NewRepository(postgres))
+	homeNoticesHandler := homenotices.NewHandler(homenotices.NewRepository(postgres))
 	gamificationRepository := gamification.NewRepository(postgres)
 	backgroundWorkers.Run(func() {
 		gamificationRepository.StartWorker(ctx, logger)
@@ -537,7 +537,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		gamificationHandler:      gamificationHandler,
 		healthHandler:            healthHandler,
 		helpHandler:              helpHandler,
-		homeFocusHandler:         homeFocusHandler,
+		homeNoticesHandler:       homeNoticesHandler,
 		integrationsHandler:      integrationsHandler,
 		leadsHandler:             leadsHandler,
 		automationStageHandler:   leads.NewAutomationStageCommandHandler(leadsRepository, tenantRepository, cfg.Automations.CommandToken),

@@ -216,7 +216,7 @@ export function getAttentionPreviewCopy(
     return 'Fica em observação, sem aparecer como cobrança ativa para o corretor.'
   }
   if (globalAttention.notificationsEnabled === false) {
-    return 'Aparece em Prioridades e atenções, mas as notificações globais estão desativadas.'
+    return 'As regras continuam acompanhando os prazos. As notificações globais estão desativadas.'
   }
   return sourceMode === 'inherit'
     ? 'O sistema aplica, em cada tipo, a política mais específica disponível.'
@@ -287,7 +287,6 @@ export function createTask(position: number, previousDueMinutes?: number): Draft
     due_minutes: previousDueMinutes == null
       ? 60
       : Math.min(MAX_OPERATIONAL_RULE_MINUTES, previousDueMinutes + 1_440),
-    warning_minutes: 30,
     is_required: true,
     outcome_required: true,
   }

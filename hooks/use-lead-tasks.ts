@@ -31,7 +31,6 @@ function invalidateLeadTaskCaches(queryClient: ReturnType<typeof useQueryClient>
   queryClient.invalidateQueries({ queryKey: ['lead-cadence-state'] });
   queryClient.invalidateQueries({ queryKey: ['activities'] });
   queryClient.invalidateQueries({ queryKey: ['recent-activities'] });
-  queryClient.invalidateQueries({ queryKey: ['home'] });
   queryClient.invalidateQueries({ queryKey: ['upcoming-tasks'] });
   if (leadId) {
     invalidateLeadHistorySoon(queryClient, leadId);
@@ -240,7 +239,7 @@ function invalidateCadenceCompletionCaches(client: QueryClient, organizationId: 
       query.queryKey[1] === organizationId && query.queryKey[2] === leadId, refetchType }),
     ...['lead-history-v2', 'lead-timeline', 'activities'].map(family =>
       client.invalidateQueries({ queryKey: [family, leadId], refetchType })),
-    ...['recent-activities', 'home', 'upcoming-tasks'].map(family =>
+    ...['recent-activities', 'upcoming-tasks'].map(family =>
       client.invalidateQueries({ queryKey: [family], refetchType })),
   ]).catch(() => { /* Keep the caches stale; a failed read cannot fail the completed write. */ });
 }

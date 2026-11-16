@@ -92,7 +92,6 @@ function useAttentionMutationInvalidation() {
   return () => {
     queryClient.invalidateQueries({ queryKey: ["attention", "items"] });
     queryClient.invalidateQueries({ queryKey: ["attention", "summary"] });
-    queryClient.invalidateQueries({ queryKey: ["home"] });
   };
 }
 
@@ -201,7 +200,6 @@ export function useUpdateAttentionPolicy() {
       queryClient.invalidateQueries({ queryKey: ["attention", "policies"] });
       queryClient.invalidateQueries({ queryKey: ["attention", "items"] });
       queryClient.invalidateQueries({ queryKey: ["attention", "summary"] });
-      queryClient.invalidateQueries({ queryKey: ["home"] });
       toast.success(
         "Regra atualizada. Ciclos existentes mantêm a versão original.",
       );
@@ -224,7 +222,6 @@ export function useUpdateAttentionSettings() {
       queryClient.invalidateQueries({ queryKey: ["attention", "summary"] });
       queryClient.invalidateQueries({ queryKey: ["schedule-capabilities"] });
       invalidateScheduleDashboardCaches(queryClient);
-      queryClient.invalidateQueries({ queryKey: ["home"] });
       toast.success("Configurações globais do motor atualizadas.");
     },
     onError: (error: Error) =>

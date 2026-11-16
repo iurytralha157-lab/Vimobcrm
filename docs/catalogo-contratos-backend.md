@@ -1,18 +1,18 @@
-# Catálogo dos 541 contratos do backend
+# Catálogo dos 540 contratos do backend
 
 Gerado automaticamente a partir de `apps/api/internal/app/routes.go`.
 
-Snapshot de 541 rotas; as linhas de auditoria e dos históricos de lead/equipe
-foram atualizadas manualmente para o ajuste local de 2026-10-09. A rota de
-histórico de distribuição já existe no código, mas não neste snapshot. O catálogo completo precisa
-ser regenerado após a consolidação das demais mudanças simultâneas nas rotas.
+O snapshot inclui 540 rotas. As linhas de auditoria, dos históricos de
+lead/equipe e da Página inicial foram atualizadas pontualmente. O código já
+inclui rotas adicionais, como o histórico de distribuição. O catálogo completo
+precisa ser regenerado após a consolidação das demais mudanças nas rotas.
 
 Cada contrato abaixo contém o método HTTP, a rota exata, a operação/handler responsável, a camada de acesso registrada e a linha de origem. A indicação “sem middleware na rota” não significa necessariamente acesso irrestrito: webhooks e rotas internas podem validar assinatura, segredo ou token dentro do próprio handler.
 
 ## Resumo
 
-- Total: **541 contratos HTTP**.
-- GET: **220**.
+- Total: **540 contratos HTTP**.
+- GET: **219**.
 - POST: **195**.
 - PUT: **23**.
 - PATCH: **52**.
@@ -52,7 +52,7 @@ Cada contrato abaixo contém o método HTTP, a rota exata, a operação/handler 
 | Usuários | `users` | 5 |
 | Webhooks | `webhooks` | 5 |
 | Execuções de automação | `automation-executions` | 4 |
-| Página inicial | `home` | 4 |
+| Página inicial | `home` | 3 |
 | Regras de comissão | `commission-rules` | 4 |
 | Regras de distribuição | `round-robin-rules` | 4 |
 | Tags | `tags` | 4 |
@@ -185,14 +185,13 @@ Cada contrato abaixo contém o método HTTP, a rota exata, a operação/handler 
 | 34 | POST | `/v1/attention/items/{id}/snooze` | `SnoozeItem` | `attentionHandler.SnoozeItem` | Organização + permissão AttentionView | 217 |
 | 35 | POST | `/v1/attention/items/{id}/resolve` | `ResolveItem` | `attentionHandler.ResolveItem` | Organização + permissão AttentionView | 218 |
 
-### Página inicial — 4
+### Página inicial — 3
 
 | # | Método | Rota | Operação | Handler | Proteção registrada | Linha |
 | ---: | --- | --- | --- | --- | --- | ---: |
-| 36 | GET | `/v1/home/focus` | `List` | `homeFocusHandler.List` | Organização + permissão AttentionView | 219 |
-| 37 | GET | `/v1/home/notices` | `Notices` | `homeFocusHandler.Notices` | Organização ativa | 220 |
-| 113 | GET | `/v1/home/publications` | `ListHomePublications` | `adminHandler.ListHomePublications` | Usuário autenticado | 296 |
-| 114 | POST | `/v1/home/assistant` | `AnswerHomeAssistant` | `adminHandler.AnswerHomeAssistant` | Usuário autenticado | 297 |
+| 37 | GET | `/v1/home/notices` | `Notices` | `homeNoticesHandler.Notices` | Organização ativa | 249 |
+| 113 | GET | `/v1/home/publications` | `ListHomePublications` | `adminHandler.ListHomePublications` | Usuário autenticado | 330 |
+| 114 | POST | `/v1/home/assistant` | `AnswerHomeAssistant` | `adminHandler.AnswerHomeAssistant` | Usuário autenticado | 331 |
 
 ### Superadmin — 45
 

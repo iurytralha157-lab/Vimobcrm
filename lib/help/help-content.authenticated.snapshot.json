@@ -1485,7 +1485,7 @@
     "estimatedMinutes": 4,
     "displayOrder": 10,
     "updatedAt": "2026-07-29T11:59:27.817Z",
-    "content": "A Página inicial reúne atalhos, orientações e o seu foco operacional. Use o menu lateral para entrar em Pipeline, Conversas, Contatos, Agenda, Automações, Dashboard, Gestão e Configurações. Os itens disponíveis variam conforme o plano, o módulo e as permissões do seu usuário.",
+    "content": "A Página inicial reúne atalhos e orientações. Use o menu lateral para entrar em Pipeline, Conversas, Contatos, Agenda, Automações, Dashboard, Gestão e Configurações. Os itens disponíveis variam conforme o plano, o módulo e as permissões do seu usuário.",
     "searchKeywords": [
       "primeiro acesso",
       "começar",
@@ -1498,7 +1498,7 @@
     "steps": [
       {
         "id": "inicio-1",
-        "body": "Veja os atalhos disponíveis e o bloco Seu foco agora. Ele usa dados reais do seu acesso e leva diretamente ao lead, tarefa ou compromisso correspondente.",
+        "body": "Use os atalhos da Página inicial para abrir as áreas disponíveis no seu acesso.",
         "title": "Comece pela Página inicial",
         "actionHref": "/inicio",
         "actionLabel": "Abrir Página inicial"

@@ -4,8 +4,9 @@ A rota autenticada `/inicio` é a entrada padrão do Vimob. Ela mantém o `AppLa
 existente e carrega o conteúdo em camadas para não depender do Dashboard:
 
 1. saudação, busca e atalhos são renderizados imediatamente;
-2. atenção, tarefas e agenda são consultadas em paralelo conforme módulos e
-   permissões do usuário.
+2. avisos e publicações são consultados separadamente.
+
+Links legados para `/attention` redirecionam para `/inicio`.
 
 Há um único carrossel abaixo dos avisos críticos, alimentado pelas publicações
 ativas configuradas pelo superadministrador. Imagens ocupam o slide inteiro,
@@ -29,12 +30,12 @@ são gerenciadas pelo mesmo superadmin, sem depender de novo deploy.
 - `HomeScreen.tsx`: composição da página e controle de acesso dos atalhos;
 - `HomeAssistant.tsx`: pesquisa determinística na ajuda e nos leads visíveis;
 - `HomePublicationCarousel.tsx`: carrossel de novidades configuradas pela plataforma;
-- `HomeFocusList.tsx`: prioridades reais do usuário;
+- `HomeNoticeRail.tsx`: avisos relacionados à assinatura e à plataforma;
 - `home-catalog.ts`: atalhos e destinos internos permitidos.
 
 Dados e validação ficam fora dos componentes:
 
-- `hooks/home/`: React Query e composição do resumo operacional;
+- `hooks/home/`: React Query para avisos, publicações e busca;
 - `lib/api/home.ts`: cliente HTTP da Vimob API;
 - `lib/validation/home.ts`: contratos Zod;
 - `apps/api/internal/admin/home_publications.go`: autorização, consulta,

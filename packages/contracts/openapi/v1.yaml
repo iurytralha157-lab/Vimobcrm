@@ -7790,36 +7790,6 @@ paths:
           $ref: "#/components/responses/APIError"
         default:
           $ref: "#/components/responses/APIError"
-  /v1/home/focus:
-    get:
-      summary: List the current user's operational priorities
-      description: >-
-        Returns only current open-deal obligations, deduplicated by lead and
-        obligation after joining attention instances and pending tasks.
-      parameters:
-        - $ref: "#/components/parameters/OrganizationIdHeader"
-        - name: scope
-          in: query
-          schema:
-            type: string
-            enum: [mine, team, organization]
-            default: mine
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 20
-            default: 8
-      responses:
-        "200":
-          description: Priorities ordered by severity and deadline.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HomeFocusListEnvelope"
-        default:
-          $ref: "#/components/responses/APIError"
   /v1/cadence-templates:
     get:
       summary: List cadence templates and their task definitions
@@ -11823,76 +11793,6 @@ components:
               type: string
             message:
               type: string
-    HomeFocusItem:
-      type: object
-      additionalProperties: false
-      required:
-        - id
-        - kind
-        - obligation_key
-        - lead_id
-        - lead_name
-        - title
-        - description
-        - due_at
-        - status
-        - tone
-        - target_url
-      properties:
-        id:
-          type: string
-        kind:
-          type: string
-          enum: [attention, task]
-        obligation_key:
-          type: string
-        lead_id:
-          type: string
-          format: uuid
-        lead_name:
-          type: string
-        title:
-          type: string
-        description:
-          type: string
-        due_at:
-          type: string
-          format: date-time
-        status:
-          type: string
-          enum: [due, warning, breached]
-        tone:
-          type: string
-          enum: [critical, warning, neutral]
-        policy_type:
-          type: [string, "null"]
-          enum:
-            - unassigned
-            - first_contact
-            - first_effective_contact
-            - stage_inactivity
-            - stage_age
-            - cadence_task
-            - null
-        task_type:
-          type: [string, "null"]
-        target_url:
-          type: string
-          pattern: "^/"
-        stage_id:
-          type: [string, "null"]
-          format: uuid
-        stage_name:
-          type: [string, "null"]
-    HomeFocusListEnvelope:
-      type: object
-      required: [data]
-      properties:
-        data:
-          type: array
-          maxItems: 20
-          items:
-            $ref: "#/components/schemas/HomeFocusItem"
     CadenceTaskTemplate:
       type: object
       additionalProperties: false

@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "c6bb3a39591e09417dd9b59fd4f07cec266a988de7737c5798e2005d6098c59f",
+  "sourceDigestSha256": "34f43264e833d2cce79cc2cc74333cf57def4eff0e9a5290d82f6bcf9f4ce2e6",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -11901,10 +11901,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:b0280098cdd7a4031d05",
+          "id": "cta:0b2036b64d05eecf2013",
           "column": 15,
           "file": "components/features/cadences/stage-operational-rules/CadenceSection.tsx",
-          "line": 116,
+          "line": 115,
           "owner": "CadenceSection",
           "routes": [
             "/crm/pipelines"
@@ -11913,10 +11913,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:af1c357070adc3127d83",
+          "id": "cta:2b5e9d6ce034be503819",
           "column": 9,
           "file": "components/features/cadences/stage-operational-rules/CadenceSection.tsx",
-          "line": 189,
+          "line": 188,
           "owner": "TaskCard",
           "routes": [
             "/crm/pipelines"
@@ -11925,10 +11925,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:e1f1c9d7d9c2954934e5",
+          "id": "cta:56bf7a9ddb2f2db0e10e",
           "column": 15,
           "file": "components/features/cadences/stage-operational-rules/CadenceSection.tsx",
-          "line": 376,
+          "line": 353,
           "owner": "TaskCard",
           "routes": [
             "/crm/pipelines"
@@ -16017,56 +16017,6 @@
           "href": "action.href",
           "kind": "internalDynamic",
           "tag": "Link"
-        },
-        {
-          "id": "cta:f09d2c2a2a3618941c7c",
-          "column": 5,
-          "file": "components/features/home/HomeFocusList.tsx",
-          "line": 114,
-          "owner": "FocusItem",
-          "routes": [
-            "/inicio"
-          ],
-          "href": "item.href",
-          "kind": "internalDynamic",
-          "tag": "Link"
-        },
-        {
-          "id": "cta:ba95decbdda9e8e0f7d0",
-          "column": 17,
-          "file": "components/features/home/HomeFocusList.tsx",
-          "line": 268,
-          "owner": "HomeFocusList",
-          "routes": [
-            "/inicio"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:b407b93b1bd928bd7eff",
-          "column": 15,
-          "file": "components/features/home/HomeFocusList.tsx",
-          "line": 298,
-          "owner": "HomeFocusList",
-          "routes": [
-            "/inicio"
-          ],
-          "href": "/settings?tab=subscription",
-          "kind": "internal",
-          "tag": "Link"
-        },
-        {
-          "id": "cta:508b55cee962f9784c0c",
-          "column": 13,
-          "file": "components/features/home/HomeFocusList.tsx",
-          "line": 330,
-          "owner": "HomeFocusList",
-          "routes": [
-            "/inicio"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
         },
         {
           "id": "cta:c499b7258740d81500c0",
@@ -47530,7 +47480,7 @@
         }
       ]
     },
-    "digestSha256": "fa4a8029d591ad7010a8ebdf842273028568cd2e67c13b9e9a4749aeb223bb58"
+    "digestSha256": "cac554e417f7952b34a804ef3c3f9b93e81bbc48f084f943c10432d3272dd10a"
   },
   "routes": [
     {
@@ -47818,7 +47768,7 @@
       "id": "route:4a23f6eb303a65e43b82",
       "optionalCatchAll": false,
       "redirectTargets": [
-        "/inicio#home-focus"
+        "/inicio"
       ],
       "source": "app/(protected)/attention/page.tsx",
       "url": "/attention"
@@ -52180,15 +52130,6 @@
         "protected"
       ],
       "file": "components/features/home/HomeAssistant.tsx",
-      "routes": [
-        "/inicio"
-      ]
-    },
-    {
-      "access": [
-        "protected"
-      ],
-      "file": "components/features/home/HomeFocusList.tsx",
       "routes": [
         "/inicio"
       ]
@@ -62095,19 +62036,19 @@
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 90,
       "asChildPrimitiveControlsWithUnrecognizedChild": 2,
-      "ctasAll": 1637,
+      "ctasAll": 1633,
       "ctasByKind": {
-        "actionButton": 1461,
+        "actionButton": 1459,
         "external": 6,
-        "internal": 34,
-        "internalDynamic": 81,
+        "internal": 33,
+        "internalDynamic": 80,
         "unknownDynamic": 55
       },
       "forms": 54,
       "formsRouteReachable": 54,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1576,
-      "internalCtasRouteReachable": 1543,
+      "internalCtas": 1572,
+      "internalCtasRouteReachable": 1539,
       "overlays": 254,
       "overlaysByKind": {
         "alertDialog": 74,
@@ -62135,7 +62076,7 @@
     "protectedAccessChecksThreePersonas": 213,
     "renderableRouteViewportChecksDesktopAndMobile": 174,
     "routeReachableFormImplementations": 54,
-    "routeReachableInternalCtaImplementations": 1543,
+    "routeReachableInternalCtaImplementations": 1539,
     "routeReachableOverlayImplementations": 249,
     "routeReachableSupplementalOverlayAndTabControls": 292
   },

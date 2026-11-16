@@ -15,7 +15,7 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/gamification"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/health"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/help"
-	"github.com/vimob-crm/vimob-crm/apps/api/internal/homefocus"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/homenotices"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/integrations"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/leads"
@@ -60,7 +60,7 @@ type routeDependencies struct {
 	gamificationHandler      gamification.Handler
 	healthHandler            health.Handler
 	helpHandler              help.Handler
-	homeFocusHandler         homefocus.Handler
+	homeNoticesHandler       homenotices.Handler
 	integrationsHandler      integrations.Handler
 	leadsHandler             leads.Handler
 	automationStageHandler   leads.AutomationStageCommandHandler
@@ -106,7 +106,7 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	gamificationHandler := dependencies.gamificationHandler
 	healthHandler := dependencies.healthHandler
 	helpHandler := dependencies.helpHandler
-	homeFocusHandler := dependencies.homeFocusHandler
+	homeNoticesHandler := dependencies.homeNoticesHandler
 	integrationsHandler := dependencies.integrationsHandler
 	leadsHandler := dependencies.leadsHandler
 	meHandler := dependencies.meHandler
@@ -246,8 +246,7 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	mux.Handle("POST /v1/attention/items/{id}/acknowledge", withPermission(permissions.AttentionView, http.HandlerFunc(attentionHandler.AcknowledgeItem)))
 	mux.Handle("POST /v1/attention/items/{id}/snooze", withPermission(permissions.AttentionView, http.HandlerFunc(attentionHandler.SnoozeItem)))
 	mux.Handle("POST /v1/attention/items/{id}/resolve", withPermission(permissions.AttentionView, http.HandlerFunc(attentionHandler.ResolveItem)))
-	mux.Handle("GET /v1/home/focus", withPermission(permissions.AttentionView, http.HandlerFunc(homeFocusHandler.List)))
-	mux.Handle("GET /v1/home/notices", withOrganization(http.HandlerFunc(homeFocusHandler.Notices)))
+	mux.Handle("GET /v1/home/notices", withOrganization(http.HandlerFunc(homeNoticesHandler.Notices)))
 	mux.Handle("GET /v1/admin/error-events", withActiveAuthTenant(http.HandlerFunc(telemetryHandler.ListErrorEvents)))
 	mux.Handle("POST /v1/admin/error-events/{id}/resolve", withActiveAuthTenant(http.HandlerFunc(telemetryHandler.ResolveErrorEvent)))
 	mux.Handle("GET /v1/gamification/overview", withModulePermission("gamification", permissions.GamificationView, http.HandlerFunc(gamificationHandler.Overview)))
