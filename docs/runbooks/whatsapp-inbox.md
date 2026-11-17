@@ -126,6 +126,33 @@ a emissão e conclua as dependências desses resultados antes de restaurar leito
 anteriores. O canário exige corpo visível ao dono, isolamento de outra organização,
 snapshot intacto, deduplicação e ausência de efeitos de lead.
 
+### Ecos enviados com snapshot legado inelegível
+
+`WHATSAPP_PRIVATE_LEGACY_OUTBOUND_CAPTURE_ENABLED` é opcional na API Go,
+com padrão `false`, e controla somente novas observações privadas de mensagens
+já enviadas pelo aparelho. O evento deve conservar `IsFromMe=true`, Chat LID e
+RecipientAlt PN no Info original; o parser e o PN da conversa física congelada
+devem concordar, incluindo a equivalência brasileira com ou sem nono dígito.
+O snapshot orgânico `lead_match`/`snapshot` continua `binding_eligible=false`.
+A conversa original deve permanecer sem lead/vínculo e ter histórico privado
+canônico sem scrub; o lead ocupado deve pertencer ao dono ativo da conexão,
+com membership ativa na mesma organização. Identidades existentes de envio do
+CRM/outbox ficam fora dessa captura.
+
+O writer existente registra `from_me=true`, `direction=outbound`, `status=sent`
+e recupera o conteúdo silenciosamente na conversa original, com marcador
+`lead_match_legacy_outbound_private_v1`. Não cria envio ou outbox, não muda lead
+ou snapshot, não emite resultado de roteamento de lead e não cria novas não
+lidas, automações ou notificações. Cada eco tem seu próprio snapshot.
+
+Publique todos os leitores com a flag nova desligada antes de habilitar novas
+observações. Preserve `WHATSAPP_PRIVATE_COLLISION_CAPTURE_ENABLED` durante a
+troca. Para reverter a emissão, desligue apenas a flag nova; leitores de
+marcadores aceitos permanecem ativos, inclusive após vínculo manual posterior.
+Antes de restaurar leitores anteriores, conclua as tentativas já marcadas.
+Confira direção/status/corpo, deduplicação, isolamento de outro tenant,
+outbox ausente e ausência de efeitos operacionais antes de um replay exato.
+
 ### Reprocessamento de falhas antigas revisadas
 
 O processador valida usuário e membro ativos da organização antes de copiar o

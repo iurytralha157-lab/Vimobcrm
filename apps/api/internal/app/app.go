@@ -394,6 +394,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		WhatsAppPostFormFollowUpGuardEnabled: cfg.WhatsApp.PostFormFollowUpGuardEnabled,
 		LegacyNativeCompatEnabled:            cfg.WhatsApp.LegacyNativeCompatEnabled,
 		PrivateCollisionCaptureEnabled:       cfg.WhatsApp.PrivateCollisionCaptureEnabled,
+		PrivateLegacyOutboundEnabled:         cfg.WhatsApp.PrivateLegacyOutboundEnabled,
 		WebhookWorkerBacklogConcurrency:      cfg.WhatsApp.WebhookWorkerBacklogConcurrency,
 		LiveBoundDeadBacklogBypassEnabled:    cfg.WhatsApp.LiveBoundDeadBacklogBypassEnabled,
 		ProjectURL:                           cfg.Storage.ProjectURL,

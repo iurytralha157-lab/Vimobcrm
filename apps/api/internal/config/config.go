@@ -185,6 +185,7 @@ type AIConfig struct {
 type WhatsAppConfig struct {
 	PostFormFollowUpGuardEnabled   bool
 	PrivateCollisionCaptureEnabled bool
+	PrivateLegacyOutboundEnabled   bool
 	LegacyNativeCompatEnabled      bool
 	AIWorkerEnabled                bool
 	AIWorkerInterval               time.Duration
@@ -329,6 +330,7 @@ func Load() (Config, error) {
 		WhatsApp: WhatsAppConfig{
 			PostFormFollowUpGuardEnabled:   loadWhatsAppPostFormFollowUpGuardEnabled(),
 			PrivateCollisionCaptureEnabled: loadWhatsAppPrivateCollisionCaptureEnabled(),
+			PrivateLegacyOutboundEnabled:   loadWhatsAppPrivateLegacyOutboundEnabled(),
 			AIWorkerEnabled:                parseBool("WHATSAPP_AI_WORKER_ENABLED", true),
 			AIWorkerInterval:               parseDuration("WHATSAPP_AI_WORKER_INTERVAL", time.Minute),
 			AIFollowUpWorkerEnabled:        parseBool("WHATSAPP_AI_FOLLOW_UP_WORKER_ENABLED", true),

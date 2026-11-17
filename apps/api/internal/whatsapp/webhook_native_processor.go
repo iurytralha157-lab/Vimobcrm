@@ -35,6 +35,7 @@ type nativeEvolutionSession struct {
 	AdvancedSettings map[string]any
 
 	privateCollisionCaptureEnabled bool
+	privateLegacyOutboundEnabled   bool
 }
 
 type nativeEvolutionConversation struct {
@@ -50,6 +51,7 @@ type nativeEvolutionConversation struct {
 	RequestedOriginRoundRobinID    string
 	HistoricalBindingReplay        bool
 	PrivateCollisionRoute          bool
+	PrivateCollisionKind           string
 }
 
 type nativeEvolutionLead struct {
@@ -1213,6 +1215,7 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 
 	allowAutomatedReply := evolutionWebhookAllowsAutomatedReply(item)
 	session.privateCollisionCaptureEnabled = repo.privateCollisionCaptureEnabled
+	session.privateLegacyOutboundEnabled = repo.privateLegacyOutboundEnabled
 	automationIngress := automationReplyIngressState(item.Payload)
 	autoReplyInputs := []autoReplyInput{}
 	leadIDsToPublish := map[string]struct{}{}
@@ -3018,6 +3021,9 @@ func ensureNativeEvolutionConversation(
 ) (nativeEvolutionConversation, error) {
 	if message.IdentityPNConflict {
 		return nativeEvolutionConversation{}, errNativeStoredContactPNConflict
+	}
+	if privateConversation, handled, err := ensureNativePrivateLegacyOutboundConversation(ctx, tx, session, message, storedIdentity, routingSnapshot); err != nil || handled {
+		return privateConversation, err
 	}
 	if privateConversation, handled, err := ensureNativePrivateCollisionConversation(ctx, tx, session, message, storedIdentity, routingSnapshot); err != nil || handled {
 		return privateConversation, err
