@@ -83,8 +83,6 @@ sob o bloqueio da rota e excluir seu intervalo tanto do ingresso novo
 quanto da seleção do worker. Preserve o payload original, mantenha a ordem
 das mensagens da nova geração e nunca fabrique resultados de processamento.
 
-## Outbox de envios
-
 ### Colisão legada de conversa por lead
 
 Uma entrada orgânica legada `lead_match` pode ter congelado uma conversa sem
@@ -110,6 +108,31 @@ já aceitos permanece ativa com a flag desligada. Para reverter a versão, desli
 a emissão e conclua as dependências desses resultados antes de restaurar leitores
 anteriores. O canário exige corpo visível ao dono, isolamento de outra organização,
 snapshot intacto, deduplicação e ausência de efeitos de lead.
+
+### Reprocessamento de falhas antigas revisadas
+
+O processador valida usuário e membro ativos da organização antes de copiar o
+responsável de um lead para uma conversa nova ou promovida de LID. O lead conserva
+seu responsável histórico. Listas e botões antigos recebem texto legível com suas
+opções; o cabeçalho de álbum vazio recebe a identificação de álbum.
+
+Na reentrada CTWA, o `whatsapp_attribution` de leads com contrato `ctwa_ad_v1` ou
+`ctwa_ad_v2` conserva a prova da criação inicial e seu método de confirmação.
+A atribuição do evento atual é registrada em `lead_meta`, `lead_entry_events` e
+`whatsapp_inbound_logs`. Isso permite processar uma reentrada comprovada por
+Evolution quando o card foi criado com prova `entry_point_ctwa_ad`.
+
+Após publicar a correção em todas as réplicas, reprocesse apenas IDs revisados.
+Guarde a linha completa em backup restrito e confira organização, conexão, época
+ativa, hashes do payload e erro, versão da linha, ausência de lease e execução
+Edge e os efeitos canônicos existentes. Faça a transição de `dead` para `retry`
+por compare-and-swap dessas condições. Preserve tentativas, horário original de
+ingresso, payload e snapshot; acrescente uma tentativa ao orçamento atual.
+Confira o resultado e a mensagem canônica antes de ampliar o lote. A reversão
+dessas correções repõe a imagem anterior; resultados privados de colisão seguem
+a ordem de desligamento e drenagem descrita acima.
+
+## Outbox de envios
 
 A admissão de automações usa `public.enqueue_automation_whatsapp_outbox` com
 `service_role`. O cutover estrito de vínculos remove as permissões de escrita
