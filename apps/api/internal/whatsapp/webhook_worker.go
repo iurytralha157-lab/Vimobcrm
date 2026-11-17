@@ -34,9 +34,11 @@ const (
 	evolutionWebhookLaneBacklog = "backlog"
 )
 
-const claimEvolutionWebhooksQuery = `
+const claimEvolutionWebhooksQueryStart = `
 		with candidate_sessions as materialized (
-` + evolutionWebhookCandidateSessionsQuery + `
+`
+
+const claimEvolutionWebhooksQueryEnd = `
 		),
 		locked_heads as materialized (
 			select
@@ -212,6 +214,9 @@ const claimEvolutionWebhooksQuery = `
 		join public.whatsapp_sessions ws on ws.id = claimed.session_id
 		order by claimed.session_id
 	`
+
+const claimEvolutionWebhooksQuery = claimEvolutionWebhooksQueryStart +
+	evolutionWebhookCandidateSessionsQuery + claimEvolutionWebhooksQueryEnd
 
 func wakeWhatsAppWebhookWorker() {
 	whatsappWebhookLiveWorkerWake.Notify()
@@ -878,7 +883,8 @@ func claimEvolutionWebhooksInLaneSegment(
 	// A separate READ COMMITTED statement is intentional: a claimant that
 	// acquired the short mutex just after another commit must see its active
 	// leases and current epoch before selecting work from either lane.
-	rows, err := tx.Query(ctx, claimReservedEvolutionWebhooksQuery, batch, whatsappWebhookWorkerID, afterSessionID, lane, reservedSessionIDs)
+	queries := evolutionWebhookClaimQueriesForLane(lane)
+	rows, err := tx.Query(ctx, queries.claim, batch, whatsappWebhookWorkerID, afterSessionID, lane, reservedSessionIDs)
 	if err != nil {
 		return nil, err
 	}

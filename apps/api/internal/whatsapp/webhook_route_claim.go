@@ -9,23 +9,36 @@ import (
 
 const evolutionWebhookClaimSessionFilter = "where (nullif(btrim($3), '') is null or ws.id > nullif(btrim($3), '')::uuid)"
 
-var reserveEvolutionWebhookClaimSessionsQuery = `with candidate_sessions as materialized (` + strings.Replace(
-	evolutionWebhookCandidateSessionsQuery,
-	evolutionWebhookClaimSessionFilter,
-	evolutionWebhookClaimSessionFilter+`
+type evolutionWebhookClaimQueries struct {
+	reserve string
+	claim   string
+}
+
+var evolutionWebhookLiveClaimQueries = newEvolutionWebhookClaimQueries(evolutionWebhookCandidateSessionsQuery)
+var evolutionWebhookBacklogClaimQueries = newEvolutionWebhookClaimQueries(evolutionWebhookBacklogCandidateSessionsQuery)
+
+func newEvolutionWebhookClaimQueries(candidates string) evolutionWebhookClaimQueries {
+	reservationCandidates := strings.Replace(candidates, evolutionWebhookClaimSessionFilter, evolutionWebhookClaimSessionFilter+`
 			  and nullif($2::text, '') is not null
 			  and pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(
 			    'vimob:whatsapp-webhook:claim:' || ws.organization_id::text || ':' || ws.id::text, 0
 			  ))`,
-	1,
-) + `) select session_id::text from candidate_sessions order by session_id`
+		1,
+	)
+	reservedCandidates := strings.Replace(candidates, evolutionWebhookClaimSessionFilter,
+		evolutionWebhookClaimSessionFilter+" and ws.id = any($5::uuid[])", 1)
+	return evolutionWebhookClaimQueries{
+		reserve: `with candidate_sessions as materialized (` + reservationCandidates + `) select session_id::text from candidate_sessions order by session_id`,
+		claim:   claimEvolutionWebhooksQueryStart + reservedCandidates + claimEvolutionWebhooksQueryEnd,
+	}
+}
 
-var claimReservedEvolutionWebhooksQuery = strings.Replace(
-	claimEvolutionWebhooksQuery,
-	evolutionWebhookClaimSessionFilter,
-	evolutionWebhookClaimSessionFilter+" and ws.id = any($5::uuid[])",
-	1,
-)
+func evolutionWebhookClaimQueriesForLane(lane string) evolutionWebhookClaimQueries {
+	if lane == evolutionWebhookLaneBacklog {
+		return evolutionWebhookBacklogClaimQueries
+	}
+	return evolutionWebhookLiveClaimQueries
+}
 
 // Reserve only a short claim transaction, not the lifetime of a route's job.
 // Both lanes and every new replica use the same tenant/session mutex. Old
@@ -33,7 +46,7 @@ var claimReservedEvolutionWebhooksQuery = strings.Replace(
 // fence, which conflicts with this transaction's SHARE fence. Native inbound
 // work holds SHARE too, so another route need not wait for that work to finish.
 //
-// This must remain a separate statement from claimReservedEvolutionWebhooksQuery:
+// This must remain a separate statement from the reserved claim:
 // PostgreSQL evaluates a statement against one snapshot, including when the
 // advisory lock becomes available after that snapshot was established.
 func reserveEvolutionWebhookClaimSessions(
@@ -43,7 +56,8 @@ func reserveEvolutionWebhookClaimSessions(
 	afterSessionID string,
 	lane string,
 ) ([]string, error) {
-	rows, err := tx.Query(ctx, reserveEvolutionWebhookClaimSessionsQuery, batch, whatsappWebhookWorkerID, afterSessionID, lane)
+	queries := evolutionWebhookClaimQueriesForLane(lane)
+	rows, err := tx.Query(ctx, queries.reserve, batch, whatsappWebhookWorkerID, afterSessionID, lane)
 	if err != nil {
 		return nil, err
 	}

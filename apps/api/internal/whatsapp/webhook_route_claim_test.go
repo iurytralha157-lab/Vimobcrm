@@ -8,7 +8,7 @@ import (
 func TestWebhookRouteClaimSeparatesReservationFromFreshClaim(t *testing.T) {
 	source := readWhatsAppSourceFunction(t, "webhook_worker.go", "func claimEvolutionWebhooksInLaneSegment")
 	reserve := strings.Index(source, "reserveEvolutionWebhookClaimSessions(")
-	claim := strings.Index(source, "tx.Query(ctx, claimReservedEvolutionWebhooksQuery")
+	claim := strings.Index(source, "tx.Query(ctx, queries.claim")
 	if reserve < 0 || claim <= reserve || !strings.Contains(source, "reservedSessionIDs") {
 		t.Fatal("the session mutex must be acquired in a separate statement before the READ COMMITTED claim")
 	}
@@ -44,21 +44,31 @@ func TestWebhookRouteClaimLocksOnlyEligibleRouteHeadsBeforeLimit(t *testing.T) {
 }
 
 func TestWebhookRouteClaimReservationScopesMutexAndClaim(t *testing.T) {
-	reservation := strings.ToLower(strings.Join(strings.Fields(reserveEvolutionWebhookClaimSessionsQuery), " "))
-	for _, fragment := range []string{
-		"pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(",
-		"'vimob:whatsapp-webhook:claim:' || ws.organization_id::text || ':' || ws.id::text",
-		"limit $1 for share of ws skip locked",
-		"select session_id::text from candidate_sessions order by session_id",
-	} {
-		if !strings.Contains(reservation, fragment) {
-			t.Fatalf("reservation lacks scoped short claim fence %q", fragment)
-		}
-	}
-	if got := strings.Count(claimReservedEvolutionWebhooksQuery, "ws.id = any($5::uuid[])"); got != 1 {
-		t.Fatalf("reserved-session claim predicates = %d, want exactly one", got)
-	}
-	if strings.Contains(reservation, "set status = 'processing'") {
-		t.Fatal("reservation must not update a lease before the fresh claim statement")
+	for _, lane := range []string{evolutionWebhookLaneLive, evolutionWebhookLaneBacklog} {
+		t.Run(lane, func(t *testing.T) {
+			queries := evolutionWebhookClaimQueriesForLane(lane)
+			reservation := strings.ToLower(strings.Join(strings.Fields(queries.reserve), " "))
+			for _, fragment := range []string{
+				"pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(",
+				"'vimob:whatsapp-webhook:claim:' || ws.organization_id::text || ':' || ws.id::text",
+				"limit $1 for share of ws skip locked",
+				"select session_id::text from candidate_sessions order by session_id",
+			} {
+				if !strings.Contains(reservation, fragment) {
+					t.Fatalf("reservation lacks scoped short claim fence %q", fragment)
+				}
+			}
+			if got := strings.Count(queries.claim, "ws.id = any($5::uuid[])"); got != 1 {
+				t.Fatalf("reserved-session claim predicates = %d, want exactly one", got)
+			}
+			if strings.Contains(reservation, "set status = 'processing'") {
+				t.Fatal("reservation must not update a lease before the fresh claim statement")
+			}
+			useRouteHeads := lane == evolutionWebhookLaneBacklog
+			if strings.Contains(reservation, "distinct on (routing_key)") != useRouteHeads ||
+				strings.Contains(queries.claim, "distinct on (routing_key)") != useRouteHeads {
+				t.Fatal("only backlog should use materialized route heads in both stages")
+			}
+		})
 	}
 }

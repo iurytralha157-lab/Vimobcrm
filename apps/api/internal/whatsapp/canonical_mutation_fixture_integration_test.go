@@ -23,10 +23,11 @@ func claimCanonicalMutationFixture(t *testing.T, ctx context.Context, pool *pgxp
 		t.Fatal(err)
 	}
 	const candidateWhere = "where (nullif(btrim($3), '') is null or ws.id > nullif(btrim($3), '')::uuid)"
-	if strings.Count(reserveEvolutionWebhookClaimSessionsQuery, candidateWhere) != 1 {
+	queries := evolutionWebhookClaimQueriesForLane(lane)
+	if strings.Count(queries.reserve, candidateWhere) != 1 {
 		t.Fatal("production claim candidate filter changed; review fixture scope")
 	}
-	query := strings.Replace(reserveEvolutionWebhookClaimSessionsQuery, candidateWhere, "where ws.id=$5::uuid and (nullif(btrim($3), '') is null or ws.id > nullif(btrim($3), '')::uuid)", 1)
+	query := strings.Replace(queries.reserve, candidateWhere, "where ws.id=$5::uuid and (nullif(btrim($3), '') is null or ws.id > nullif(btrim($3), '')::uuid)", 1)
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +39,7 @@ func claimCanonicalMutationFixture(t *testing.T, ctx context.Context, pool *pgxp
 	}
 	var item pendingEvolutionWebhook
 	var payload string
-	err = tx.QueryRow(ctx, claimReservedEvolutionWebhooksQuery, 1, whatsappWebhookWorkerID, "", lane, []string{reservedSession}).Scan(&item.ID, &item.OrganizationID, &item.SessionID, &item.InstanceID, &item.EventType, &item.WebhookToken, &payload, &item.Attempts, &item.MaxAttempts, &item.ProcessingLane, &item.ProcessingEpoch, &item.CreatedAt)
+	err = tx.QueryRow(ctx, queries.claim, 1, whatsappWebhookWorkerID, "", lane, []string{reservedSession}).Scan(&item.ID, &item.OrganizationID, &item.SessionID, &item.InstanceID, &item.EventType, &item.WebhookToken, &payload, &item.Attempts, &item.MaxAttempts, &item.ProcessingLane, &item.ProcessingEpoch, &item.CreatedAt)
 	if err != nil || item.ID != receipt.ID {
 		t.Fatalf("canonical synthetic mutation FIFO claim: got=%s expected=%s error=%v", item.ID, receipt.ID, err)
 	}

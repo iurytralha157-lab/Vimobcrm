@@ -7,7 +7,7 @@ package whatsapp
 // the previous exclusive session claimant and explicit cutovers.
 // The first backlog session barrier already excludes every later row via the
 // FIFO predicate. Apply that same bound before inspecting each row's routes.
-const evolutionWebhookCandidateSessionsQuery = `
+const evolutionWebhookCandidateSessionsStart = `
 			select
 				ws.id as session_id,
 				coalesce(cutover.active_epoch, 0) as active_epoch,
@@ -30,6 +30,9 @@ const evolutionWebhookCandidateSessionsQuery = `
 			  limit 1
 			) first_session_barrier on true
 			cross join lateral (
+`
+
+const evolutionWebhookCandidateHeadProjection = `
 			  select head.*
 			  from (
 			  select
@@ -46,7 +49,9 @@ const evolutionWebhookCandidateSessionsQuery = `
 			      nullif(wi.payload #>> '{__vimob_ingress,routing_key}', ''),
 			      '__session__'
 			    ) as routing_key
-			  from public.whatsapp_webhook_inbox wi
+`
+
+const evolutionWebhookCandidateHeadEligibility = `
 			  where wi.session_id = ws.id
 			    and wi.processing_epoch = coalesce(cutover.active_epoch, 0)
 			    and wi.processing_lane = $4
@@ -100,6 +105,9 @@ const evolutionWebhookCandidateSessionsQuery = `
 				              routing_message.snapshot->>'predecessor_provider_message_id'
 				        )
 			    )
+`
+
+const evolutionWebhookLiveHeadOrder = `
 			    and not exists (
 			      select 1
 			      from public.whatsapp_webhook_inbox older
@@ -120,6 +128,9 @@ const evolutionWebhookCandidateSessionsQuery = `
 			             coalesce(nullif(wi.payload #>> '{__vimob_ingress,routing_key}', ''), '__session__')
 			        )
 			    )
+`
+
+const evolutionWebhookCandidateSessionsEnd = `
 			  ) head
 			  join public.whatsapp_webhook_inbox claim_head on claim_head.id = head.id
 ` + evolutionWebhookCandidatePriorityQuery + `
@@ -134,3 +145,40 @@ const evolutionWebhookCandidateSessionsQuery = `
 			limit $1
 			for share of ws skip locked
 `
+
+const evolutionWebhookCandidateSessionsQuery = evolutionWebhookCandidateSessionsStart +
+	evolutionWebhookCandidateHeadProjection + `
+			  from public.whatsapp_webhook_inbox wi
+` + evolutionWebhookCandidateHeadEligibility + evolutionWebhookLiveHeadOrder + evolutionWebhookCandidateSessionsEnd
+
+// Reserve the first waiting row per backlog route before filtering on due time,
+// Edge execution, or dependencies. Those filters can block a head, but must not
+// let its successor pass. The session-control head also waits for earlier
+// heads on other routes. Keep the live lookup on its existing ordered path.
+const evolutionWebhookBacklogCandidateSessionsQuery = evolutionWebhookCandidateSessionsStart + `
+			  with route_heads as materialized (
+			    select distinct on (routing_key)
+			      waiting.id, waiting.created_at,
+			      coalesce(nullif(waiting.payload #>> '{__vimob_ingress,routing_key}', ''), '__session__') as routing_key
+			    from public.whatsapp_webhook_inbox waiting
+			    where waiting.session_id = ws.id
+			      and waiting.processing_epoch = coalesce(cutover.active_epoch, 0)
+			      and waiting.processing_lane = $4
+			      and waiting.status in ('pending', 'retry')
+			      and waiting.attempts < waiting.max_attempts
+			      and coalesce(waiting.payload #>> '{__vimob_ingress,routing_snapshot,version}', '') = '1'
+			      and (waiting.created_at, waiting.id) <= (
+			        coalesce(first_session_barrier.created_at, 'infinity'::timestamptz),
+			        coalesce(first_session_barrier.id, 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid)
+			      )
+			    order by routing_key, waiting.created_at, waiting.id
+			  )
+` + evolutionWebhookCandidateHeadProjection + `
+			  from route_heads route_head
+			  join public.whatsapp_webhook_inbox wi on wi.id = route_head.id
+` + evolutionWebhookCandidateHeadEligibility + `
+			    and (
+			      route_head.routing_key <> '__session__'
+			      or wi.id = (select earliest.id from route_heads earliest order by earliest.created_at, earliest.id limit 1)
+			    )
+` + evolutionWebhookCandidateSessionsEnd

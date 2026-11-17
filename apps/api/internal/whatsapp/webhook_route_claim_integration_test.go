@@ -206,20 +206,34 @@ func TestWebhookRouteClaimConcurrentReplicasKeepCrossLaneDependency(t *testing.T
 
 func TestWebhookRouteClaimDeferredAndDeadRoutesKeepExactBarriers(t *testing.T) {
 	ctx, db := webhookDependencyDatabase(t)
-	for _, status := range []string{"retry", "dead", "session-control"} {
+	for _, status := range []string{"retry", "dead", "session-control", "edge-execution"} {
 		t.Run(status, func(t *testing.T) {
 			f := newWebhookDependencyFixture(t, ctx, db, "route-barrier-"+status)
 			rootKey := f.suffix + "-root"
 			route, rootStatus := "jid:blocked", status
+			due, predecessorKey, predecessorProvider := time.Hour, rootKey, "root"
 			if status == "session-control" {
 				route, rootStatus = "__session__", "retry"
 			}
+			if status == "edge-execution" {
+				rootStatus, due = "pending", 0
+				predecessorKey, predecessorProvider = "", ""
+			}
 			root := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
 				key: rootKey, providerID: "root", route: route, lane: evolutionWebhookLaneBacklog,
-				status: rootStatus, due: time.Hour, epoch: 1, age: 3 * time.Minute})
+				status: rootStatus, due: due, epoch: 1, age: 3 * time.Minute})
+			if status == "edge-execution" {
+				if _, err := db.Pool().Exec(ctx, `
+					update public.whatsapp_webhook_inbox
+					set edge_execution_id = gen_random_uuid(), edge_execution_state = 'active',
+					    edge_execution_reserved_at = now(), edge_execution_started_at = now()
+					where id = $1::uuid`, root); err != nil {
+					t.Fatal(err)
+				}
+			}
 			child := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
 				key: f.suffix + "-child", providerID: "child", route: "jid:blocked", lane: evolutionWebhookLaneBacklog,
-				predecessorKey: rootKey, predecessorProvider: "root", epoch: 1, age: 2 * time.Minute})
+				predecessorKey: predecessorKey, predecessorProvider: predecessorProvider, epoch: 1, age: 2 * time.Minute})
 			neighbor := insertWebhookDependencyEvent(t, ctx, db, f, webhookDependencyEvent{
 				key: f.suffix + "-neighbor", providerID: "neighbor", route: "jid:independent", lane: evolutionWebhookLaneBacklog,
 				epoch: 1, age: time.Minute})

@@ -37,9 +37,10 @@ desses arquivos não confirma quais passos foram executados no ambiente atual.
   enquanto outra está bloqueada; não há FIFO global entre conversas ou lanes.
   No backlog, a busca de candidatos usa a primeira barreira da sessão como
   limite superior, incluindo barreiras em retry ainda fora do prazo.
-- Em `live`, um retry ainda não vencido bloqueia itens posteriores **da mesma
-  rota**, mas não itens prontos de outras rotas. Em `backlog`, uma cabeça em
-  retry pode pausar o claim daquela sessão nessa lane.
+- Nas duas lanes, um retry ainda não vencido bloqueia itens posteriores da
+  mesma rota. Em `backlog`, a consulta seleciona a primeira entrada de cada
+  rota antes de testar vencimento, execução Edge e dependências. Uma barreira
+  `__session__` também espera as entradas anteriores das outras rotas.
 - Um item `live` pronto pode ultrapassar o histórico em `backlog`. A exceção é
   a raiz exata do backlog de que o item `live` depende: ela pode ser
   reivindicada para resolver essa dependência.

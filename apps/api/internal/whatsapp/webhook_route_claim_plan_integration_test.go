@@ -34,12 +34,13 @@ func TestWebhookRouteClaimSyntheticThousandRoutePlanStaysBounded(t *testing.T) {
 	if _, err := tx.Exec(ctx, `set local statement_timeout='5s';set local lock_timeout='2s'`); err != nil {
 		t.Fatal(err)
 	}
+	queries := evolutionWebhookClaimQueriesForLane(evolutionWebhookLaneBacklog)
 	for _, phase := range []struct {
 		name, query string
 		args        []any
 	}{
-		{"reservation", reserveEvolutionWebhookClaimSessionsQuery, []any{1, whatsappWebhookWorkerID, "", evolutionWebhookLaneBacklog}},
-		{"fresh_claim", claimReservedEvolutionWebhooksQuery, []any{1, whatsappWebhookWorkerID, "", evolutionWebhookLaneBacklog, []string{f.sessionID}}},
+		{"reservation", queries.reserve, []any{1, whatsappWebhookWorkerID, "", evolutionWebhookLaneBacklog}},
+		{"fresh_claim", queries.claim, []any{1, whatsappWebhookWorkerID, "", evolutionWebhookLaneBacklog, []string{f.sessionID}}},
 	} {
 		var encoded []byte
 		if err := tx.QueryRow(ctx, "explain (analyze,buffers,format json) "+phase.query, phase.args...).Scan(&encoded); err != nil {
@@ -111,12 +112,13 @@ func TestWebhookRouteClaimBacklogBoundPreservesOlderRoutes(t *testing.T) {
 	}
 	assertPlans := func(t *testing.T, expectedRows float64) {
 		t.Helper()
+		queries := evolutionWebhookClaimQueriesForLane(evolutionWebhookLaneBacklog)
 		for _, phase := range []struct {
 			name, query string
 			args        []any
 		}{
-			{"reservation", reserveEvolutionWebhookClaimSessionsQuery, []any{1, whatsappWebhookWorkerID, "", evolutionWebhookLaneBacklog}},
-			{"fresh_claim", claimReservedEvolutionWebhooksQuery, []any{1, whatsappWebhookWorkerID, "", evolutionWebhookLaneBacklog, []string{f.sessionID}}},
+			{"reservation", queries.reserve, []any{1, whatsappWebhookWorkerID, "", evolutionWebhookLaneBacklog}},
+			{"fresh_claim", queries.claim, []any{1, whatsappWebhookWorkerID, "", evolutionWebhookLaneBacklog, []string{f.sessionID}}},
 		} {
 			tx, err := db.Pool().Begin(ctx)
 			if err != nil {
