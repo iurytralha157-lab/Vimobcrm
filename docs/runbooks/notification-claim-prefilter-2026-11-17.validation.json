@@ -1,0 +1,44 @@
+{
+  "results": [
+    {
+      "name": "cutover applies exact postimage and preserves catalog contract",
+      "result": "pass"
+    },
+    {
+      "name": "repeat apply rejects drift",
+      "result": "pass"
+    },
+    {
+      "name": "rollback restores exact original body and attributes",
+      "result": "pass"
+    },
+    {
+      "name": "repeat rollback rejects drift",
+      "result": "pass"
+    },
+    {
+      "name": "invalid direction rejects before DDL",
+      "result": "pass"
+    },
+    {
+      "name": "helper drift rejects before DDL",
+      "result": "pass"
+    },
+    {
+      "name": "differential-case-count",
+      "cases": 18000,
+      "trueReassignment": 240
+    },
+    {
+      "name": "differential eligibility channels states attempts expiry schedule tenant and worker scopes",
+      "result": "pass"
+    },
+    {
+      "name": "final apply still changes only guarded predicate and rollback stays exact",
+      "result": "pass"
+    }
+  ],
+  "rollback": true,
+  "providerTransports": 0,
+  "skips": 0
+}
