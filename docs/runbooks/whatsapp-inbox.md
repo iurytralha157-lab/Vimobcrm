@@ -48,6 +48,11 @@ desses arquivos não confirma quais passos foram executados no ambiente atual.
   distribui 2 slots para `live` e 2 para `backlog`. Cada slot reivindica um
   item que pode iniciar imediatamente. Falhas recebem retry com atraso limitado;
   ao esgotar tentativas, o item vai para `dead`.
+- Quando o segmento do cursor e sua única volta completa não admitem nenhum
+  item, o worker reinicia o próximo poll com cursor vazio. Isso evita repetir
+  duas reservas em cada poll vazio. Claims bem-sucedidos continuam avançando
+  pelo último ID de sessão; erros preservam o cursor anterior. A ordenação,
+  os fences e a escolha de candidatos permanecem iguais.
 
 Fontes: [claim e dependências](../../apps/api/internal/whatsapp/webhook_worker.go)
 (linhas 59–305), [slots e execução](../../apps/api/internal/whatsapp/webhook_worker.go)
