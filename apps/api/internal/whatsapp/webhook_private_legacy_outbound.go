@@ -32,6 +32,14 @@ func nativePrivateLegacyOutboundEligible(message nativeEvolutionMessage, snapsho
 func ensureNativePrivateLegacyOutboundConversation(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession,
 	message nativeEvolutionMessage, stored nativeEvolutionStoredMessageIdentity, snapshot *nativeIngressRoutingSnapshot,
 ) (nativeEvolutionConversation, bool, error) {
+	if stored.ID != "" {
+		if stored.PrivateCollisionKind != nativePrivateLegacyOutboundMarker {
+			return nativeEvolutionConversation{}, false, nil
+		}
+		if !nativePrivateLegacyOutboundEligible(message, snapshot) {
+			return nativeEvolutionConversation{}, false, ErrConversationBindingChanged
+		}
+	}
 	if !nativePrivateLegacyOutboundEligible(message, snapshot) ||
 		(stored.ID == "" && (!session.privateLegacyOutboundEnabled || session.OwnerUserID == "")) {
 		return nativeEvolutionConversation{}, false, nil

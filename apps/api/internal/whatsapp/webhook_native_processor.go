@@ -64,10 +64,11 @@ type nativeEvolutionLead struct {
 }
 
 type nativeEvolutionStoredMessageIdentity struct {
-	ID               string
-	ConversationID   string
-	LeadID           string
-	QuarantineReason string
+	ID                   string
+	ConversationID       string
+	LeadID               string
+	QuarantineReason     string
+	PrivateCollisionKind string
 }
 
 type nativeIngressRoutingSnapshot struct {
@@ -2908,7 +2909,8 @@ func findNativeEvolutionStoredMessageIdentity(
 		              '{"lead_resolution_quarantine":{"terminal":true,"retryable":false}}'::jsonb
 		           then coalesce(nullif(message.metadata #>> '{lead_resolution_quarantine,reason}', ''), 'whatsapp_lead_resolution_ambiguous')
 		         else ''
-		       end
+		       end,
+		       coalesce(message.metadata #>> '{private_collision_route,kind}', '')
 		from public.whatsapp_messages message
 		where message.organization_id = $1::uuid
 		  and message.session_id = $2::uuid
@@ -2928,7 +2930,7 @@ func findNativeEvolutionStoredMessageIdentity(
 	matches := []nativeEvolutionStoredMessageIdentity{}
 	for rows.Next() {
 		var match nativeEvolutionStoredMessageIdentity
-		if err := rows.Scan(&match.ID, &match.ConversationID, &match.LeadID, &match.QuarantineReason); err != nil {
+		if err := rows.Scan(&match.ID, &match.ConversationID, &match.LeadID, &match.QuarantineReason, &match.PrivateCollisionKind); err != nil {
 			return nativeEvolutionStoredMessageIdentity{}, err
 		}
 		matches = append(matches, match)
