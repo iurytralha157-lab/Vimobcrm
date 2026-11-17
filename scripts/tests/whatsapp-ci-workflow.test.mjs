@@ -11,7 +11,9 @@ test('image publication waits for every existing gate and the WhatsApp gate', ()
     ['release-gates', 'invitation-integration', 'membership-access-integration', 'whatsapp-contracts']);
   assert.equal(workflow.jobs['build-and-push'].permissions.packages, 'write');
   const staticCommands = workflow.jobs['release-gates'].steps.map(step => step.run || '').join('\n');
-  for (const command of ['npm run audit:check', 'npm run validation:test', 'npm run typecheck', 'npm run lint',
+  for (const command of ['node scripts/security/check-release-audit.mjs',
+    'node scripts/security/rebuild-picomatch-backports.mjs', 'node scripts/security/check-picomatch-backports.mjs',
+    'npm run audit:check', 'npm run validation:test', 'npm run typecheck', 'npm run lint',
     'node scripts/supabase/verify-migrations.mjs', 'node scripts/supabase/verify-edge-functions.mjs',
     'go test ./apps/api/... ./packages/auth/... ./packages/db/...']) assert.ok(staticCommands.includes(command), command);
 });

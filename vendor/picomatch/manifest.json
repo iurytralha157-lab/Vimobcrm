@@ -1,0 +1,46 @@
+{
+  "advisoryUrl": "https://github.com/advisories/GHSA-fc5q-39xc-vjpf",
+  "patch": {
+    "file": "repeated-extglob.patch",
+    "sha256": "4c0df48f129219fc7b5656cc74d6a7fa2c02e5466bf8938bfda87cd747c69021"
+  },
+  "packages": [
+    {
+      "upstreamVersion": "2.3.2",
+      "upstreamIntegrity": "sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA==",
+      "version": "2.3.2-vimob.1",
+      "file": "vimob-crm-picomatch-2.3.2-vimob.1.tgz",
+      "integrity": "sha512-VHZOEzoukwfZ9hKyfivCSbr5/k1UlmY9U0yhX84B1HyfhF3SiXedwMwOpDvHuduAcCyrOvaUw9tk5ZY/fltEKQ==",
+      "files": {
+        "LICENSE": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9",
+        "README.md": "f4653b68a1883a32f852083c1b93381ce87f44c6855ce1f01854d39d0563c98c",
+        "index.js": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480",
+        "lib/constants.js": "980225ab847a88a784f6d315557b8434f7742b2551ce20e354455c61b938c0a5",
+        "lib/parse.js": "67cdc8c02772867cae09c65b09305d1eb4732fbfbec689b1322a2fc3a1a03a6f",
+        "lib/picomatch.js": "2cb169cbe17d356036c5f62a377318b85e30817877e59797842aec9d8b15f54b",
+        "lib/scan.js": "227fcc994a477ea95c5a0435d32783566334c6bd0dcc4a103029735ad8c9c535",
+        "lib/utils.js": "809fc29cf35ab0aa76b99cad29182f62c0ae598902481d10f9868eaef71981ee",
+        "package.json": "210ac6b9ca27b831bdb428eb1ab57f5422da37cbd3bb4e438da00764a222c3ab"
+      }
+    },
+    {
+      "upstreamVersion": "4.0.4",
+      "upstreamIntegrity": "sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==",
+      "version": "4.0.4-vimob.1",
+      "file": "vimob-crm-picomatch-4.0.4-vimob.1.tgz",
+      "integrity": "sha512-JbhvOJpf2IDbDthHyIaPSRyOA2/heKtTaZe98Euj/Mcl3ZvvPyThAKeqWvF/C7EVRXzWnsxQpXCSYbHtvB7ecQ==",
+      "files": {
+        "LICENSE": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9",
+        "README.md": "abaa6b58484e1f252b8d40b949b53602f5f2d7e6990f20d85fe6174ca5cb802f",
+        "index.js": "02ae26406508e28f9ba0865be16cf77f0b33de6c4d4d49c212c4176df1d5625a",
+        "lib/constants.js": "c28f952d2758261fe5428a121add485cc25b03e0193633f649de903dc0e5e222",
+        "lib/parse.js": "d31b852bb50f4820f6a90eb0258f51742eb2ae959eb361a311d96f2780c14ce2",
+        "lib/picomatch.js": "bbe9824eae8210954eac016e1fa1ac6174093557f30a72e91621d74a6c25e170",
+        "lib/scan.js": "227fcc994a477ea95c5a0435d32783566334c6bd0dcc4a103029735ad8c9c535",
+        "lib/utils.js": "f04604f70cd1a3f6ace80b84766468674ff38b4bb83818d2ef1d81fc6355f935",
+        "package.json": "ffe3b1abd07068bdd4c814e8937854904276e04968a01820b6713ccdb546b368",
+        "posix.js": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480"
+      }
+    }
+  ]
+}

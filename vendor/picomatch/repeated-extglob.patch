@@ -1,0 +1,82 @@
+diff --git a/lib/parse.js b/lib/parse.js
+index caa2b86..afcc725 100644
+--- a/lib/parse.js
++++ b/lib/parse.js
+@@ -280,7 +280,23 @@ const repeatedExtglobRecursion = pattern => {
+   return depth;
+ };
+ 
+-const analyzeRepeatedExtglob = (body, options) => {
++// For a single branch of literals and stars, a star can absorb any further
++// repetitions of that branch. Keep paths, quoting and other glob/regex syntax
++// out of this rewrite: they need their own analysis.
++const isSelfRepeatingStarBranch = branch => {
++  return branch.includes('*') &&
++    !branch.includes('**') &&
++    !/[\\/"?()[\]{}|!+@]/.test(branch);
++};
++
++const analyzeRepeatedExtglob = (body, options, hasWildcard) => {
++  const branches = splitTopLevel(body);
++  if (branches.length === 1 && hasWildcard) {
++    // Collapse only ordinary within-segment patterns. Otherwise use the existing literal safety fallback.
++    const collapse = !options.capture && !options.bash && !options.regex && isSelfRepeatingStarBranch(body);
++    return collapse ? { risky: false, collapse: true } : { risky: true };
++  }
++
+   if (options.maxExtglobRecursion === false) {
+     return { risky: false };
+   }
+@@ -290,19 +306,19 @@ const analyzeRepeatedExtglob = (body, options) => {
+       ? options.maxExtglobRecursion
+       : constants.DEFAULT_MAX_EXTGLOB_RECURSION;
+ 
+-  const branches = splitTopLevel(body).map(branch => branch.trim());
++  const trimmed = branches.map(branch => branch.trim());
+ 
+-  if (branches.length > 1) {
++  if (trimmed.length > 1) {
+     if (
+-      branches.some(branch => branch === '') ||
+-      branches.some(branch => /^[*?]+$/.test(branch)) ||
+-      hasRepeatedCharPrefixOverlap(branches)
++      trimmed.some(branch => branch === '') ||
++      trimmed.some(branch => /^[*?]+$/.test(branch)) ||
++      hasRepeatedCharPrefixOverlap(trimmed)
+     ) {
+       return { risky: true };
+     }
+   }
+ 
+-  for (const branch of branches) {
++  for (const branch of trimmed) {
+     const safeOutput = getStarExtglobSequenceOutput(branch);
+     if (safeOutput) {
+       return { risky: true, safeOutput };
+@@ -510,9 +526,13 @@ const parse = (input, options) => {
+   const extglobClose = token => {
+     const literal = input.slice(token.startIndex, state.index + 1);
+     const body = input.slice(token.startIndex + 2, state.index);
+-    const analysis = analyzeRepeatedExtglob(body, opts);
++    const repeats = token.type === 'plus' || token.type === 'star';
++    const hasWildcard = repeats && tokens.slice(token.tokensIndex + 2).some(part =>
++      (part.type === 'star' || part.type === 'globstar') && part.value && part.output
++    );
++    const analysis = repeats ? analyzeRepeatedExtglob(body, opts, hasWildcard) : { risky: false };
+ 
+-    if ((token.type === 'plus' || token.type === 'star') && analysis.risky) {
++    if (analysis.risky) {
+       const safeOutput = analysis.safeOutput
+         ? (token.output ? '' : ONE_CHAR) + (opts.capture ? `(${analysis.safeOutput})` : analysis.safeOutput)
+         : undefined;
+@@ -536,6 +556,10 @@ const parse = (input, options) => {
+       return;
+     }
+ 
++    if (analysis.collapse === true) {
++      token.close = token.type === 'plus' ? ')' : ')?';
++    }
++
+     let output = token.close + (opts.capture ? ')' : '');
+     let rest;
+ 

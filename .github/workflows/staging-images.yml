@@ -79,6 +79,11 @@ jobs:
       - name: Audit release dependencies
         run: node scripts/security/check-release-audit.mjs
 
+      - name: Verify Picomatch backports and original advisory coverage
+        run: |
+          node scripts/security/rebuild-picomatch-backports.mjs
+          node scripts/security/check-picomatch-backports.mjs
+
       - name: Test isolated staging safety contracts
         run: node --test scripts/staging/*.test.mjs deploy/staging/isolation.test.mjs
 
