@@ -85,6 +85,32 @@ das mensagens da nova geração e nunca fabrique resultados de processamento.
 
 ## Outbox de envios
 
+### Colisão legada de conversa por lead
+
+Uma entrada orgânica legada `lead_match` pode ter congelado uma conversa sem
+lead enquanto outra conversa da mesma conexão já ocupa o vínculo do card.
+Com `WHATSAPP_PRIVATE_COLLISION_CAPTURE_ENABLED=true`, a API preserva a conversa
+física original e captura o conteúdo na caixa privada do dono da conexão. O lead
+identificado no ingresso permanece no snapshot imutável. O vínculo existente,
+as mensagens anteriores e os efeitos de lead permanecem preservados. A captura
+usa a recuperação silenciosa por `UPDATE`, com o horário original e sem novos
+avisos, automações ou contagem de não lidas.
+
+Um sucessor só herda esse destino quando o snapshot imutável, a época, a rota,
+o predecessor, seu resultado durável e sua mensagem privada canônica coincidem.
+A conversa continua sem lead nem vínculo ativo sob lock. O marcador na mensagem
+é produzido exclusivamente pelo backend e exige grants que impeçam escrita de
+`metadata` por `anon` e `authenticated`. O conteúdo do webhook nunca concede essa
+prova. Um vínculo manual posterior encerra a herança privada dessa cadeia.
+
+A flag é opcional na API Go e tem padrão `false`. Primeiro publique os leitores
+novos em todas as réplicas, mantendo a emissão desligada. Confira a ausência de
+workers antigos e só então habilite a emissão. A leitura dos resultados privados
+já aceitos permanece ativa com a flag desligada. Para reverter a versão, desligue
+a emissão e conclua as dependências desses resultados antes de restaurar leitores
+anteriores. O canário exige corpo visível ao dono, isolamento de outra organização,
+snapshot intacto, deduplicação e ausência de efeitos de lead.
+
 A admissão de automações usa `public.enqueue_automation_whatsapp_outbox` com
 `service_role`. O cutover estrito de vínculos remove as permissões de escrita
 desse papel em `public.whatsapp_conversation_lead_bindings`. A migration

@@ -33,6 +33,8 @@ type nativeEvolutionSession struct {
 	ProfileName      string
 	OwnerUserID      string
 	AdvancedSettings map[string]any
+
+	privateCollisionCaptureEnabled bool
 }
 
 type nativeEvolutionConversation struct {
@@ -47,6 +49,7 @@ type nativeEvolutionConversation struct {
 	LeadScopeCompatibilityFallback bool
 	RequestedOriginRoundRobinID    string
 	HistoricalBindingReplay        bool
+	PrivateCollisionRoute          bool
 }
 
 type nativeEvolutionLead struct {
@@ -66,6 +69,7 @@ type nativeEvolutionStoredMessageIdentity struct {
 }
 
 type nativeIngressRoutingSnapshot struct {
+	RawSnapshot                   json.RawMessage
 	State                         string
 	ProviderMessageID             string
 	InboxEventKey                 string
@@ -169,6 +173,10 @@ func nativeIngressRoutingSnapshotForMessage(
 		PredecessorProviderMessageID: strings.TrimSpace(stringFromAny(row["predecessor_provider_message_id"])),
 		PredecessorInboxEventKey:     strings.TrimSpace(stringFromAny(row["predecessor_inbox_event_key"])),
 		PredecessorProcessingLane:    strings.TrimSpace(stringFromAny(row["predecessor_processing_lane"])),
+	}
+	snapshot.RawSnapshot, err = json.Marshal(row)
+	if err != nil {
+		return nil, err
 	}
 	if snapshot.ConversationID, err = normalizeOptionalUUID(row["conversation_id"]); err != nil {
 		return nil, err
@@ -1204,6 +1212,7 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 	}
 
 	allowAutomatedReply := evolutionWebhookAllowsAutomatedReply(item)
+	session.privateCollisionCaptureEnabled = repo.privateCollisionCaptureEnabled
 	automationIngress := automationReplyIngressState(item.Payload)
 	autoReplyInputs := []autoReplyInput{}
 	leadIDsToPublish := map[string]struct{}{}
@@ -1620,7 +1629,7 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 			}
 			mediaQueued = mediaQueued || queued
 		}
-		eventBindingIsCurrent := !conversation.HistoricalBindingReplay &&
+		eventBindingIsCurrent := !conversation.HistoricalBindingReplay && !conversation.PrivateCollisionRoute &&
 			nativeEvolutionMessageLeadID(conversation) == strings.TrimSpace(conversation.LeadID)
 		if nativeEvolutionMessageHasVisibleCapture(captureState) && captureState != "promoted_unlinked" &&
 			inserted && effectiveConversationID == conversation.ID && eventBindingIsCurrent {
@@ -1667,7 +1676,12 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 			}
 		}
 		if captureState == "suppressed" {
-			if item.ProcessingLane == evolutionWebhookLaneLive &&
+			if conversation.PrivateCollisionRoute {
+				if err := recoverNativePrivateCollisionMessage(ctx, tx, session, item, conversation, message, messageRowID, routingSnapshot); err != nil {
+					return err
+				}
+				captureState = "unlinked_ephemeral"
+			} else if item.ProcessingLane == evolutionWebhookLaneLive &&
 				!conversation.RetentionClosed &&
 				conversation.LeadResolutionQuarantineReason == "" &&
 				!conversation.HistoricalBindingReplay &&
@@ -3005,6 +3019,9 @@ func ensureNativeEvolutionConversation(
 	if message.IdentityPNConflict {
 		return nativeEvolutionConversation{}, errNativeStoredContactPNConflict
 	}
+	if privateConversation, handled, err := ensureNativePrivateCollisionConversation(ctx, tx, session, message, storedIdentity, routingSnapshot); err != nil || handled {
+		return privateConversation, err
+	}
 	if routingSnapshot != nil && routingSnapshot.TargetMode == "inherit_predecessor" && storedIdentity.ID == "" {
 		target, err := resolveNativeInheritedRoutingTarget(ctx, tx, session, *routingSnapshot)
 		if err != nil {
@@ -4157,7 +4174,7 @@ func activateNativeWhatsAppConversationLeadBinding(
 }
 
 func nativeEvolutionMessageLeadID(conversation nativeEvolutionConversation) string {
-	if conversation.LeadResolutionQuarantineReason != "" {
+	if conversation.LeadResolutionQuarantineReason != "" || conversation.PrivateCollisionRoute {
 		return ""
 	}
 	if leadID := strings.TrimSpace(conversation.MessageLeadID); leadID != "" {

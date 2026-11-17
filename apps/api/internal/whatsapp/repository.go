@@ -117,6 +117,7 @@ type Repository struct {
 	avatarSlots               chan struct{}
 
 	liveBoundDeadBacklogBypassEnabled bool
+	privateCollisionCaptureEnabled    bool
 }
 
 type scanner interface {
@@ -142,6 +143,7 @@ func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder
 		avatarSlots:               make(chan struct{}, conversationAvatarConcurrency),
 
 		liveBoundDeadBacklogBypassEnabled: storageConfig.LiveBoundDeadBacklogBypassEnabled,
+		privateCollisionCaptureEnabled:    storageConfig.PrivateCollisionCaptureEnabled,
 	}
 }
 
