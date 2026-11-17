@@ -53,6 +53,18 @@ desses arquivos não confirma quais passos foram executados no ambiente atual.
   duas reservas em cada poll vazio. Claims bem-sucedidos continuam avançando
   pelo último ID de sessão; erros preservam o cursor anterior. A ordenação,
   os fences e a escolha de candidatos permanecem iguais.
+- `WHATSAPP_WEBHOOK_WORKER_BACKLOG_CONCURRENCY` é opcional e padrão `0`,
+  preservando a divisão automática (total 16: 12 live/4 backlog). Um valor
+  positivo reserva de 1 até total-1 slots existentes para backlog; com total
+  16 e override 8 são 8 live/8 backlog, sem aumentar o total ou o pool. Total
+  1 só aceita 0 e conserva a compatibilidade de 1 slot por lane. Valores
+  inválidos impedem a inicialização. O ajuste vale ao iniciar os workers.
+  No dreno, publicar primeiro a imagem com override 0; após todos os leitores
+  estarem na versão nova, aplicar a configuração autorizada de LID e override
+  8 no mesmo rolling update. Conferir `live_concurrency`/`backlog_concurrency`,
+  idade de claim live, chegada recente, taxa de backlog e tempo de banco.
+  Reverter o override para 0 se a idade live piorar; após o dreno, retornar
+  a 0. Isso não reinicia Evolution nem altera envio, FIFO, epoch ou leases.
 
 Fontes: [claim e dependências](../../apps/api/internal/whatsapp/webhook_worker.go)
 (linhas 59–305), [slots e execução](../../apps/api/internal/whatsapp/webhook_worker.go)

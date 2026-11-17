@@ -118,6 +118,7 @@ type Repository struct {
 
 	liveBoundDeadBacklogBypassEnabled bool
 	privateCollisionCaptureEnabled    bool
+	webhookWorkerBacklogConcurrency   int
 }
 
 type scanner interface {
@@ -144,6 +145,7 @@ func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder
 
 		liveBoundDeadBacklogBypassEnabled: storageConfig.LiveBoundDeadBacklogBypassEnabled,
 		privateCollisionCaptureEnabled:    storageConfig.PrivateCollisionCaptureEnabled,
+		webhookWorkerBacklogConcurrency:   storageConfig.WebhookWorkerBacklogConcurrency,
 	}
 }
 

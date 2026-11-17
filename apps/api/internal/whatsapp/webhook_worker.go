@@ -290,7 +290,7 @@ func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logg
 		}
 		cleanupTicker := time.NewTicker(time.Minute)
 		defer cleanupTicker.Stop()
-		liveConcurrency, backlogConcurrency := evolutionWebhookLaneConcurrency(config.WebhookWorkerConcurrency)
+		liveConcurrency, backlogConcurrency := evolutionWebhookLaneConcurrencyWithBacklog(config.WebhookWorkerConcurrency, handler.repo.webhookWorkerBacklogConcurrency)
 		var statsMu sync.Mutex
 		windowStats := evolutionWebhookWorkerWindowStats{startedAt: time.Now()}
 		// A slot stops claiming when ctx is canceled. Dispatch and reconcile

@@ -33,6 +33,7 @@ type StorageConfig struct {
 	WhatsAppPostFormFollowUpGuardEnabled bool
 	LegacyNativeCompatEnabled            bool
 	PrivateCollisionCaptureEnabled       bool
+	WebhookWorkerBacklogConcurrency      int
 	LiveBoundDeadBacklogBypassEnabled    bool
 }
 
