@@ -1,8 +1,15 @@
-# Evolution Go 0.7.2 - Vimob media, auth-pool, and handshake hardening
+# Evolution Go 0.7.2 - Vimob hardening and WhatsApp Status ACK
 
 This image is built from the immutable upstream Evolution Go `0.7.2` commit
 `9337afc47e10b86cc896a6f432240e40fee95dd1` plus narrowly scoped patches for
 the Whatsmeow auth store, instance startup, and `POST /message/downloadmedia`.
+
+The Status ACK patch pins Whatsmeow to
+[`a2381054887e`](https://github.com/tulir/whatsmeow/commit/a2381054887e).
+This revision acknowledges incoming WhatsApp Status packets at the protocol
+layer and retains auth schema version 14. The prior revision missed that
+acknowledgment, which could cause periodic reconnects and delay incoming
+messages. The build verifies the pinned module and the linked Status handler.
 
 The handshake-version patch discovers the current version through the pinned
 Whatsmeow library's `GetLatestVersion` request to `https://web.whatsapp.com`,
