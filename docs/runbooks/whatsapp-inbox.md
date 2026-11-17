@@ -59,9 +59,12 @@ desses arquivos não confirma quais passos foram executados no ambiente atual.
   16 e override 8 são 8 live/8 backlog, sem aumentar o total ou o pool. Total
   1 só aceita 0 e conserva a compatibilidade de 1 slot por lane. Valores
   inválidos impedem a inicialização. O ajuste vale ao iniciar os workers.
-  No dreno, publicar primeiro a imagem com override 0; após todos os leitores
-  estarem na versão nova, aplicar a configuração autorizada de LID e override
-  8 no mesmo rolling update. Conferir `live_concurrency`/`backlog_concurrency`,
+  No dreno, publicar primeiro a imagem com override 0 e a nova captura outbound
+  desligada. Após todos os leitores estarem na versão nova, aplicar
+  `WHATSAPP_PRIVATE_LEGACY_OUTBOUND_CAPTURE_ENABLED=true` e
+  `WHATSAPP_WEBHOOK_WORKER_BACKLOG_CONCURRENCY=8` no mesmo rolling update,
+  preservando a flag já ativa de captura privada PN. Conferir
+  `live_concurrency`/`backlog_concurrency`,
   idade de claim live, chegada recente, taxa de backlog e tempo de banco.
   Reverter o override para 0 se a idade live piorar; após o dreno, retornar
   a 0. Isso não reinicia Evolution nem altera envio, FIFO, epoch ou leases.
