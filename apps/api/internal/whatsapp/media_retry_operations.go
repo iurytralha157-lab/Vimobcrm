@@ -39,6 +39,12 @@ type recoveredWhatsAppMedia struct {
 	source      string
 }
 
+// Keep signed URLs out of durable job errors while preserving typed causes.
+type whatsappMediaRequestError struct{ cause error }
+
+func (err whatsappMediaRequestError) Error() string { return "media provider request failed" }
+func (err whatsappMediaRequestError) Unwrap() error { return err.cause }
+
 func (repo Repository) retryStoredMediaDownload(ctx context.Context, tenantContext tenant.Context, rawMessageID string) (map[string]any, error) {
 	messageID, ok := normalizeUUID(rawMessageID)
 	if !ok {
@@ -258,10 +264,10 @@ func (repo Repository) downloadWhatsAppMediaURL(ctx context.Context, sourceURL s
 	response, err := client.Do(request)
 	if err != nil {
 		return recoveredWhatsAppMedia{}, fmt.Errorf(
-			"%w: %w: media provider request failed: %v",
+			"%w: %w: %w",
 			ErrProviderFailed,
 			ErrProviderOutcomeUnknown,
-			err,
+			whatsappMediaRequestError{cause: err},
 		)
 	}
 	payload, readErr := readLimitedWhatsAppMedia(response)
