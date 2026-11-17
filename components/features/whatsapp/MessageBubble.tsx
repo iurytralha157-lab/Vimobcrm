@@ -261,7 +261,7 @@ export const MessageBubble = memo(function MessageBubble({
 
   const outsideActions = <MessageBubbleActions fromMe={fromMe} reactions={reactions}
     onReact={showOutsideReactionPicker ? onReact : undefined} isReacting={isReacting} onReply={canReply ? onReply : undefined}
-    menu={{ content: isDeletedMessage ? "" : safeContent, status: unconfirmedOutgoing ? "unconfirmed" : status, sentAt, fromMe, senderName, senderUserId, viewerUserId, messageType: mediaKind, mediaFilename, mediaSize, onCopy: copyContent, onReply: canReply ? onReply : undefined, onAttach: canAttachMedia ? () => changeAttachmentDialog(true) : undefined, open: menuOpen, onOpenChange: setMenuOpen }} />;
+    menu={{ content: isDeletedMessage ? "" : safeContent, status: unconfirmedOutgoing ? "unconfirmed" : status, sentAt, fromMe, senderName, senderUserId, viewerUserId, messageType: mediaKind, mediaFilename: isDeletedMessage ? null : mediaFilename, mediaSize: isDeletedMessage ? null : mediaSize, onCopy: copyContent, onReply: canReply ? onReply : undefined, onAttach: canAttachMedia ? () => changeAttachmentDialog(true) : undefined, open: menuOpen, onOpenChange: setMenuOpen }} />;
 
   if (mediaKind === "reaction") return null;
 
@@ -302,8 +302,8 @@ export const MessageBubble = memo(function MessageBubble({
           if (pointerType === "touch" || pointerType === "pen") return;
           event.preventDefault(); setMenuOpen(true);
         }}>
-          {quotedMessage && <MessageQuotePreview quote={quotedMessage} viewerUserId={viewerUserId} onNavigate={navigateToQuoted} />}
-          <MessageStructuredContent contacts={contacts} location={location} />
+          {!isDeletedMessage && quotedMessage && <MessageQuotePreview quote={quotedMessage} viewerUserId={viewerUserId} onNavigate={navigateToQuoted} />}
+          {!isDeletedMessage && <MessageStructuredContent contacts={contacts} location={location} />}
           {isMediaMessage && (
             <>
               {showSenderName && !fromMe && displaySenderName && (

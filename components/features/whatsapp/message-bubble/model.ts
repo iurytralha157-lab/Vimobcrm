@@ -48,7 +48,7 @@ export function getEffectiveMessageMediaKind(
   const type = String(messageType || "text").toLowerCase();
   const mimeType = cleanMessageMimeType(mediaMimeType);
 
-  if (type === "deleted") return "deleted";
+  if (type === "deleted" || type === "deleted_event") return "deleted";
   if (type === "reaction") return "reaction";
   if (type === "sticker") return "sticker";
   if (type === "audio" || type === "video" || type === "image") return type;

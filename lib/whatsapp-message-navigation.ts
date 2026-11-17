@@ -3,7 +3,7 @@ import { normalizeSearchText } from '@/lib/search-text';
 
 export function matchesWhatsAppMessageSearch(message: Pick<WhatsAppMessage, 'content' | 'message_type' | 'media_filename'>, query: string) {
   const needle = normalizeSearchText(query).trim();
-  return Boolean(needle) && message.message_type !== 'deleted'
+  return Boolean(needle) && message.message_type !== 'deleted' && message.message_type !== 'deleted_event'
     && normalizeSearchText(`${message.content || ''} ${message.media_filename || ''}`).includes(needle);
 }
 

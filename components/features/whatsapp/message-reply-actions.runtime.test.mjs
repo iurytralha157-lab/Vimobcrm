@@ -89,11 +89,15 @@ for (const fromMe of [false, true]) test(`reply and reaction are adjacent outsid
   const dom=await page.evaluate(() => {
     const row=document.querySelector('[data-message-id]'),actions=row.querySelector('[data-message-actions-outside]');
     const body=[...row.children].find(node=>node!==actions),button=actions?.querySelector('[data-message-reply-outside]');
+    const actionNodes=[...actions?.children||[]],reaction=actions?.querySelector('[data-message-reaction-outside]');
     return {sibling:actions?.parentElement===row,bodyContainsReply:body?.contains(button),side:[...row.children].indexOf(actions),
-      order:[...actions?.children||[]].map(node=>node.hasAttribute('data-message-reply-outside')?'reply':'reaction'),
+      adjacent:Math.abs(actionNodes.indexOf(button)-actionNodes.indexOf(reaction))===1,
+      order:actionNodes.filter(node=>node.hasAttribute('data-message-reply-outside')||node.hasAttribute('data-message-reaction-outside'))
+        .map(node=>node.hasAttribute('data-message-reply-outside')?'reply':'reaction'),
       contentInBody:body?.textContent.includes('Mensagem de teste')};
   });
   assert.equal(dom.sibling,true);assert.equal(dom.bodyContainsReply,false);assert.equal(dom.contentInBody,true);
+  assert.equal(dom.adjacent,true);
   assert.equal(dom.side,fromMe?0:1);assert.deepEqual(dom.order,fromMe?['reply','reaction']:['reaction','reply']);
 });
 
@@ -149,4 +153,40 @@ test('long text and image captions keep reply outside the body in the DOM',async
     assert.equal(await page.locator('[data-message-actions-outside]').evaluate(node=>node.textContent.trim()),'');
     assert.equal(await page.getByText('Conteúdo longo',{exact:false}).count(),1);
   }
+});
+
+for (const plainHistory of [false, true]) for (const messageType of ['deleted', 'deleted_event']) test(`${messageType} ${plainHistory ? 'lead history' : 'inbox'} hides retained contacts, location and quote`, async t => {
+  const retained = {
+    plainHistory,
+    messageType: 'location',
+    content: null,
+    mediaFilename: 'arquivo-sintetico-retido.pdf',
+    mediaSize: 1536,
+    contacts: [{ display_name: 'Contato sintético retido', phones: ['+15550101001'] }],
+    location: { latitude: 0, longitude: 0, name: 'Local sintético retido', address: 'Endereço sintético retido' },
+    quotedMessage: { message_id: 'synthetic-quote', available: true, id: '00000000-0000-4000-8000-000000000099', content: 'Citação sintética retida' },
+  };
+  const page = await open(t, retained);
+  const log = page.getByRole('log');
+  for (const text of ['Contato sintético retido', 'Local sintético retido', 'Endereço sintético retido', 'Citação sintética retida']) {
+    assert.ok((await log.innerText()).includes(text), 'Confirmed structured content remains visible');
+  }
+  assert.equal(await log.locator('a[href^="tel:"]').count(), 1);
+  assert.equal(await log.getByRole('link', { name: 'Abrir mapa' }).count(), 1);
+
+  // The server or a loaded cache may still carry optional presentation fields
+  // when the canonical row becomes a deletion tombstone.
+  await page.evaluate(({ props, messageType }) => h.render({ ...props, messageType, content: 'Esta mensagem foi apagada' }), { props: retained, messageType });
+  assert.ok((await log.innerText()).includes('Esta mensagem foi apagada'));
+  for (const text of ['Contato sintético retido', 'Local sintético retido', 'Endereço sintético retido', 'Citação sintética retida']) {
+    assert.equal((await log.innerText()).includes(text), false, 'Deleted structured content must disappear');
+  }
+  assert.equal(await log.locator('a[href^="tel:"]').count(), 0);
+  assert.equal(await log.getByRole('link', { name: 'Abrir mapa' }).count(), 0);
+  assert.equal(await log.getByRole('button', { name: replyLabel, exact: true }).count(), 0);
+  await log.getByRole('button', { name: 'Mais opções da mensagem', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Dados da mensagem', exact: true }).click();
+  const details = page.getByRole('dialog');
+  assert.equal((await details.innerText()).includes('arquivo-sintetico-retido.pdf'), false);
+  assert.equal((await details.innerText()).includes('1.5 KB'), false);
 });

@@ -48,3 +48,37 @@ func TestUnavailableQuoteNeverSerializesBodyOrName(t *testing.T) {
 		t.Fatalf("unavailable quote leaked fields: %s", raw)
 	}
 }
+
+func TestDeletedMessagePresentationDoesNotExposeRetainedMetadata(t *testing.T) {
+	const payload = `{"media_filename":"Synthetic.pdf","location":{"latitude":1,"longitude":2,"name":"Synthetic location"},"contacts":[{"display_name":"Synthetic contact","phones":["5550100"]}],"quoted_message":{"message_id":"synthetic-parent","available":true,"id":"00000000-0000-4000-8000-000000000020","content":"Synthetic quote"}}`
+	for _, kind := range []string{"deleted", "deleted_event", " DELETED ", "text"} {
+		t.Run(kind, func(t *testing.T) {
+			filename := "Synthetic cached filename"
+			message := Message{
+				MessageType:   kind,
+				MediaFilename: &filename,
+				Location:      &MessageLocation{Latitude: 1, Longitude: 2},
+				Contacts:      []MessageContact{{DisplayName: "Synthetic cached contact"}},
+				QuotedMessage: &QuotedMessage{MessageID: "synthetic-cached-parent"},
+			}
+			applyMessagePresentation(&message, payload)
+			if kind == "text" {
+				if message.MediaFilename == nil || message.Location == nil || len(message.Contacts) != 1 ||
+					message.QuotedMessage == nil || !message.QuotedMessage.Available {
+					t.Fatal("ordinary message lost its permitted presentation")
+				}
+				return
+			}
+			if message.MessageType != kind || message.MediaFilename != nil || message.Location != nil ||
+				len(message.Contacts) != 0 || message.QuotedMessage != nil {
+				t.Fatal("deleted message retained structured content or changed its tombstone")
+			}
+			// Invalid/stale presentation payloads must not restore cached fields.
+			message.Contacts = []MessageContact{{DisplayName: "Synthetic cached contact"}}
+			applyMessagePresentation(&message, "{")
+			if len(message.Contacts) != 0 {
+				t.Fatal("deleted message exposed cached presentation after decode failure")
+			}
+		})
+	}
+}

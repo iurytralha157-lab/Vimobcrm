@@ -135,6 +135,13 @@ func sanitizeMessageContacts(contacts []MessageContact) []MessageContact {
 }
 
 func applyMessagePresentation(message *Message, payload string) {
+	if kind := strings.ToLower(strings.TrimSpace(message.MessageType)); kind == "deleted" || kind == "deleted_event" {
+		message.MediaFilename = nil
+		message.Location = nil
+		message.Contacts = nil
+		message.QuotedMessage = nil
+		return
+	}
 	var fields struct {
 		Filename string           `json:"media_filename"`
 		Location *MessageLocation `json:"location"`

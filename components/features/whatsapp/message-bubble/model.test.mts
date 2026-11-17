@@ -18,6 +18,7 @@ const {
 
 test("resolve o tipo visual sem perder as precedências do payload", () => {
   assert.equal(getEffectiveMessageMediaKind("deleted", "image/jpeg", "https://example.com/a.jpg"), "deleted");
+  assert.equal(getEffectiveMessageMediaKind("deleted_event", "image/jpeg", "https://example.com/a.jpg"), "deleted");
   assert.equal(getEffectiveMessageMediaKind("reaction", "image/jpeg", "https://example.com/a.jpg"), "reaction");
   assert.equal(getEffectiveMessageMediaKind("audio", "video/mp4", "https://example.com/a"), "audio");
   assert.equal(getEffectiveMessageMediaKind("unknown", "audio/ogg; codecs=opus", null), "audio");

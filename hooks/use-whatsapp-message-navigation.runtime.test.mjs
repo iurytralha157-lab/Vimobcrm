@@ -218,5 +218,6 @@ test('message search matches accents and filenames while excluding deleted conte
   assert.equal(helper.matchesWhatsAppMessageSearch(message('one', { content: 'Visitação', media_filename: 'Contrato.PDF' }), 'visitacao'), true);
   assert.equal(helper.matchesWhatsAppMessageSearch(message('one', { content: null, media_filename: 'Contrato.PDF' }), 'contrato'), true);
   assert.equal(helper.matchesWhatsAppMessageSearch(message('one', { content: 'private old', message_type: 'deleted' }), 'private'), false);
+  assert.equal(helper.matchesWhatsAppMessageSearch(message('one', { content: 'private old', media_filename: 'private.pdf', message_type: 'deleted_event' }), 'private'), false);
   assert.equal(helper.matchesWhatsAppMessageSearch(message('one'), '  '), false);
 });
