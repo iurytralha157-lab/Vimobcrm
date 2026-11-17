@@ -33,6 +33,17 @@ func TestNativeStructuredCustomerMessagesKeepIdentityAndReadableContent(t *testi
 		{"contact no name", map[string]any{"contactMessage": map[string]any{"vcard": "BEGIN:VCARD"}}, "Contato compartilhado"},
 		{"contacts", map[string]any{"contactsArrayMessage": map[string]any{"contacts": []any{map[string]any{"vcard": "private"}}}}, "Contatos compartilhados"},
 		{"album header", map[string]any{"albumMessage": map[string]any{"expectedImageCount": 2}}, "Álbum de fotos ou vídeos"},
+		{"empty album header", map[string]any{"albumMessage": map[string]any{}}, "Álbum de fotos ou vídeos"},
+		{"legacy list", map[string]any{"listMessage": map[string]any{
+			"title": "Agendamento", "description": "Escolha o horário",
+			"sections":   []any{map[string]any{"title": "Visitas", "rows": []any{map[string]any{"title": "Manhã", "description": "Das 9h às 12h", "rowID": "internal-row"}}}},
+			"buttonText": "Horários",
+		}}, "Agendamento\nEscolha o horário\nVisitas\nManhã\nDas 9h às 12h\nHorários"},
+		{"legacy buttons", map[string]any{"buttonsMessage": map[string]any{
+			"Header": map[string]any{"text": "Visita"}, "contentText": "Confirma o horário?",
+			"buttons":    []any{map[string]any{"buttonId": "internal-button", "buttonText": map[string]any{"displayText": "Confirmar"}}},
+			"footerText": "Equipe",
+		}}, "Visita\nConfirma o horário?\nConfirmar\nEquipe"},
 		{"live location", map[string]any{"liveLocationMessage": map[string]any{"degreesLatitude": -23.0}}, "Localização em tempo real compartilhada"},
 		{"location caption", map[string]any{"LiveLocationMessage": map[string]any{"Caption": "Ponto da visita"}}, "Ponto da visita"},
 		{"location", map[string]any{"locationMessage": map[string]any{"name": "Portaria", "degreesLongitude": -46.0}}, "Portaria"},

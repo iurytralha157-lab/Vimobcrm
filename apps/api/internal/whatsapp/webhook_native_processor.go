@@ -3396,7 +3396,14 @@ func ensureNativeEvolutionConversation(
 				organization_id, session_id, lead_id, assigned_user_id, remote_jid,
 				contact_phone, contact_name, is_group, unread_count, metadata
 			) values (
-				$1::uuid, $2::uuid, null, nullif($3, '')::uuid, $4,
+				$1::uuid, $2::uuid, null, case when exists (
+				  select 1 from public.users app_user
+				  join public.organization_members member
+				    on member.user_id = app_user.id and member.organization_id = $1::uuid
+				  where app_user.id = nullif($3, '')::uuid
+				    and coalesce(app_user.is_active, false)
+				    and coalesce(member.is_active, false) and member.deleted_at is null
+				) then nullif($3, '')::uuid else null end, $4,
 				nullif($5, ''), nullif($6, ''), $7, 0, '{"source":"evolution_go_native"}'::jsonb
 			)
 			on conflict (session_id, remote_jid) where retired_at is null
@@ -3743,7 +3750,14 @@ func reconcileNativeEvolutionConversationIdentity(
 			      then coalesce(nullif($6, ''), nullif($5, ''), contact_name)
 			      else contact_name
 			    end,
-			    assigned_user_id = coalesce(assigned_user_id, nullif($7, '')::uuid),
+			    assigned_user_id = coalesce(assigned_user_id, case when exists (
+			      select 1 from public.users app_user
+			      join public.organization_members member
+			        on member.user_id = app_user.id and member.organization_id = $1::uuid
+			      where app_user.id = nullif($7, '')::uuid
+			        and coalesce(app_user.is_active, false)
+			        and coalesce(member.is_active, false) and member.deleted_at is null
+			    ) then nullif($7, '')::uuid else null end),
 			    deleted_at = null,
 			    metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
 			      'promoted_from_remote_jid', $8,

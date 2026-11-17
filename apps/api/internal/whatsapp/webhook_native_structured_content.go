@@ -6,6 +6,14 @@ import "strings"
 // Keep a readable representation without treating vCards, buttons, coordinates
 // or album headers as a media URL or as another contact identity.
 func nativeStructuredMessageContent(node map[string]any) string {
+	for _, key := range []string{"albumMessage", "AlbumMessage"} {
+		if _, ok := node[key].(map[string]any); ok {
+			return "Álbum de fotos ou vídeos"
+		}
+	}
+	if content := nativeLegacyInteractiveMessageContent(node); content != "" {
+		return content
+	}
 	for _, candidate := range []struct {
 		paths []string
 		text  []string
@@ -15,7 +23,6 @@ func nativeStructuredMessageContent(node map[string]any) string {
 		{[]string{"contactsArrayMessage", "ContactsArrayMessage"}, []string{"displayName", "DisplayName"}, "Contatos compartilhados"},
 		{[]string{"locationMessage", "LocationMessage"}, []string{"name", "Name", "comment", "Comment"}, "Localização compartilhada"},
 		{[]string{"liveLocationMessage", "LiveLocationMessage"}, []string{"caption", "Caption"}, "Localização em tempo real compartilhada"},
-		{[]string{"albumMessage", "AlbumMessage"}, nil, "Álbum de fotos ou vídeos"},
 		{[]string{"interactiveMessage", "InteractiveMessage"}, []string{"body.text", "Body.Text", "header.title", "Header.Title"}, "Mensagem interativa recebida. Abra o WhatsApp para interagir."},
 		{[]string{"interactiveResponseMessage", "InteractiveResponseMessage"}, []string{"body.text", "Body.Text"}, "Resposta interativa recebida"},
 		{[]string{"templateMessage", "TemplateMessage"}, []string{
@@ -39,6 +46,42 @@ func nativeStructuredMessageContent(node map[string]any) string {
 		return candidate.label
 	}
 	return ""
+}
+
+func nativeLegacyInteractiveMessageContent(node map[string]any) string {
+	texts := []string{}
+	list := nativeFirstMap(node, "listMessage", "ListMessage")
+	buttons := nativeFirstMap(node, "buttonsMessage", "ButtonsMessage")
+	switch {
+	case len(list) > 0:
+		texts = append(texts, firstString(list, "title", "Title"), firstString(list, "description", "Description"))
+		for _, section := range nativeObjectList(nativeFirstValue(list, "sections", "Sections")) {
+			texts = append(texts, firstString(section, "title", "Title"))
+			for _, row := range nativeObjectList(nativeFirstValue(section, "rows", "Rows")) {
+				texts = append(texts, firstString(row, "title", "Title"), firstString(row, "description", "Description"))
+			}
+		}
+		texts = append(texts, firstString(list, "footerText", "FooterText"), firstString(list, "buttonText", "ButtonText"))
+	case len(buttons) > 0:
+		texts = append(texts, firstString(buttons, "header.text", "Header.Text", "Header.text"),
+			firstString(buttons, "contentText", "ContentText", "text", "Text"))
+		for _, button := range nativeObjectList(nativeFirstValue(buttons, "buttons", "Buttons")) {
+			texts = append(texts, firstString(button, "buttonText.displayText", "ButtonText.DisplayText"))
+		}
+		texts = append(texts, firstString(buttons, "footerText", "FooterText"))
+	default:
+		return ""
+	}
+	parts := make([]string, 0, len(texts))
+	for _, text := range texts {
+		if text = strings.TrimSpace(text); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	if len(parts) == 0 {
+		return "Mensagem interativa recebida. Abra o WhatsApp para interagir."
+	}
+	return strings.Join(parts, "\n")
 }
 
 // The provider has not decrypted this edit. It must never become a new CRM
