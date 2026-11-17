@@ -59,7 +59,9 @@ func TestLocalOrganizationPurgePreservesAccountDeviceRegisteredInDeletedTenant(t
  values($1::uuid,'authenticated','authenticated',$2,'',now(),'{}','{}',now(),now());
  insert into public.users(id,organization_id,name,email,role,is_active) values($1::uuid,$3::uuid,'Synthetic account',$2,'user',true)
  on conflict(id) do update set organization_id=excluded.organization_id,role='user',is_active=true;
- insert into public.organization_members(organization_id,user_id,role,is_active) values($3::uuid,$1::uuid,'user',true),($4::uuid,$1::uuid,'user',true)`, actor, suffix+"@example.test", originalOrg, registrationOrg); err != nil {
+ insert into public.organization_members(organization_id,user_id,role,is_active)
+ values($3::uuid,$1::uuid,'user',true),($4::uuid,$1::uuid,'user',true)
+ on conflict(user_id,organization_id) do update set role=excluded.role,is_active=true,deleted_at=null`, actor, suffix+"@example.test", originalOrg, registrationOrg); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Pool().QueryRow(ctx, `insert into public.push_tokens(organization_id,user_id,token,platform,is_active) values($1::uuid,$2::uuid,$3,'web',true) returning id::text`, registrationOrg, actor, suffix+"-device").Scan(&device); err != nil {
