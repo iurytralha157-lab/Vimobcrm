@@ -72,3 +72,33 @@ devem ser repetidos quando a atividade em voo terminar naturalmente.
 O passo 9 é o ponto em que duas filas passam a poder manter cards distintos
 para o mesmo telefone. Não o execute se qualquer readback, smoke ou pgTAP não
 estiver verde.
+
+## Recibos técnicos retidos de conexões excluídas
+
+O cutover de 17 de novembro de 2026 permite encerrar os recibos técnicos da
+época zero de conexões Evolution Go excluídas e inativas cuja época ativa é um.
+O guard exige uma autorização do proprietário na mesma transação e mantém
+o envelope, a chave original de deduplicação e as tentativas. A API, os workers
+e os clientes conservam as permissões e os contratos existentes.
+
+1. Confirme a aprovação do escopo e a CI e auditoria do commit. Identifique o
+   primário, confirme a recuperação do backup e preserve as definições e os
+   grants vigentes. Confira a ingestão, a outbox e os workers de notificações.
+2. Execute `20261117_install_whatsapp_retained_receipt_guard.sql` como
+   proprietário do banco. O instalador exige os corpos revisados dos guards,
+   classificadores e digest. Confira o catálogo e o teste SQL antes da drenagem.
+3. Carregue `20261117_apply_whatsapp_retained_receipt_batch.sql` em uma
+   transação explícita por conexão excluída. Compare os hashes de catálogo e
+   forneça o manifesto exato. Ensaie com rollback antes do commit. O operador
+   guarda os originais indefinidamente e recusa IDs associados a mensagem,
+   envio, confirmação de notificação ou outra dependência conhecida.
+4. Confira o pós-estado e as métricas de entrada, envio e notificações a cada
+   rodada. Após finalizar os lotes, desative a exceção com
+   `20261117_disable_whatsapp_retained_receipt_guard.sql`. Confirme o corpo
+   original do guard e a retenção dos originais e auditorias. Use a mesma
+   desativação para reverter a alteração de schema operacional.
+
+O teste `tests/20261117_whatsapp_retained_receipt_guard_readback.sql`
+verifica a proteção do catálogo e os originais. A auditoria do banco registra o
+pré-estado necessário para uma eventual reversão de um lote, que exige uma
+operação própria e comparação com o pós-estado gravado.
