@@ -185,7 +185,6 @@ type AIConfig struct {
 type WhatsAppConfig struct {
 	PostFormFollowUpGuardEnabled   bool
 	PrivateCollisionCaptureEnabled bool
-	PrivateLegacyOutboundEnabled   bool
 	LegacyNativeCompatEnabled      bool
 	AIWorkerEnabled                bool
 	AIWorkerInterval               time.Duration
@@ -214,7 +213,6 @@ type WhatsAppConfig struct {
 	SessionSupervisorRecoveryIDs   []string
 
 	LiveBoundDeadBacklogBypassEnabled bool
-	WebhookWorkerBacklogConcurrency   int
 }
 
 func (cfg HTTPConfig) Addr() string {
@@ -330,7 +328,6 @@ func Load() (Config, error) {
 		WhatsApp: WhatsAppConfig{
 			PostFormFollowUpGuardEnabled:   loadWhatsAppPostFormFollowUpGuardEnabled(),
 			PrivateCollisionCaptureEnabled: loadWhatsAppPrivateCollisionCaptureEnabled(),
-			PrivateLegacyOutboundEnabled:   loadWhatsAppPrivateLegacyOutboundEnabled(),
 			AIWorkerEnabled:                parseBool("WHATSAPP_AI_WORKER_ENABLED", true),
 			AIWorkerInterval:               parseDuration("WHATSAPP_AI_WORKER_INTERVAL", time.Minute),
 			AIFollowUpWorkerEnabled:        parseBool("WHATSAPP_AI_FOLLOW_UP_WORKER_ENABLED", true),
@@ -359,7 +356,6 @@ func Load() (Config, error) {
 			SessionSupervisorRecoveryIDs:   parseCSV(getEnv("WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS", "")),
 
 			LiveBoundDeadBacklogBypassEnabled: parseBool("WHATSAPP_LIVE_BOUND_DEAD_BACKLOG_BYPASS_ENABLED", false),
-			WebhookWorkerBacklogConcurrency:   loadWhatsAppWebhookBacklogConcurrency(),
 		},
 		EvolutionGo: EvolutionGoConfig{
 			APIURL:                   strings.TrimRight(getEnv("EVOLUTION_GO_API_URL", ""), "/"),
@@ -606,9 +602,6 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.WhatsApp.WebhookWorkerEnabled && (cfg.WhatsApp.WebhookWorkerConcurrency < 1 || cfg.WhatsApp.WebhookWorkerConcurrency > 16) {
 		validationErrors = append(validationErrors, errors.New("WHATSAPP_WEBHOOK_WORKER_CONCURRENCY must be between 1 and 16"))
-	}
-	if err := validateWhatsAppWebhookBacklogConcurrency(cfg.WhatsApp.WebhookWorkerConcurrency, cfg.WhatsApp.WebhookWorkerBacklogConcurrency); err != nil {
-		validationErrors = append(validationErrors, err)
 	}
 	if cfg.WhatsApp.OutboxWorkerEnabled && (cfg.WhatsApp.OutboxWorkerConcurrency < 1 || cfg.WhatsApp.OutboxWorkerConcurrency > 16) {
 		validationErrors = append(validationErrors, errors.New("WHATSAPP_OUTBOX_WORKER_CONCURRENCY must be between 1 and 16"))

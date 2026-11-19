@@ -45,6 +45,8 @@ export type DeleteHomePublicationImageResult = {
   cleanupWarning?: string;
 };
 
+export type HomePublicationImageVariant = "desktop" | "mobile" | "desktop-dark" | "mobile-dark";
+
 export const homeAPI = {
   async listNotices(
     organizationId?: string | null,
@@ -74,7 +76,7 @@ export const homeAPI = {
       {
         organizationId,
         signal,
-        query: { include_mobile: true },
+        query: { include_mobile: true, include_dark: true },
       },
     );
     validateDomainResponse(
@@ -295,6 +297,31 @@ export const homeAPI = {
       { method: "DELETE" },
     );
     validateDomainResponse(apiDeleteHomePublicationImageResponseSchema, response, "home.admin.publications.mobile-image.delete");
+    return { publication: response.data, cleanupWarning: response.cleanupWarning };
+  },
+
+  async uploadPublicationDarkImage(id: string, file: File, mobile = false): Promise<HomePublication> {
+    const variant = mobile ? "dark-mobile-image" : "dark-image";
+    const publicationId = parseDomainInput(uuidSchema, id, `home.admin.publications.${variant}.upload.id`);
+    const parsedFile = parseDomainInput(homePublicationImageFileSchema, file, `home.admin.publications.${variant}.upload.file`);
+    const body = new FormData();
+    body.append("file", parsedFile);
+    const response = await vimobAPIRequest<Envelope<HomePublication>>(
+      `/v1/admin/home-publications/${publicationId}/${variant}`,
+      { method: "POST", body },
+    );
+    validateDomainResponse(apiHomePublicationResponseSchema, response, `home.admin.publications.${variant}.upload`);
+    return response.data;
+  },
+
+  async deletePublicationDarkImage(id: string, mobile = false): Promise<DeleteHomePublicationImageResult> {
+    const variant = mobile ? "dark-mobile-image" : "dark-image";
+    const publicationId = parseDomainInput(uuidSchema, id, `home.admin.publications.${variant}.delete.id`);
+    const response = await vimobAPIRequest<Envelope<HomePublication> & { cleanupWarning?: string }>(
+      `/v1/admin/home-publications/${publicationId}/${variant}`,
+      { method: "DELETE" },
+    );
+    validateDomainResponse(apiDeleteHomePublicationImageResponseSchema, response, `home.admin.publications.${variant}.delete`);
     return { publication: response.data, cleanupWarning: response.cleanupWarning };
   },
 };

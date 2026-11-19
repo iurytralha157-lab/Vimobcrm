@@ -48,26 +48,6 @@ desses arquivos não confirma quais passos foram executados no ambiente atual.
   distribui 2 slots para `live` e 2 para `backlog`. Cada slot reivindica um
   item que pode iniciar imediatamente. Falhas recebem retry com atraso limitado;
   ao esgotar tentativas, o item vai para `dead`.
-- Quando o segmento do cursor e sua única volta completa não admitem nenhum
-  item, o worker reinicia o próximo poll com cursor vazio. Isso evita repetir
-  duas reservas em cada poll vazio. Claims bem-sucedidos continuam avançando
-  pelo último ID de sessão; erros preservam o cursor anterior. A ordenação,
-  os fences e a escolha de candidatos permanecem iguais.
-- `WHATSAPP_WEBHOOK_WORKER_BACKLOG_CONCURRENCY` é opcional e padrão `0`,
-  preservando a divisão automática (total 16: 12 live/4 backlog). Um valor
-  positivo reserva de 1 até total-1 slots existentes para backlog; com total
-  16 e override 8 são 8 live/8 backlog, sem aumentar o total ou o pool. Total
-  1 só aceita 0 e conserva a compatibilidade de 1 slot por lane. Valores
-  inválidos impedem a inicialização. O ajuste vale ao iniciar os workers.
-  No dreno, publicar primeiro a imagem com override 0 e a nova captura outbound
-  desligada. Após todos os leitores estarem na versão nova, aplicar
-  `WHATSAPP_PRIVATE_LEGACY_OUTBOUND_CAPTURE_ENABLED=true` e
-  `WHATSAPP_WEBHOOK_WORKER_BACKLOG_CONCURRENCY=8` no mesmo rolling update,
-  preservando a flag já ativa de captura privada PN. Conferir
-  `live_concurrency`/`backlog_concurrency`,
-  idade de claim live, chegada recente, taxa de backlog e tempo de banco.
-  Reverter o override para 0 se a idade live piorar; após o dreno, retornar
-  a 0. Isso não reinicia Evolution nem altera envio, FIFO, epoch ou leases.
 
 Fontes: [claim e dependências](../../apps/api/internal/whatsapp/webhook_worker.go)
 (linhas 59–305), [slots e execução](../../apps/api/internal/whatsapp/webhook_worker.go)
@@ -128,33 +108,6 @@ já aceitos permanece ativa com a flag desligada. Para reverter a versão, desli
 a emissão e conclua as dependências desses resultados antes de restaurar leitores
 anteriores. O canário exige corpo visível ao dono, isolamento de outra organização,
 snapshot intacto, deduplicação e ausência de efeitos de lead.
-
-### Ecos enviados com snapshot legado inelegível
-
-`WHATSAPP_PRIVATE_LEGACY_OUTBOUND_CAPTURE_ENABLED` é opcional na API Go,
-com padrão `false`, e controla somente novas observações privadas de mensagens
-já enviadas pelo aparelho. O evento deve conservar `IsFromMe=true`, Chat LID e
-RecipientAlt PN no Info original; o parser e o PN da conversa física congelada
-devem concordar, incluindo a equivalência brasileira com ou sem nono dígito.
-O snapshot orgânico `lead_match`/`snapshot` continua `binding_eligible=false`.
-A conversa original deve permanecer sem lead/vínculo e ter histórico privado
-canônico sem scrub; o lead ocupado deve pertencer ao dono ativo da conexão,
-com membership ativa na mesma organização. Identidades existentes de envio do
-CRM/outbox ficam fora dessa captura.
-
-O writer existente registra `from_me=true`, `direction=outbound`, `status=sent`
-e recupera o conteúdo silenciosamente na conversa original, com marcador
-`lead_match_legacy_outbound_private_v1`. Não cria envio ou outbox, não muda lead
-ou snapshot, não emite resultado de roteamento de lead e não cria novas não
-lidas, automações ou notificações. Cada eco tem seu próprio snapshot.
-
-Publique todos os leitores com a flag nova desligada antes de habilitar novas
-observações. Preserve `WHATSAPP_PRIVATE_COLLISION_CAPTURE_ENABLED` durante a
-troca. Para reverter a emissão, desligue apenas a flag nova; leitores de
-marcadores aceitos permanecem ativos, inclusive após vínculo manual posterior.
-Antes de restaurar leitores anteriores, conclua as tentativas já marcadas.
-Confira direção/status/corpo, deduplicação, isolamento de outro tenant,
-outbox ausente e ausência de efeitos operacionais antes de um replay exato.
 
 ### Reprocessamento de falhas antigas revisadas
 

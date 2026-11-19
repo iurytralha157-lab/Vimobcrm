@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type {
   CreateHomePublicationInput,
   HomePublication,
+  HomePublicationImageVariant,
   UpdateHomePublicationInput,
 } from '@/lib/api/home'
 import { homePublicationImageFileSchema } from '@/lib/validation/home'
@@ -42,12 +43,17 @@ type DraftOperations = {
   removeImage: (id: string) => Promise<HomePublication>
   uploadMobile: (id: string, file: File) => Promise<HomePublication>
   removeMobileImage: (id: string) => Promise<HomePublication>
+  uploadDark: (id: string, file: File) => Promise<HomePublication>
+  removeDarkImage: (id: string) => Promise<HomePublication>
+  uploadDarkMobile: (id: string, file: File) => Promise<HomePublication>
+  removeDarkMobileImage: (id: string) => Promise<HomePublication>
   checkpoint: (publication: HomePublication) => void
-  imageSaved: (variant: 'desktop' | 'mobile') => void
+  imageSaved: (variant: HomePublicationImageVariant) => void
 }
 
 export async function saveHomePublicationDraft({
   input, publication, file, removeImage, mobileFile = null, removeMobileImage = false,
+  darkFile = null, removeDarkImage = false, darkMobileFile = null, removeDarkMobileImage = false,
 }: {
   input: CreateHomePublicationInput
   publication: HomePublication | null
@@ -55,31 +61,30 @@ export async function saveHomePublicationDraft({
   removeImage: boolean
   mobileFile?: File | null
   removeMobileImage?: boolean
+  darkFile?: File | null
+  removeDarkImage?: boolean
+  darkMobileFile?: File | null
+  removeDarkMobileImage?: boolean
 }, operations: DraftOperations): Promise<HomePublication> {
-  const imageChanged = Boolean(file || removeImage || mobileFile || removeMobileImage)
+  const changes = [
+    { variant: 'desktop', file, remove: removeImage, upload: operations.upload, removeImage: operations.removeImage },
+    { variant: 'mobile', file: mobileFile, remove: removeMobileImage, upload: operations.uploadMobile, removeImage: operations.removeMobileImage },
+    { variant: 'desktop-dark', file: darkFile, remove: removeDarkImage, upload: operations.uploadDark, removeImage: operations.removeDarkImage },
+    { variant: 'mobile-dark', file: darkMobileFile, remove: removeDarkMobileImage, upload: operations.uploadDarkMobile, removeImage: operations.removeDarkMobileImage },
+  ] as const
+  const imageChanged = changes.some((change) => change.file || change.remove)
   const metadata = { ...input, isActive: imageChanged ? false : input.isActive }
   let saved = publication
     ? await operations.update(publication.id, metadata)
     : await operations.create(metadata)
   // Retain the ID before upload: retries must update this draft, not create again.
   operations.checkpoint(saved)
-  if (file) {
-    saved = await operations.upload(saved.id, file)
+  for (const change of changes) {
+    if (change.file) saved = await change.upload(saved.id, change.file)
+    else if (change.remove) saved = await change.removeImage(saved.id)
+    else continue
     operations.checkpoint(saved)
-    operations.imageSaved('desktop')
-  } else if (removeImage) {
-    saved = await operations.removeImage(saved.id)
-    operations.checkpoint(saved)
-    operations.imageSaved('desktop')
-  }
-  if (mobileFile) {
-    saved = await operations.uploadMobile(saved.id, mobileFile)
-    operations.checkpoint(saved)
-    operations.imageSaved('mobile')
-  } else if (removeMobileImage) {
-    saved = await operations.removeMobileImage(saved.id)
-    operations.checkpoint(saved)
-    operations.imageSaved('mobile')
+    operations.imageSaved(change.variant)
   }
   if (imageChanged && input.isActive) {
     saved = await operations.update(saved.id, { isActive: true })

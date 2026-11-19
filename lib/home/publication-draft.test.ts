@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { apiHomePublicationSchema, createHomePublicationInputSchema } from '@/lib/validation/home'
+import type { HomePublicationImageVariant } from '@/lib/api/home'
+import { getHomePublicationImages } from '@/lib/home/publication-images'
 import {
   buildAdjacentHomeSlideMove,
   getHomeSlideImageError,
@@ -25,9 +27,9 @@ function fixture() {
   let record = initial()
   let retained = record
   const calls: Array<{ operation: string; id?: string; active?: boolean }> = []
-  const failures = { upload: false, mobileUpload: false, activation: false }
+  const failures = { upload: false, mobileUpload: false, darkUpload: false, darkMobileUpload: false, activation: false }
   let savedImages = 0
-  const savedVariants: Array<'desktop' | 'mobile'> = []
+  const savedVariants: HomePublicationImageVariant[] = []
   const operations: Parameters<typeof saveHomePublicationDraft>[1] = {
     create: async (value) => { calls.push({ operation: 'create', active: value.isActive }); record = { ...record, ...value }; return record },
     update: async (id, value) => {
@@ -51,6 +53,22 @@ function fixture() {
       record = { ...record, mobileImageUrl: 'https://cdn.example.test/mobile.webp' }; return record
     },
     removeMobileImage: async (id) => { calls.push({ operation: 'removeMobile', id }); record = { ...record, mobileImageUrl: null }; return record },
+    uploadDark: async (id) => {
+      calls.push({ operation: 'uploadDark', id })
+      assert.equal(retained.id, id)
+      assert.equal(record.isActive, false)
+      if (failures.darkUpload) throw new Error('dark upload failed')
+      record = { ...record, darkImageUrl: 'https://cdn.example.test/dark.webp' }; return record
+    },
+    removeDarkImage: async (id) => { calls.push({ operation: 'removeDark', id }); record = { ...record, darkImageUrl: null }; return record },
+    uploadDarkMobile: async (id) => {
+      calls.push({ operation: 'uploadDarkMobile', id })
+      assert.equal(retained.id, id)
+      assert.equal(record.isActive, false)
+      if (failures.darkMobileUpload) throw new Error('dark mobile upload failed')
+      record = { ...record, darkMobileImageUrl: 'https://cdn.example.test/dark-mobile.webp' }; return record
+    },
+    removeDarkMobileImage: async (id) => { calls.push({ operation: 'removeDarkMobile', id }); record = { ...record, darkMobileImageUrl: null }; return record },
     checkpoint: (value) => { retained = value },
     imageSaved: (variant) => { savedImages += 1; savedVariants.push(variant) },
   }
@@ -228,10 +246,58 @@ test('a mobile-only draft uses its own endpoint and metadata retry after activat
 })
 
 test('variant removals run independently and an unchanged variant is never deleted', async () => {
-  for (const variant of ['desktop', 'mobile'] as const) {
+  for (const [variant, operation] of [['desktop', 'remove'], ['mobile', 'removeMobile'], ['desktop-dark', 'removeDark'], ['mobile-dark', 'removeDarkMobile']] as const) {
     const state = fixture()
-    await saveHomePublicationDraft({ input, publication: { ...initial(), imageUrl: 'https://cdn.example.test/desktop.webp', mobileImageUrl: 'https://cdn.example.test/mobile.webp' }, file: null, removeImage: variant === 'desktop', removeMobileImage: variant === 'mobile' }, state.operations)
+    await saveHomePublicationDraft({ input, publication: { ...initial(), imageUrl: 'https://cdn.example.test/desktop.webp', mobileImageUrl: 'https://cdn.example.test/mobile.webp', darkImageUrl: 'https://cdn.example.test/dark.webp', darkMobileImageUrl: 'https://cdn.example.test/dark-mobile.webp' }, file: null, removeImage: variant === 'desktop', removeMobileImage: variant === 'mobile', removeDarkImage: variant === 'desktop-dark', removeDarkMobileImage: variant === 'mobile-dark' }, state.operations)
     assert.deepEqual(state.savedVariants, [variant])
-    assert.deepEqual(state.calls.map((call) => call.operation), ['update', variant === 'desktop' ? 'remove' : 'removeMobile', 'update'])
+    assert.deepEqual(state.calls.map((call) => call.operation), ['update', operation, 'update'])
+  }
+})
+
+test('all four images save before activation and a last-image failure retries only that image on the same draft', async () => {
+  const state = fixture()
+  state.failures.darkMobileUpload = true
+  await assert.rejects(saveHomePublicationDraft({ input, publication: null, file: image, mobileFile: image, darkFile: image, darkMobileFile: image, removeImage: false }, state.operations), /dark mobile upload failed/)
+  assert.deepEqual(state.savedVariants, ['desktop', 'mobile', 'desktop-dark'])
+  assert.equal(state.retained().isActive, false)
+  assert.equal(state.calls.some((call) => call.active === true), false)
+  state.failures.darkMobileUpload = false
+  const result = await saveHomePublicationDraft({ input, publication: state.retained(), file: null, darkMobileFile: image, removeImage: false }, state.operations)
+  assert.equal(result.isActive, true)
+  assert.deepEqual(state.savedVariants, ['desktop', 'mobile', 'desktop-dark', 'mobile-dark'])
+  for (const operation of ['create', 'upload', 'uploadMobile', 'uploadDark']) {
+    assert.equal(state.calls.filter((call) => call.operation === operation).length, 1)
+  }
+  assert.equal(state.calls.filter((call) => call.operation === 'uploadDarkMobile').length, 2)
+  assert.ok(state.calls.filter((call) => call.id).every((call) => call.id === result.id))
+})
+
+test('a dark desktop failure prevents dark mobile and activation; a paused dark-only slide stays paused', async () => {
+  const state = fixture()
+  state.failures.darkUpload = true
+  await assert.rejects(saveHomePublicationDraft({ input, publication: null, file: null, darkFile: image, darkMobileFile: image, removeImage: false }, state.operations), /dark upload failed/)
+  assert.deepEqual(state.calls.map((call) => call.operation), ['create', 'uploadDark'])
+  state.failures.darkUpload = false
+  await saveHomePublicationDraft({ input: { ...input, isActive: false }, publication: state.retained(), file: null, darkFile: image, removeImage: false }, state.operations)
+  assert.equal(state.retained().isActive, false)
+  assert.ok(state.retained().darkImageUrl)
+})
+
+test('image selection follows theme and prefers the light artwork for the same screen before another screen', () => {
+  const images = { imageUrl: 'desktop', mobileImageUrl: 'mobile', darkImageUrl: 'dark', darkMobileImageUrl: 'dark-mobile' }
+  assert.deepEqual(getHomePublicationImages(images, 'light'), { desktopImageUrl: 'desktop', mobileImageUrl: 'mobile' })
+  assert.deepEqual(getHomePublicationImages(images, 'dark'), { desktopImageUrl: 'dark', mobileImageUrl: 'dark-mobile' })
+  assert.deepEqual(getHomePublicationImages({ ...images, darkImageUrl: null }, 'dark'), { desktopImageUrl: 'desktop', mobileImageUrl: 'dark-mobile' })
+  assert.deepEqual(getHomePublicationImages({ ...images, darkMobileImageUrl: null }, 'dark'), { desktopImageUrl: 'dark', mobileImageUrl: 'mobile' })
+  assert.deepEqual(getHomePublicationImages({ ...images, imageUrl: null, mobileImageUrl: null }, 'light'), { desktopImageUrl: 'dark', mobileImageUrl: 'dark-mobile' })
+})
+
+test('legacy banners retain their sources and any sole artwork remains visible in both themes and screens', () => {
+  for (const theme of ['light', 'dark', undefined]) {
+    assert.deepEqual(getHomePublicationImages({ imageUrl: 'desktop', mobileImageUrl: 'mobile' }, theme), { desktopImageUrl: 'desktop', mobileImageUrl: 'mobile' })
+    for (const field of ['imageUrl', 'mobileImageUrl', 'darkImageUrl', 'darkMobileImageUrl'] as const) {
+      assert.deepEqual(getHomePublicationImages({ imageUrl: null, [field]: 'only' }, theme), { desktopImageUrl: 'only', mobileImageUrl: 'only' })
+    }
+    assert.deepEqual(getHomePublicationImages({ imageUrl: null }, theme), { desktopImageUrl: null, mobileImageUrl: null })
   }
 })

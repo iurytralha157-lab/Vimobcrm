@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { useTheme } from "next-themes";
 import {
   AlertTriangle,
   BellRing,
@@ -25,6 +26,7 @@ import {
 } from "@/components/ui/carousel";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { HomePublicationCard } from "@/lib/api/home";
+import { getHomePublicationImages } from "@/lib/home/publication-images";
 import { cn } from "@/lib/utils";
 
 type HomePublicationCarouselProps = {
@@ -135,7 +137,8 @@ function PublicationSlide({
 }) {
   const visual = PUBLICATION_VISUALS[publication.accent];
 
-  const desktopImageUrl = publication.imageUrl || publication.mobileImageUrl;
+  const { resolvedTheme } = useTheme();
+  const { desktopImageUrl, mobileImageUrl } = getHomePublicationImages(publication, resolvedTheme);
 
   if (desktopImageUrl) {
     return (
@@ -144,10 +147,10 @@ function PublicationSlide({
         className="relative w-full min-w-0 overflow-hidden"
       >
         <picture>
-          {publication.mobileImageUrl ? (
+          {mobileImageUrl && mobileImageUrl !== desktopImageUrl ? (
             <source
               media="(max-width: 767px)"
-              srcSet={publication.mobileImageUrl}
+              srcSet={mobileImageUrl}
             />
           ) : null}
           <Image

@@ -1146,6 +1146,10 @@
     {
       "file": "20261114210427_arbitrate_whatsapp_automation_reply_deadlines.sql",
       "sha256": "cbef5e67f1737f8f5545d471916abb1458ff4c179b6d552c896ca7ee52361411"
+    },
+    {
+      "file": "20261117174447_add_home_publication_dark_image_variants.sql",
+      "sha256": "3865082674f05b86ee4505a8fe8e8ea92626d671757eae9c708009805cf625a7"
     }
   ]
 }

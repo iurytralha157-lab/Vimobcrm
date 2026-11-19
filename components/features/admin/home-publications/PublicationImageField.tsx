@@ -3,11 +3,12 @@ import { ImageIcon, ImagePlus, Trash2 } from 'lucide-react'
 import type { ChangeEvent } from 'react'
 
 import { Button } from '@/components/ui/button'
+import type { HomePublicationImageVariant } from '@/lib/api/home'
 
 export function PublicationImageField({
   variant, imageUrl, title, disabled, selected, canRestore, onSelect, onRemove, onRestore,
 }: {
-  variant: 'desktop' | 'mobile'
+  variant: HomePublicationImageVariant
   imageUrl: string | null
   title: string
   disabled: boolean
@@ -17,10 +18,15 @@ export function PublicationImageField({
   onRemove: () => void
   onRestore: () => void
 }) {
-  const label = variant === 'desktop' ? 'Desktop' : 'Celular'
+  const mobile = variant === 'mobile' || variant === 'mobile-dark'
+  const dark = variant === 'desktop-dark' || variant === 'mobile-dark'
+  const label = `${mobile ? 'Celular' : 'Desktop'} — tema ${dark ? 'escuro' : 'claro'}`
+  const fallback = dark
+    ? 'Sem esta versão, usa a arte clara da mesma tela; se faltar, usa a outra tela.'
+    : 'Sem esta versão, usa a arte clara da outra tela; se faltar, usa uma arte escura disponível.'
   return (
     <div className="overflow-hidden rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface-soft)]">
-      <p className="px-3 py-2 text-sm font-normal">Imagem {label}{variant === 'mobile' ? ' (opcional)' : ''}</p>
+      <p className="px-3 py-2 text-sm font-normal">Imagem {label}</p>
       {imageUrl ? (
         <Image
           src={imageUrl}
@@ -28,7 +34,7 @@ export function PublicationImageField({
           width={2070}
           height={228}
           sizes="(max-width: 1024px) 100vw, 280px"
-          className="block h-auto w-full object-contain"
+          className={`block h-auto w-full object-contain ${dark ? 'bg-[#141414]' : 'bg-white'}`}
           unoptimized
         />
       ) : (
@@ -52,7 +58,7 @@ export function PublicationImageField({
         {canRestore ? (
           <Button type="button" variant="ghost" size="sm" onClick={onRestore} disabled={disabled} className="w-full">Restaurar imagem {label} atual</Button>
         ) : null}
-        <p className="text-xs leading-5 text-muted-foreground">JPEG, PNG ou WebP de até 5 MB. {variant === 'desktop' ? 'Recomendado: 2070 × 228 px.' : 'Sem esta versão, o celular usa a imagem desktop.'} A arte aparece inteira, sem corte e sem clique.</p>
+        <p className="text-xs leading-5 text-muted-foreground">JPEG, PNG ou WebP de até 5 MB. {!mobile ? 'Recomendado: 2070 × 228 px. ' : ''}{fallback} A arte aparece inteira, sem corte e sem clique.</p>
         {selected ? <p className="text-xs text-muted-foreground">A imagem será enviada ao salvar.</p> : null}
       </div>
     </div>

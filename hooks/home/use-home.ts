@@ -201,3 +201,25 @@ export function useDeleteHomePublicationMobileImage() {
     onError: (error: unknown) => { toast.error(getErrorMessage(error, 'Não foi possível remover a imagem para celular.')) },
   })
 }
+
+export function useUploadHomePublicationDarkImage(mobile = false) {
+  const invalidate = useInvalidateHomePublications()
+  return useMutation({
+    mutationFn: ({ id, file }: { id: string; file: File }) => homeAPI.uploadPublicationDarkImage(id, file, mobile),
+    onSuccess: async () => { await invalidate(); toast.success('Imagem do tema escuro enviada.') },
+    onError: (error: unknown) => { toast.error(getErrorMessage(error, 'Não foi possível enviar a imagem do tema escuro.')) },
+  })
+}
+
+export function useDeleteHomePublicationDarkImage(mobile = false) {
+  const invalidate = useInvalidateHomePublications()
+  return useMutation({
+    mutationFn: (id: string) => homeAPI.deletePublicationDarkImage(id, mobile),
+    onSuccess: async (result) => {
+      await invalidate()
+      if (result.cleanupWarning) { toast.warning(`Imagem do tema escuro desvinculada. ${result.cleanupWarning}`); return }
+      toast.success('Imagem do tema escuro removida.')
+    },
+    onError: (error: unknown) => { toast.error(getErrorMessage(error, 'Não foi possível remover a imagem do tema escuro.')) },
+  })
+}

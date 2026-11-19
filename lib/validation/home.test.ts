@@ -424,6 +424,24 @@ test("imagem mobile é opcional nos DTOs e não permite metadados privados no ca
   assert.equal(createHomePublicationInputSchema.safeParse({ title: "Imagem", body: "Texto", ctaLabel: "Ajuda", ctaHref: "/suporte", mobileImageUrl: "https://cdn.example.com/mobile.webp" }).success, false);
 });
 
+test("variantes escuras são opcionais, aceitam somente HTTP(S) e só mudam pelos endpoints de imagem", () => {
+  for (const field of ["darkImageUrl", "darkMobileImageUrl"]) {
+    for (const value of [undefined, null, "https://cdn.example.com/banner.webp"]) {
+      assert.equal(apiHomePublicationCardListResponseSchema.safeParse({ data: [{ ...publicationCard, [field]: value }] }).success, true);
+      assert.equal(apiHomePublicationListResponseSchema.safeParse({ data: [{ ...publication, [field]: value }] }).success, true);
+    }
+    for (const value of ["javascript:alert(1)", "data:image/svg+xml,<svg/>", "ftp://cdn.example.com/banner.webp"]) {
+      assert.equal(apiHomePublicationCardListResponseSchema.safeParse({ data: [{ ...publicationCard, [field]: value }] }).success, false);
+      assert.equal(apiHomePublicationListResponseSchema.safeParse({ data: [{ ...publication, [field]: value }] }).success, false);
+    }
+    assert.equal(createHomePublicationInputSchema.safeParse({ title: "Imagem", body: "Texto", ctaLabel: "Ajuda", ctaHref: "/suporte", [field]: null }).success, false);
+    assert.equal(updateHomePublicationInputSchema.safeParse({ [field]: "https://cdn.example.com/banner.webp" }).success, false);
+  }
+  for (const field of ["darkImageStoragePath", "darkMobileImageStoragePath"]) {
+    assert.equal(apiHomePublicationCardListResponseSchema.safeParse({ data: [{ ...publicationCard, [field]: "private/path" }] }).success, false);
+  }
+});
+
 test("reordenação exige itens únicos e ordens válidas", () => {
   assert.equal(
     reorderHomePublicationsInputSchema.safeParse({

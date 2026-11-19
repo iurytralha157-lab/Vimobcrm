@@ -100,7 +100,7 @@ export default function HomeScreen() {
   const publications: HomePublicationCard[] = configuredPublications
     .slice()
     .sort((left, right) => left.displayOrder - right.displayOrder)
-    .filter((publication) => Boolean(publication.imageUrl || publication.mobileImageUrl) || canAccessHref(publication.ctaHref));
+    .filter((publication) => Boolean(publication.imageUrl || publication.mobileImageUrl || publication.darkImageUrl || publication.darkMobileImageUrl) || canAccessHref(publication.ctaHref));
   const showPublicationCarousel =
     HOME_PAGE_SECTIONS.publications &&
     (!accessReady ||

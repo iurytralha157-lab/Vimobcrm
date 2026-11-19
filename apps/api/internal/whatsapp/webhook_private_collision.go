@@ -170,8 +170,7 @@ func recoverNativePrivateCollisionMessage(ctx context.Context, tx pgx.Tx, sessio
 	  and route.organization_id=message.organization_id and route.session_id=message.session_id and route.provider_message_id=message.provider_message_id
 	  and route.snapshot=$6::jsonb and inbox.id=$7::uuid and inbox.status='processing'
 	  and inbox.locked_by=$9 and inbox.edge_execution_id is null`, session.OrganizationID, session.ID, rowID,
-		conversation.ID, message.ProviderMessageID, string(snapshot.RawSnapshot), item.ID,
-		firstNonEmpty(conversation.PrivateCollisionKind, nativePrivateCollisionMarker), whatsappWebhookWorkerID)
+		conversation.ID, message.ProviderMessageID, string(snapshot.RawSnapshot), item.ID, nativePrivateCollisionMarker, whatsappWebhookWorkerID)
 	if err != nil {
 		return err
 	}

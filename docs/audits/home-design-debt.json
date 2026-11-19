@@ -1,26 +1,26 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "926fd1554c3039d2d60dc34469a1942ba9134213a6f25a7bac937f6c16b06dea",
-  "surfaceInventoryDigestSha256": "34f43264e833d2cce79cc2cc74333cf57def4eff0e9a5290d82f6bcf9f4ce2e6",
+  "sourceDigestSha256": "ea32b031d2b16cf611c27795a2f38b70599e82c37abaef376513f85f45bd492a",
+  "surfaceInventoryDigestSha256": "a615685b719b16172b9aee1981222a1490365dad377aef7c29d596ddcb130e53",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 675,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
-    "filesWithFindings": 71,
-    "findings": 159,
-    "protectedReachableFilesWithFindings": 67,
-    "protectedReachableFindings": 155,
+    "filesWithFindings": 72,
+    "findings": 161,
+    "protectedReachableFilesWithFindings": 68,
+    "protectedReachableFindings": 157,
     "bySurfaceScope": {
-      "protected-only": 114,
+      "protected-only": 116,
       "protected-and-public": 41,
       "public-only": 2,
       "infrastructure": 2
     },
     "byPriority": {
-      "P1": 115,
-      "P2": 26,
+      "P1": 116,
+      "P2": 27,
       "P3": 18
     },
     "byRule": {
@@ -49,13 +49,13 @@
         "priority": "P1"
       },
       "hardcoded-color": {
-        "count": 45,
+        "count": 46,
         "guidance": "Usar tokens --app-* ou cores semânticas do domínio.",
         "label": "Cor hardcoded",
         "priority": "P1"
       },
       "hardcoded-surface": {
-        "count": 17,
+        "count": 18,
         "guidance": "Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover.",
         "label": "Superfície branca/preta fixa",
         "priority": "P2"
@@ -205,6 +205,15 @@
       "score": 8,
       "rules": {
         "heavy-shadow": 2
+      }
+    },
+    {
+      "file": "components/features/admin/home-publications/PublicationImageField.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "hardcoded-color": 1,
+        "hardcoded-surface": 1
       }
     },
     {
@@ -489,14 +498,6 @@
       "rules": {
         "oversized-radius": 1
       }
-    },
-    {
-      "file": "components/features/properties/detail/tabs/TechnicalTab.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
     }
   ],
   "topProtectedFiles": [
@@ -624,6 +625,15 @@
       "score": 8,
       "rules": {
         "heavy-shadow": 2
+      }
+    },
+    {
+      "file": "components/features/admin/home-publications/PublicationImageField.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "hardcoded-color": 1,
+        "hardcoded-surface": 1
       }
     },
     {
@@ -908,14 +918,6 @@
       "rules": {
         "oversized-radius": 1
       }
-    },
-    {
-      "file": "components/features/properties/property-locations/LocationsNavigation.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
     }
   ],
   "findings": [
@@ -936,6 +938,24 @@
       "rule": "uppercase-tracking",
       "surfaceScope": "protected-only",
       "weight": 1
+    },
+    {
+      "file": "components/features/admin/home-publications/PublicationImageField.tsx",
+      "line": 37,
+      "match": "#141414",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/admin/home-publications/PublicationImageField.tsx",
+      "line": 37,
+      "match": "bg-white",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
+      "surfaceScope": "protected-only",
+      "weight": 2
     },
     {
       "file": "components/features/auth/AuthSplitLayout.tsx",

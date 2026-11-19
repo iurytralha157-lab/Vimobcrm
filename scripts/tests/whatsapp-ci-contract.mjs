@@ -67,9 +67,6 @@ export const GO_TESTS = Object.freeze([
   'TestLocalDeferredSessionControlsAcceptCurrentEpochAndPreserveLogout',
   'TestLocalDeferredSessionControlsRevalidateClaimGenerationAndPayload',
   'TestLocalInboundCaptureContinuesAfterDeferredSessionDisconnect',
-  'TestPrivateLegacyOutboundCapturesExternalEchoSilently',
-  'TestPrivateLegacyOutboundRejectsChangedScopeAndManagedSends',
-  'TestPrivateLegacyOutboundReaderKeepsDecisionAfterManualBinding',
 ]);
 export const SQL_BASELINE_TESTS = Object.freeze([
   'whatsapp_webhook_fair_claim_indexes.test.sql',

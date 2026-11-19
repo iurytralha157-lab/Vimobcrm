@@ -18,6 +18,8 @@ type homePublicationImageVariant uint8
 const (
 	homePublicationDesktopImage homePublicationImageVariant = iota
 	homePublicationMobileImage
+	homePublicationDarkImage
+	homePublicationDarkMobileImage
 )
 
 type homePublicationImageColumns struct {
@@ -33,6 +35,10 @@ func (variant homePublicationImageVariant) columns() (homePublicationImageColumn
 		return homePublicationImageColumns{"image_url", "image_storage_path", ""}, nil
 	case homePublicationMobileImage:
 		return homePublicationImageColumns{"mobile_image_url", "mobile_image_storage_path", "mobile/"}, nil
+	case homePublicationDarkImage:
+		return homePublicationImageColumns{"dark_image_url", "dark_image_storage_path", "dark/"}, nil
+	case homePublicationDarkMobileImage:
+		return homePublicationImageColumns{"dark_mobile_image_url", "dark_mobile_image_storage_path", "dark/mobile/"}, nil
 	default:
 		return homePublicationImageColumns{}, ErrInvalidInput
 	}
@@ -45,6 +51,12 @@ func (variant homePublicationImageVariant) storagePath(record homePublicationRec
 	if variant == homePublicationDesktopImage {
 		return record.ImageStoragePath
 	}
+	if variant == homePublicationDarkImage {
+		return record.DarkImageStoragePath
+	}
+	if variant == homePublicationDarkMobileImage {
+		return record.DarkMobileImageStoragePath
+	}
 	return ""
 }
 
@@ -54,6 +66,14 @@ func (handler Handler) UploadHomePublicationImageAdmin(w http.ResponseWriter, r 
 
 func (handler Handler) UploadHomePublicationMobileImageAdmin(w http.ResponseWriter, r *http.Request) {
 	handler.uploadHomePublicationImage(w, r, homePublicationMobileImage)
+}
+
+func (handler Handler) UploadHomePublicationDarkImageAdmin(w http.ResponseWriter, r *http.Request) {
+	handler.uploadHomePublicationImage(w, r, homePublicationDarkImage)
+}
+
+func (handler Handler) UploadHomePublicationDarkMobileImageAdmin(w http.ResponseWriter, r *http.Request) {
+	handler.uploadHomePublicationImage(w, r, homePublicationDarkMobileImage)
 }
 
 func (handler Handler) uploadHomePublicationImage(w http.ResponseWriter, r *http.Request, variant homePublicationImageVariant) {
@@ -92,6 +112,14 @@ func (handler Handler) DeleteHomePublicationImageAdmin(w http.ResponseWriter, r 
 
 func (handler Handler) DeleteHomePublicationMobileImageAdmin(w http.ResponseWriter, r *http.Request) {
 	handler.deleteHomePublicationImage(w, r, homePublicationMobileImage)
+}
+
+func (handler Handler) DeleteHomePublicationDarkImageAdmin(w http.ResponseWriter, r *http.Request) {
+	handler.deleteHomePublicationImage(w, r, homePublicationDarkImage)
+}
+
+func (handler Handler) DeleteHomePublicationDarkMobileImageAdmin(w http.ResponseWriter, r *http.Request) {
+	handler.deleteHomePublicationImage(w, r, homePublicationDarkMobileImage)
 }
 
 func (handler Handler) deleteHomePublicationImage(w http.ResponseWriter, r *http.Request, variant homePublicationImageVariant) {
@@ -196,7 +224,7 @@ func (repo Repository) clearHomePublicationImage(ctx context.Context, tenantCont
 }
 
 // Cleanup is best-effort after the DB change. Each owned object is attempted,
-// even if deleting the other variant fails. Paths never enter API responses.
+// even if deleting another variant fails. Paths never enter API responses.
 func (repo Repository) cleanupHomePublicationObjects(paths []string) bool {
 	ok := true
 	seen := make(map[string]bool, len(paths))

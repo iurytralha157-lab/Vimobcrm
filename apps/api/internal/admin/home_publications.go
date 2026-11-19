@@ -81,6 +81,8 @@ type HomePublication struct {
 	CTAHref               string     `json:"ctaHref"`
 	ImageURL              *string    `json:"imageUrl"`
 	MobileImageURL        *string    `json:"mobileImageUrl"`
+	DarkImageURL          *string    `json:"darkImageUrl"`
+	DarkMobileImageURL    *string    `json:"darkMobileImageUrl"`
 	CardSize              string     `json:"cardSize"`
 	Accent                string     `json:"accent"`
 	DisplayOrder          int        `json:"displayOrder"`
@@ -98,22 +100,26 @@ type HomePublication struct {
 // HomePublicationCard is the deliberately minimal user-facing projection.
 // Audience configuration stays private to superadministrators.
 type HomePublicationCard struct {
-	ID             string  `json:"id"`
-	Title          string  `json:"title"`
-	Body           string  `json:"body"`
-	CTALabel       string  `json:"ctaLabel"`
-	CTAHref        string  `json:"ctaHref"`
-	ImageURL       *string `json:"imageUrl"`
-	MobileImageURL *string `json:"mobileImageUrl,omitempty"`
-	CardSize       string  `json:"cardSize"`
-	Accent         string  `json:"accent"`
-	DisplayOrder   int     `json:"displayOrder"`
+	ID                 string  `json:"id"`
+	Title              string  `json:"title"`
+	Body               string  `json:"body"`
+	CTALabel           string  `json:"ctaLabel"`
+	CTAHref            string  `json:"ctaHref"`
+	ImageURL           *string `json:"imageUrl"`
+	MobileImageURL     *string `json:"mobileImageUrl,omitempty"`
+	DarkImageURL       *string `json:"darkImageUrl,omitempty"`
+	DarkMobileImageURL *string `json:"darkMobileImageUrl,omitempty"`
+	CardSize           string  `json:"cardSize"`
+	Accent             string  `json:"accent"`
+	DisplayOrder       int     `json:"displayOrder"`
 }
 
 type homePublicationRecord struct {
 	HomePublication
-	ImageStoragePath       string `json:"-"`
-	MobileImageStoragePath string `json:"-"`
+	ImageStoragePath           string `json:"-"`
+	MobileImageStoragePath     string `json:"-"`
+	DarkImageStoragePath       string `json:"-"`
+	DarkMobileImageStoragePath string `json:"-"`
 }
 
 type homePublicationCreateRequest struct {
@@ -200,17 +206,23 @@ func (handler Handler) ListHomePublications(w http.ResponseWriter, r *http.Reque
 		writeHomePublicationError(w, r, err)
 		return
 	}
-	items = homePublicationCardsForClient(items, r.URL.Query().Get("include_mobile") == "true")
+	items = homePublicationCardsForClient(items, r.URL.Query().Get("include_mobile") == "true", r.URL.Query().Get("include_dark") == "true")
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]HomePublicationCard]{Data: items})
 }
 
-// Mobile is opt-in so previously deployed strict clients keep their nine-key DTO.
-func homePublicationCardsForClient(items []HomePublicationCard, includeMobile bool) []HomePublicationCard {
+// Image variants are opt-in so previously deployed strict clients keep their DTO.
+func homePublicationCardsForClient(items []HomePublicationCard, includeMobile, includeDark bool) []HomePublicationCard {
 	result := make([]HomePublicationCard, len(items))
 	copy(result, items)
 	if !includeMobile {
 		for index := range result {
 			result[index].MobileImageURL = nil
+		}
+	}
+	if !includeDark {
+		for index := range result {
+			result[index].DarkImageURL = nil
+			result[index].DarkMobileImageURL = nil
 		}
 	}
 	return result
@@ -525,18 +537,20 @@ func (repo Repository) DeleteHomePublication(ctx context.Context, tenantContext 
 	}
 	var storagePath pgtype.Text
 	var mobileStoragePath pgtype.Text
+	var darkStoragePath pgtype.Text
+	var darkMobileStoragePath pgtype.Text
 	err := repo.db.Pool().QueryRow(ctx, `
 		delete from public.home_publications
 		where id = $1::uuid
-		returning image_storage_path, mobile_image_storage_path
-	`, id).Scan(&storagePath, &mobileStoragePath)
+		returning image_storage_path, mobile_image_storage_path, dark_image_storage_path, dark_mobile_image_storage_path
+	`, id).Scan(&storagePath, &mobileStoragePath, &darkStoragePath, &darkMobileStoragePath)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	return []string{textValueOrEmpty(storagePath), textValueOrEmpty(mobileStoragePath)}, nil
+	return []string{textValueOrEmpty(storagePath), textValueOrEmpty(mobileStoragePath), textValueOrEmpty(darkStoragePath), textValueOrEmpty(darkMobileStoragePath)}, nil
 }
 
 func (repo Repository) ReorderHomePublications(ctx context.Context, tenantContext tenant.Context, items []homePublicationOrderItem) ([]HomePublication, error) {
@@ -645,6 +659,10 @@ const homePublicationSelectColumns = `
 	hp.image_storage_path,
 	hp.mobile_image_url,
 	hp.mobile_image_storage_path,
+	hp.dark_image_url,
+	hp.dark_image_storage_path,
+	hp.dark_mobile_image_url,
+	hp.dark_mobile_image_storage_path,
 	hp.card_size,
 	hp.accent,
 	hp.display_order,
@@ -669,6 +687,10 @@ const homePublicationSelectColumnsWithoutAlias = `
 	image_storage_path,
 	mobile_image_url,
 	mobile_image_storage_path,
+	dark_image_url,
+	dark_image_storage_path,
+	dark_mobile_image_url,
+	dark_mobile_image_storage_path,
 	card_size,
 	accent,
 	display_order,
@@ -691,6 +713,8 @@ const homePublicationCardSelectColumns = `
 	hp.cta_href,
 	hp.image_url,
 	hp.mobile_image_url,
+	hp.dark_image_url,
+	hp.dark_mobile_image_url,
 	hp.card_size,
 	hp.accent,
 	hp.display_order
@@ -700,6 +724,8 @@ func scanHomePublicationCard(scanner homePublicationScanner) (HomePublicationCar
 	var card HomePublicationCard
 	var imageURL pgtype.Text
 	var mobileImageURL pgtype.Text
+	var darkImageURL pgtype.Text
+	var darkMobileImageURL pgtype.Text
 	err := scanner.Scan(
 		&card.ID,
 		&card.Title,
@@ -708,6 +734,8 @@ func scanHomePublicationCard(scanner homePublicationScanner) (HomePublicationCar
 		&card.CTAHref,
 		&imageURL,
 		&mobileImageURL,
+		&darkImageURL,
+		&darkMobileImageURL,
 		&card.CardSize,
 		&card.Accent,
 		&card.DisplayOrder,
@@ -717,6 +745,8 @@ func scanHomePublicationCard(scanner homePublicationScanner) (HomePublicationCar
 	}
 	card.ImageURL = homeTextPointer(imageURL)
 	card.MobileImageURL = homeTextPointer(mobileImageURL)
+	card.DarkImageURL = homeTextPointer(darkImageURL)
+	card.DarkMobileImageURL = homeTextPointer(darkMobileImageURL)
 	return card, nil
 }
 
@@ -737,7 +767,11 @@ func scanHomePublication(scanner homePublicationScanner) (homePublicationRecord,
 	var imageURL pgtype.Text
 	var imageStoragePath pgtype.Text
 	var mobileImageURL pgtype.Text
+	var darkImageURL pgtype.Text
+	var darkMobileImageURL pgtype.Text
 	var mobileImageStoragePath pgtype.Text
+	var darkImageStoragePath pgtype.Text
+	var darkMobileImageStoragePath pgtype.Text
 	var startsAt pgtype.Timestamptz
 	var endsAt pgtype.Timestamptz
 	err := scanner.Scan(
@@ -750,6 +784,10 @@ func scanHomePublication(scanner homePublicationScanner) (homePublicationRecord,
 		&imageStoragePath,
 		&mobileImageURL,
 		&mobileImageStoragePath,
+		&darkImageURL,
+		&darkImageStoragePath,
+		&darkMobileImageURL,
+		&darkMobileImageStoragePath,
 		&record.CardSize,
 		&record.Accent,
 		&record.DisplayOrder,
@@ -770,6 +808,10 @@ func scanHomePublication(scanner homePublicationScanner) (homePublicationRecord,
 	record.ImageStoragePath = textValueOrEmpty(imageStoragePath)
 	record.MobileImageURL = homeTextPointer(mobileImageURL)
 	record.MobileImageStoragePath = textValueOrEmpty(mobileImageStoragePath)
+	record.DarkImageURL = homeTextPointer(darkImageURL)
+	record.DarkImageStoragePath = textValueOrEmpty(darkImageStoragePath)
+	record.DarkMobileImageURL = homeTextPointer(darkMobileImageURL)
+	record.DarkMobileImageStoragePath = textValueOrEmpty(darkMobileImageStoragePath)
 	record.StartsAt = timestamptzPointer(startsAt)
 	record.EndsAt = timestamptzPointer(endsAt)
 	record.TargetOrganizationIDs = nonNilStrings(record.TargetOrganizationIDs)

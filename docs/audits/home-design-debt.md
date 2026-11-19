@@ -7,13 +7,13 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 ## Resumo
 
 - Arquivos analisados: 675
-- Arquivos com achados: 71
-- Achados: 159
-- Arquivos protegidos/mistos com achados: 67
-- Achados alcançáveis pelo CRM protegido: 155
-- Distribuição por superfície: protected-only 114, protected-and-public 41, public-only 2, infraestrutura 2
-- P1: 115
-- P2: 26
+- Arquivos com achados: 72
+- Achados: 161
+- Arquivos protegidos/mistos com achados: 68
+- Achados alcançáveis pelo CRM protegido: 157
+- Distribuição por superfície: protected-only 116, protected-and-public 41, public-only 2, infraestrutura 2
+- P1: 116
+- P2: 27
 - P3: 18
 
 ## Regras
@@ -24,8 +24,8 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | P2 | Sombra fora do padrão | 8 | Blocos Home não usam sombra; validar se a elevação é realmente necessária. |
 | P1 | Raio acima de 8px | 51 | Blocos usam 8px; controles 6px; microelementos 4px. |
 | P1 | Tipografia pesada | 8 | Texto normal usa 300; títulos usam 400. |
-| P1 | Cor hardcoded | 45 | Usar tokens --app-* ou cores semânticas do domínio. |
-| P2 | Superfície branca/preta fixa | 17 | Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover. |
+| P1 | Cor hardcoded | 46 | Usar tokens --app-* ou cores semânticas do domínio. |
+| P2 | Superfície branca/preta fixa | 18 | Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover. |
 | P2 | Movimento agressivo | 0 | Remover scale/translate decorativo de cards e ações operacionais. |
 | P3 | Caixa alta/tracking | 18 | Preferir texto natural em 10–12px e peso 300. |
 | P2 | Blur no painel | 1 | O overlay pode escurecer; o painel deve usar superfície sólida. |
@@ -50,6 +50,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/dashboard/LeadDistributionSection.tsx` | 8 | 4 | uppercase-tracking: 2, oversized-radius: 2 |
 | `components/features/site/VisitorMap.tsx` | 8 | 4 | medium-shadow: 4 |
 | `components/features/chat/FloatingChatButton.tsx` | 8 | 2 | heavy-shadow: 2 |
+| `components/features/admin/home-publications/PublicationImageField.tsx` | 6 | 2 | hardcoded-color: 1, hardcoded-surface: 1 |
 | `components/features/dashboard/DashboardKpis.tsx` | 6 | 2 | oversized-radius: 2 |
 | `components/features/dashboard/DashboardScreen.tsx` | 6 | 2 | oversized-radius: 2 |
 | `components/features/integrations/marketing-connections/MarketingConnectionsScreen.tsx` | 6 | 2 | oversized-radius: 2 |
@@ -85,7 +86,6 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/properties/detail/tabs/KeysTab.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/properties/detail/tabs/TechnicalTab.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/properties/developments/PropertyDevelopmentsScreen.tsx` | 3 | 1 | oversized-radius: 1 |
-| `components/features/properties/property-locations/LocationsNavigation.tsx` | 3 | 1 | oversized-radius: 1 |
 
 ### Todas as superfícies
 
@@ -105,6 +105,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/dashboard/LeadDistributionSection.tsx` | 8 | 4 | uppercase-tracking: 2, oversized-radius: 2 |
 | `components/features/site/VisitorMap.tsx` | 8 | 4 | medium-shadow: 4 |
 | `components/features/chat/FloatingChatButton.tsx` | 8 | 2 | heavy-shadow: 2 |
+| `components/features/admin/home-publications/PublicationImageField.tsx` | 6 | 2 | hardcoded-color: 1, hardcoded-surface: 1 |
 | `components/features/dashboard/DashboardKpis.tsx` | 6 | 2 | oversized-radius: 2 |
 | `components/features/dashboard/DashboardScreen.tsx` | 6 | 2 | oversized-radius: 2 |
 | `components/features/integrations/marketing-connections/MarketingConnectionsScreen.tsx` | 6 | 2 | oversized-radius: 2 |
@@ -140,4 +141,3 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/properties/detail/PropertyWorkspaceOverview.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/properties/detail/PropertyWorkspaceSummary.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/properties/detail/tabs/KeysTab.tsx` | 3 | 1 | oversized-radius: 1 |
-| `components/features/properties/detail/tabs/TechnicalTab.tsx` | 3 | 1 | oversized-radius: 1 |

@@ -17,10 +17,14 @@ func TestHomePublicationImageRoutesKeepVariantAndSessionBoundaries(t *testing.T)
 	}
 	documented := documentedOpenAPIOperations(t, string(contract))
 	for route, handler := range map[string]string{
-		"POST /v1/admin/home-publications/{id}/image":          "UploadHomePublicationImageAdmin",
-		"DELETE /v1/admin/home-publications/{id}/image":        "DeleteHomePublicationImageAdmin",
-		"POST /v1/admin/home-publications/{id}/mobile-image":   "UploadHomePublicationMobileImageAdmin",
-		"DELETE /v1/admin/home-publications/{id}/mobile-image": "DeleteHomePublicationMobileImageAdmin",
+		"POST /v1/admin/home-publications/{id}/image":               "UploadHomePublicationImageAdmin",
+		"DELETE /v1/admin/home-publications/{id}/image":             "DeleteHomePublicationImageAdmin",
+		"POST /v1/admin/home-publications/{id}/mobile-image":        "UploadHomePublicationMobileImageAdmin",
+		"DELETE /v1/admin/home-publications/{id}/mobile-image":      "DeleteHomePublicationMobileImageAdmin",
+		"POST /v1/admin/home-publications/{id}/dark-image":          "UploadHomePublicationDarkImageAdmin",
+		"DELETE /v1/admin/home-publications/{id}/dark-image":        "DeleteHomePublicationDarkImageAdmin",
+		"POST /v1/admin/home-publications/{id}/dark-mobile-image":   "UploadHomePublicationDarkMobileImageAdmin",
+		"DELETE /v1/admin/home-publications/{id}/dark-mobile-image": "DeleteHomePublicationDarkMobileImageAdmin",
 	} {
 		want := `mux.Handle("` + route + `", withActiveAuthTenant(http.HandlerFunc(adminHandler.` + handler + `)))`
 		if strings.Count(string(routes), want) != 1 {
@@ -40,7 +44,7 @@ func TestHomePublicationOpenAPIKeepsMobileAnOptionalOptIn(t *testing.T) {
 	}
 	contract := string(source)
 	feed := homePublicationContractBlock(t, contract, "  /v1/home/publications:\n", "  /v1/home/assistant:\n")
-	for _, want := range []string{"name: include_mobile", "required: false", "default: false", "legacy nine-field card"} {
+	for _, want := range []string{"name: include_mobile", "name: include_dark", "required: false", "default: false", "legacy nine-field card"} {
 		if !strings.Contains(feed, want) {
 			t.Errorf("public mobile opt-in is not documented: %s", want)
 		}
@@ -49,6 +53,11 @@ func TestHomePublicationOpenAPIKeepsMobileAnOptionalOptIn(t *testing.T) {
 	required := strings.SplitN(card, "      properties:\n", 2)
 	if len(required) != 2 || strings.Contains(required[0], "mobileImageUrl") || !strings.Contains(required[1], "        mobileImageUrl:\n") {
 		t.Fatal("mobileImageUrl must be an optional property, preserving older responses")
+	}
+	for _, field := range []string{"darkImageUrl", "darkMobileImageUrl"} {
+		if strings.Contains(required[0], field) || !strings.Contains(required[1], "        "+field+":\n") {
+			t.Fatalf("%s must remain optional", field)
+		}
 	}
 	if strings.Contains(card, "storage_path") || strings.Contains(card, "StoragePath") {
 		t.Fatal("storage paths do not belong to the public contract")

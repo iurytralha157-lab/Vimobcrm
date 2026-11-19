@@ -61,17 +61,20 @@ import {
   useDeleteHomePublication,
   useDeleteHomePublicationImage,
   useDeleteHomePublicationMobileImage,
+  useDeleteHomePublicationDarkImage,
   useHomePublicationOrganizations,
   useHomePublicationUsers,
   useReorderHomePublications,
   useUpdateHomePublication,
   useUploadHomePublicationImage,
   useUploadHomePublicationMobileImage,
+  useUploadHomePublicationDarkImage,
   type HomeAudienceOption,
 } from '@/hooks/home'
 import type {
   CreateHomePublicationInput,
   HomePublication,
+  HomePublicationImageVariant,
   HomePublicationAccent,
   HomePublicationCardSize,
   HomePublicationTargetRole,
@@ -87,6 +90,14 @@ import {
   withHomeSlideImageDefaults,
 } from '@/lib/home/publication-draft'
 import { cn } from '@/lib/utils'
+
+const IMAGE_VARIANTS = [
+  { variant: 'desktop', field: 'imageUrl' },
+  { variant: 'mobile', field: 'mobileImageUrl' },
+  { variant: 'desktop-dark', field: 'darkImageUrl' },
+  { variant: 'mobile-dark', field: 'darkMobileImageUrl' },
+] as const satisfies ReadonlyArray<{ variant: HomePublicationImageVariant; field: keyof HomePublication }>
+type PendingImage = { file: File; previewUrl: string }
 
 const ACCENT_OPTIONS: Array<{
   value: HomePublicationAccent
@@ -396,7 +407,8 @@ function PublicationListItem({
 }) {
   const status = getPublicationStatus(publication)
   const accent = ACCENT_OPTIONS.find((option) => option.value === publication.accent)
-  const artwork = publication.imageUrl || publication.mobileImageUrl
+  const artwork = publication.imageUrl || publication.mobileImageUrl || publication.darkImageUrl || publication.darkMobileImageUrl
+  const imageCount = IMAGE_VARIANTS.filter(({ field }) => Boolean(publication[field])).length
 
   return (
     <article className="app-card overflow-hidden">
@@ -428,7 +440,7 @@ function PublicationListItem({
             {artwork ? (
               <Badge className="border-0 bg-[var(--app-surface-soft)] text-muted-foreground">
                 <ImageIcon className="mr-1 h-3 w-3" />
-                {publication.mobileImageUrl ? 'Com versão para celular' : 'Com imagem desktop'}
+                {imageCount}/4 versões de imagem
               </Badge>
             ) : null}
           </div>
@@ -501,6 +513,10 @@ export function HomePublicationsContent() {
   const deleteImage = useDeleteHomePublicationImage()
   const uploadMobileImage = useUploadHomePublicationMobileImage()
   const deleteMobileImage = useDeleteHomePublicationMobileImage()
+  const uploadDarkImage = useUploadHomePublicationDarkImage()
+  const deleteDarkImage = useDeleteHomePublicationDarkImage()
+  const uploadDarkMobileImage = useUploadHomePublicationDarkImage(true)
+  const deleteDarkMobileImage = useDeleteHomePublicationDarkImage(true)
 
   const publications = useMemo(
     () => (publicationsQuery.data || []).slice().sort((left, right) => (
@@ -511,10 +527,12 @@ export function HomePublicationsContent() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingPublication, setEditingPublication] = useState<HomePublication | null>(null)
   const [publicationToDelete, setPublicationToDelete] = useState<HomePublication | null>(null)
-  const [pendingImage, setPendingImage] = useState<{ file: File; previewUrl: string } | null>(null)
-  const [removeStoredImage, setRemoveStoredImage] = useState(false)
-  const [pendingMobileImage, setPendingMobileImage] = useState<{ file: File; previewUrl: string } | null>(null)
-  const [removeStoredMobileImage, setRemoveStoredMobileImage] = useState(false)
+  const [pendingImages, setPendingImages] = useState<Partial<Record<HomePublicationImageVariant, PendingImage | null>>>({})
+  const [removedImages, setRemovedImages] = useState<Partial<Record<HomePublicationImageVariant, boolean>>>({})
+  const pendingImage = pendingImages.desktop
+  const pendingMobileImage = pendingImages.mobile
+  const pendingDarkImage = pendingImages['desktop-dark']
+  const pendingDarkMobileImage = pendingImages['mobile-dark']
   const [saveInProgress, setSaveInProgress] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const savingRef = useRef(false)
@@ -534,11 +552,22 @@ export function HomePublicationsContent() {
     if (pendingMobileImage) URL.revokeObjectURL(pendingMobileImage.previewUrl)
   }, [pendingMobileImage])
 
-  const imageUrl = pendingImage?.previewUrl || (!removeStoredImage ? editingPublication?.imageUrl : null) || null
-  const mobileImageUrl = pendingMobileImage?.previewUrl || (!removeStoredMobileImage ? editingPublication?.mobileImageUrl : null) || null
-  const hasImage = Boolean(imageUrl || mobileImageUrl)
+  useEffect(() => () => {
+    if (pendingDarkImage) URL.revokeObjectURL(pendingDarkImage.previewUrl)
+  }, [pendingDarkImage])
+  useEffect(() => () => {
+    if (pendingDarkMobileImage) URL.revokeObjectURL(pendingDarkMobileImage.previewUrl)
+  }, [pendingDarkMobileImage])
+
+  const imageFields = IMAGE_VARIANTS.map(({ variant, field }) => ({
+    variant,
+    storedImageUrl: editingPublication?.[field] || null,
+    imageUrl: pendingImages[variant]?.previewUrl || (!removedImages[variant] ? editingPublication?.[field] : null) || null,
+  }))
+  const hasImage = imageFields.some(({ imageUrl }) => Boolean(imageUrl))
   const isSaving = saveInProgress || createPublication.isPending || updatePublication.isPending
-  const isImageSaving = uploadImage.isPending || deleteImage.isPending || uploadMobileImage.isPending || deleteMobileImage.isPending
+  const isImageSaving = [uploadImage, deleteImage, uploadMobileImage, deleteMobileImage,
+    uploadDarkImage, deleteDarkImage, uploadDarkMobileImage, deleteDarkMobileImage].some((operation) => operation.isPending)
   const readyCount = publications.filter((publication) => publication.isActive).length
   const scheduledCount = publications.filter((publication) => (
     Boolean(publication.startsAt || publication.endsAt)
@@ -555,10 +584,8 @@ export function HomePublicationsContent() {
     if (!open && (savingRef.current || isSaving || isImageSaving)) return
     setDialogOpen(open)
     if (!open) {
-      setPendingImage(null)
-      setRemoveStoredImage(false)
-      setPendingMobileImage(null)
-      setRemoveStoredMobileImage(false)
+      setPendingImages({})
+      setRemovedImages({})
       setSaveError(null)
     }
   }
@@ -568,10 +595,8 @@ export function HomePublicationsContent() {
     try { nextOrder = getNextHomeSlideOrder(publications) }
     catch (error) { toast.error(error instanceof Error ? error.message : 'Não foi possível definir a ordem do slide.'); return }
     setEditingPublication(null)
-    setPendingImage(null)
-    setRemoveStoredImage(false)
-    setPendingMobileImage(null)
-    setRemoveStoredMobileImage(false)
+    setPendingImages({})
+    setRemovedImages({})
     setSaveError(null)
     setForm(createEmptyForm(nextOrder))
     setDialogOpen(true)
@@ -579,10 +604,8 @@ export function HomePublicationsContent() {
 
   const openEdit = (publication: HomePublication) => {
     setEditingPublication(publication)
-    setPendingImage(null)
-    setRemoveStoredImage(false)
-    setPendingMobileImage(null)
-    setRemoveStoredMobileImage(false)
+    setPendingImages({})
+    setRemovedImages({})
     setSaveError(null)
     setForm(toPublicationForm(publication))
     setDialogOpen(true)
@@ -629,24 +652,32 @@ export function HomePublicationsContent() {
     setSaveError(null)
     let checkpoint = editingPublication
     try {
-      await saveHomePublicationDraft({ input: result.data, publication: editingPublication, file: pendingImage?.file || null, removeImage: removeStoredImage, mobileFile: pendingMobileImage?.file || null, removeMobileImage: removeStoredMobileImage }, {
+      await saveHomePublicationDraft({
+        input: result.data, publication: editingPublication,
+        file: pendingImage?.file || null, removeImage: Boolean(removedImages.desktop),
+        mobileFile: pendingMobileImage?.file || null, removeMobileImage: Boolean(removedImages.mobile),
+        darkFile: pendingDarkImage?.file || null, removeDarkImage: Boolean(removedImages['desktop-dark']),
+        darkMobileFile: pendingDarkMobileImage?.file || null, removeDarkMobileImage: Boolean(removedImages['mobile-dark']),
+      }, {
         create: (value) => createPublication.mutateAsync(value),
         update: (id, value) => updatePublication.mutateAsync({ id, input: value }),
         upload: (id, file) => uploadImage.mutateAsync({ id, file }),
         removeImage: async (id) => (await deleteImage.mutateAsync(id)).publication,
         uploadMobile: (id, file) => uploadMobileImage.mutateAsync({ id, file }),
         removeMobileImage: async (id) => (await deleteMobileImage.mutateAsync(id)).publication,
+        uploadDark: (id, file) => uploadDarkImage.mutateAsync({ id, file }),
+        removeDarkImage: async (id) => (await deleteDarkImage.mutateAsync(id)).publication,
+        uploadDarkMobile: (id, file) => uploadDarkMobileImage.mutateAsync({ id, file }),
+        removeDarkMobileImage: async (id) => (await deleteDarkMobileImage.mutateAsync(id)).publication,
         checkpoint: (value) => { checkpoint = value; setEditingPublication(value) },
         imageSaved: (variant) => {
-          if (variant === 'desktop') { setPendingImage(null); setRemoveStoredImage(false) }
-          else { setPendingMobileImage(null); setRemoveStoredMobileImage(false) }
+          setPendingImages((current) => ({ ...current, [variant]: null }))
+          setRemovedImages((current) => ({ ...current, [variant]: false }))
         },
       })
       setDialogOpen(false)
-      setPendingImage(null)
-      setRemoveStoredImage(false)
-      setPendingMobileImage(null)
-      setRemoveStoredMobileImage(false)
+      setPendingImages({})
+      setRemovedImages({})
     } catch {
       setSaveError(checkpoint?.isActive === false
         ? 'O rascunho continua pausado. Tente salvar novamente para concluir.'
@@ -682,15 +713,15 @@ export function HomePublicationsContent() {
     }
   }
 
-  const handleImageUpload = (event: ChangeEvent<HTMLInputElement>, variant: 'desktop' | 'mobile') => {
+  const handleImageUpload = (event: ChangeEvent<HTMLInputElement>, variant: HomePublicationImageVariant) => {
     const file = event.currentTarget.files?.[0]
     event.currentTarget.value = ''
     if (!file || savingRef.current || isSaving || isImageSaving) return
     const error = getHomeSlideImageError(file)
     if (error) { toast.error(error); return }
     const selection = { file, previewUrl: URL.createObjectURL(file) }
-    if (variant === 'desktop') { setPendingImage(selection); setRemoveStoredImage(false) }
-    else { setPendingMobileImage(selection); setRemoveStoredMobileImage(false) }
+    setPendingImages((current) => ({ ...current, [variant]: selection }))
+    setRemovedImages((current) => ({ ...current, [variant]: false }))
     setSaveError(null)
     setForm((current) => ({ ...current, title: current.title.trim() ? current.title : getHomeSlideImageTitle(file.name) }))
   }
@@ -797,7 +828,7 @@ export function HomePublicationsContent() {
               {editingPublication ? 'Editar slide' : 'Novo slide'}
             </DialogTitle>
             <DialogDescription className="sr-only">
-              Escolha a imagem e configure título, período e público do slide da Página inicial.
+              Escolha as imagens para desktop e celular, nos temas claro e escuro, e configure título, período e público do slide da Página inicial.
             </DialogDescription>
           </DialogHeader>
 
@@ -1016,28 +1047,25 @@ export function HomePublicationsContent() {
                 </div>
               </div>
 
-              <PublicationImageField
-                variant="desktop"
-                imageUrl={imageUrl}
-                title={form.title}
-                disabled={isSaving || isImageSaving}
-                selected={Boolean(pendingImage)}
-                canRestore={removeStoredImage && Boolean(editingPublication?.imageUrl)}
-                onSelect={(event) => handleImageUpload(event, 'desktop')}
-                onRemove={() => pendingImage ? setPendingImage(null) : setRemoveStoredImage(true)}
-                onRestore={() => setRemoveStoredImage(false)}
-              />
-              <PublicationImageField
-                variant="mobile"
-                imageUrl={mobileImageUrl}
-                title={form.title}
-                disabled={isSaving || isImageSaving}
-                selected={Boolean(pendingMobileImage)}
-                canRestore={removeStoredMobileImage && Boolean(editingPublication?.mobileImageUrl)}
-                onSelect={(event) => handleImageUpload(event, 'mobile')}
-                onRemove={() => pendingMobileImage ? setPendingMobileImage(null) : setRemoveStoredMobileImage(true)}
-                onRestore={() => setRemoveStoredMobileImage(false)}
-              />
+              <p className="text-xs leading-5 text-muted-foreground">
+                Cadastre quatro artes para adaptar o banner a cada tela e tema. As versões existentes continuam funcionando.
+              </p>
+              {imageFields.map(({ variant, storedImageUrl, imageUrl }) => (
+                <PublicationImageField
+                  key={variant}
+                  variant={variant}
+                  imageUrl={imageUrl}
+                  title={form.title}
+                  disabled={isSaving || isImageSaving}
+                  selected={Boolean(pendingImages[variant])}
+                  canRestore={Boolean(removedImages[variant] && storedImageUrl)}
+                  onSelect={(event) => handleImageUpload(event, variant)}
+                  onRemove={() => pendingImages[variant]
+                    ? setPendingImages((current) => ({ ...current, [variant]: null }))
+                    : setRemovedImages((current) => ({ ...current, [variant]: true }))}
+                  onRestore={() => setRemovedImages((current) => ({ ...current, [variant]: false }))}
+                />
+              ))}
               <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-4 text-xs leading-5 text-muted-foreground">
                 <p className="font-normal text-[var(--app-text-primary)]">Dica de composição</p>
                 <p className="mt-1">
@@ -1079,8 +1107,8 @@ export function HomePublicationsContent() {
             <AlertDialogTitle>Excluir slide?</AlertDialogTitle>
             <AlertDialogDescription>
               “{publicationToDelete?.title}” será removido do carrossel da Página inicial.
-              Se estiver publicado, deixará de aparecer imediatamente. A imagem vinculada
-              também será removida quando possível.
+              Se estiver publicado, deixará de aparecer imediatamente. As imagens vinculadas
+              também serão removidas quando possível.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

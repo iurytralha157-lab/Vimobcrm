@@ -290,7 +290,7 @@ func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logg
 		}
 		cleanupTicker := time.NewTicker(time.Minute)
 		defer cleanupTicker.Stop()
-		liveConcurrency, backlogConcurrency := evolutionWebhookLaneConcurrencyWithBacklog(config.WebhookWorkerConcurrency, handler.repo.webhookWorkerBacklogConcurrency)
+		liveConcurrency, backlogConcurrency := evolutionWebhookLaneConcurrency(config.WebhookWorkerConcurrency)
 		var statsMu sync.Mutex
 		windowStats := evolutionWebhookWorkerWindowStats{startedAt: time.Now()}
 		// A slot stops claiming when ctx is canceled. Dispatch and reconcile
@@ -770,12 +770,6 @@ func (repo Repository) claimEvolutionWebhooksForLane(
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, afterSessionID, err
-	}
-	// The segment and its one full wrap found no claimable work. Keeping an
-	// old cursor would repeat both searches on every subsequent empty poll.
-	// A successful claim still advances from its last admitted session.
-	if len(items) == 0 {
-		return items, "", nil
 	}
 	return items, laneLastSessionID(items, afterSessionID), nil
 }

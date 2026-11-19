@@ -20,7 +20,7 @@ func TestHomePublicationMobileProjectionIsExplicitAndLegacyCompatible(t *testing
 	desktop, mobile := "https://images.example.invalid/desktop.png", "https://images.example.invalid/mobile.png"
 	input := []HomePublicationCard{{ID: "publication", ImageURL: &desktop, MobileImageURL: &mobile}}
 	for _, includeMobile := range []bool{false, true} {
-		cards := homePublicationCardsForClient(input, includeMobile)
+		cards := homePublicationCardsForClient(input, includeMobile, false)
 		payload, err := json.Marshal(cards[0])
 		if err != nil {
 			t.Fatal(err)
@@ -43,7 +43,7 @@ func TestHomePublicationMobileProjectionIsExplicitAndLegacyCompatible(t *testing
 	if input[0].MobileImageURL == nil || *input[0].MobileImageURL != mobile {
 		t.Fatal("legacy projection mutated the source card")
 	}
-	if got := homePublicationCardsForClient(nil, false); got == nil {
+	if got := homePublicationCardsForClient(nil, false, false); got == nil {
 		t.Fatal("an empty feed must encode as an array, not null")
 	}
 }
@@ -54,26 +54,28 @@ func (scan homePublicationImageScannerFunc) Scan(dest ...any) error { return sca
 
 func TestHomePublicationScannersKeepMobileAndDesktopIndependent(t *testing.T) {
 	card, err := scanHomePublicationCard(homePublicationImageScannerFunc(func(dest ...any) error {
-		if len(dest) != 10 {
-			t.Fatalf("public projection expects ten selected columns, got %d", len(dest))
+		if len(dest) != 12 {
+			t.Fatalf("public projection expects twelve selected columns, got %d", len(dest))
 		}
 		*dest[5].(*pgtype.Text) = pgtype.Text{String: "desktop-url", Valid: true}
 		*dest[6].(*pgtype.Text) = pgtype.Text{String: "mobile-url", Valid: true}
+		*dest[7].(*pgtype.Text) = pgtype.Text{String: "dark-url", Valid: true}
+		*dest[8].(*pgtype.Text) = pgtype.Text{String: "dark-mobile-url", Valid: true}
 		return nil
 	}))
-	if err != nil || card.ImageURL == nil || *card.ImageURL != "desktop-url" || card.MobileImageURL == nil || *card.MobileImageURL != "mobile-url" {
+	if err != nil || card.ImageURL == nil || *card.ImageURL != "desktop-url" || card.MobileImageURL == nil || *card.MobileImageURL != "mobile-url" || card.DarkImageURL == nil || *card.DarkImageURL != "dark-url" || card.DarkMobileImageURL == nil || *card.DarkMobileImageURL != "dark-mobile-url" {
 		t.Fatalf("public scanner mixed variants: %#v, %v", card, err)
 	}
 	record, err := scanHomePublication(homePublicationImageScannerFunc(func(dest ...any) error {
-		if len(dest) != 21 {
-			t.Fatalf("admin projection expects 21 selected columns, got %d", len(dest))
+		if len(dest) != 25 {
+			t.Fatalf("admin projection expects 25 selected columns, got %d", len(dest))
 		}
-		for index, value := range map[int]string{5: "desktop-url", 6: "desktop-private-path", 7: "mobile-url", 8: "mobile-private-path"} {
+		for index, value := range map[int]string{5: "desktop-url", 6: "desktop-private-path", 7: "mobile-url", 8: "mobile-private-path", 9: "dark-url", 10: "dark-private-path", 11: "dark-mobile-url", 12: "dark-mobile-private-path"} {
 			*dest[index].(*pgtype.Text) = pgtype.Text{String: value, Valid: true}
 		}
 		return nil
 	}))
-	if err != nil || record.MobileImageURL == nil || *record.MobileImageURL != "mobile-url" || record.ImageStoragePath != "desktop-private-path" || record.MobileImageStoragePath != "mobile-private-path" {
+	if err != nil || record.MobileImageURL == nil || *record.MobileImageURL != "mobile-url" || record.ImageStoragePath != "desktop-private-path" || record.MobileImageStoragePath != "mobile-private-path" || record.DarkImageURL == nil || *record.DarkImageURL != "dark-url" || record.DarkMobileImageURL == nil || *record.DarkMobileImageURL != "dark-mobile-url" || record.DarkImageStoragePath != "dark-private-path" || record.DarkMobileImageStoragePath != "dark-mobile-private-path" {
 		t.Fatalf("admin scanner mixed variants: %#v, %v", record, err)
 	}
 	payload, err := json.Marshal(record)
@@ -88,7 +90,7 @@ func TestHomePublicationScannersKeepMobileAndDesktopIndependent(t *testing.T) {
 }
 
 func TestHomePublicationImageVariantIsClosedAndCannotTargetDesktopByFallback(t *testing.T) {
-	record := homePublicationRecord{ImageStoragePath: "desktop", MobileImageStoragePath: "mobile"}
+	record := homePublicationRecord{ImageStoragePath: "desktop", MobileImageStoragePath: "mobile", DarkImageStoragePath: "dark", DarkMobileImageStoragePath: "dark-mobile"}
 	for value := 0; value <= 255; value++ {
 		variant := homePublicationImageVariant(value)
 		columns, err := variant.columns()
@@ -100,6 +102,14 @@ func TestHomePublicationImageVariantIsClosedAndCannotTargetDesktopByFallback(t *
 		case homePublicationMobileImage:
 			if err != nil || columns.urlColumn != "mobile_image_url" || columns.storageColumn != "mobile_image_storage_path" || columns.directory != "mobile/" || variant.storagePath(record) != "mobile" {
 				t.Fatal("mobile variant must use separate columns and object directory")
+			}
+		case homePublicationDarkImage:
+			if err != nil || columns.urlColumn != "dark_image_url" || columns.storageColumn != "dark_image_storage_path" || columns.directory != "dark/" || variant.storagePath(record) != "dark" {
+				t.Fatal("dark desktop variant must use separate columns and object directory")
+			}
+		case homePublicationDarkMobileImage:
+			if err != nil || columns.urlColumn != "dark_mobile_image_url" || columns.storageColumn != "dark_mobile_image_storage_path" || columns.directory != "dark/mobile/" || variant.storagePath(record) != "dark-mobile" {
+				t.Fatal("dark mobile variant must use separate columns and object directory")
 			}
 		default:
 			if !errors.Is(err, ErrInvalidInput) || variant.storagePath(record) != "" {
@@ -119,10 +129,14 @@ func TestHomePublicationImageVariantIsClosedAndCannotTargetDesktopByFallback(t *
 func TestHomePublicationImageEndpointsRequireSuperAdminBeforeDataOrStorage(t *testing.T) {
 	handler := Handler{}
 	for name, serve := range map[string]http.HandlerFunc{
-		"desktop-upload": handler.UploadHomePublicationImageAdmin,
-		"mobile-upload":  handler.UploadHomePublicationMobileImageAdmin,
-		"desktop-delete": handler.DeleteHomePublicationImageAdmin,
-		"mobile-delete":  handler.DeleteHomePublicationMobileImageAdmin,
+		"desktop-upload":     handler.UploadHomePublicationImageAdmin,
+		"mobile-upload":      handler.UploadHomePublicationMobileImageAdmin,
+		"desktop-delete":     handler.DeleteHomePublicationImageAdmin,
+		"mobile-delete":      handler.DeleteHomePublicationMobileImageAdmin,
+		"dark-upload":        handler.UploadHomePublicationDarkImageAdmin,
+		"dark-mobile-upload": handler.UploadHomePublicationDarkMobileImageAdmin,
+		"dark-delete":        handler.DeleteHomePublicationDarkImageAdmin,
+		"dark-mobile-delete": handler.DeleteHomePublicationDarkMobileImageAdmin,
 	} {
 		for _, actor := range []string{"anonymous", "organization-admin"} {
 			t.Run(name+"/"+actor, func(t *testing.T) {
@@ -141,7 +155,7 @@ func TestHomePublicationImageEndpointsRequireSuperAdminBeforeDataOrStorage(t *te
 }
 
 func TestHomePublicationBothImageVariantsShareSniffAndSizeRules(t *testing.T) {
-	for _, variant := range []homePublicationImageVariant{homePublicationDesktopImage, homePublicationMobileImage} {
+	for _, variant := range []homePublicationImageVariant{homePublicationDesktopImage, homePublicationMobileImage, homePublicationDarkImage, homePublicationDarkMobileImage} {
 		for _, scenario := range []struct {
 			name string
 			body []byte
@@ -190,17 +204,62 @@ func TestHomePublicationCleanupAttemptsBothVariantsAndNeverForeignObjects(t *tes
 	defer server.Close()
 	repo := Repository{projectURL: server.URL, apiKey: "synthetic-service-key", httpClient: server.Client()}
 	desktop, mobile := "platform/home/publication/desktop.png", "platform/home/publication/mobile/mobile.png"
-	if repo.cleanupHomePublicationObjects([]string{desktop, mobile, desktop, "", "organizations/foreign/image.png"}) {
+	dark, darkMobile := "platform/home/publication/dark/desktop.png", "platform/home/publication/dark/mobile/mobile.png"
+	if repo.cleanupHomePublicationObjects([]string{desktop, mobile, dark, darkMobile, desktop, "", "organizations/foreign/image.png"}) {
 		t.Fatal("cleanup must signal a failed or foreign object")
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(paths) != 2 || !strings.HasSuffix(paths[0], "/desktop.png") || !strings.HasSuffix(paths[1], "/mobile/mobile.png") {
-		t.Fatalf("cleanup must independently attempt both owned variants only, got %#v", paths)
+	if len(paths) != 4 || !strings.HasSuffix(paths[0], "/publication/desktop.png") || !strings.HasSuffix(paths[1], "/publication/mobile/mobile.png") || !strings.HasSuffix(paths[2], "/publication/dark/desktop.png") || !strings.HasSuffix(paths[3], "/publication/dark/mobile/mobile.png") {
+		t.Fatalf("cleanup must independently attempt all four owned variants only, got %#v", paths)
 	}
 	response := httptest.NewRecorder()
 	writeHomePublicationError(response, httptest.NewRequest(http.MethodPost, "/image", nil), errors.Join(errHomePublicationStorageOperation, errors.New(desktop)))
 	if response.Code != http.StatusBadGateway || strings.Contains(response.Body.String(), desktop) || strings.Contains(response.Body.String(), "private-storage-failure") {
 		t.Fatal("storage failures must not expose object paths or provider errors")
+	}
+}
+
+func TestHomePublicationDarkProjectionKeepsBothPreviousContracts(t *testing.T) {
+	desktop, mobile, dark, darkMobile := "desktop", "mobile", "dark", "dark-mobile"
+	input := []HomePublicationCard{{ImageURL: &desktop, MobileImageURL: &mobile, DarkImageURL: &dark, DarkMobileImageURL: &darkMobile}}
+	for _, includeMobile := range []bool{false, true} {
+		for _, includeDark := range []bool{false, true} {
+			result := homePublicationCardsForClient(input, includeMobile, includeDark)
+			payload, err := json.Marshal(result[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(payload, &fields); err != nil {
+				t.Fatal(err)
+			}
+			expectedFields := 9
+			if includeMobile {
+				expectedFields++
+			}
+			if includeDark {
+				expectedFields += 2
+			}
+			if len(fields) != expectedFields {
+				t.Fatalf("projection flags changed older contract: %s", payload)
+			}
+			for _, field := range []string{"darkImageUrl", "darkMobileImageUrl"} {
+				_, present := fields[field]
+				if present != includeDark {
+					t.Fatalf("dark field %s opt-in mismatch: %s", field, payload)
+				}
+			}
+		}
+	}
+	if input[0].DarkImageURL == nil || *input[0].DarkImageURL != dark || input[0].DarkMobileImageURL == nil || *input[0].DarkMobileImageURL != darkMobile {
+		t.Fatal("projection mutated source dark variants")
+	}
+	legacy, err := scanHomePublicationCard(homePublicationImageScannerFunc(func(dest ...any) error {
+		*dest[5].(*pgtype.Text) = pgtype.Text{String: desktop, Valid: true}
+		return nil
+	}))
+	if err != nil || legacy.ImageURL == nil || legacy.DarkImageURL != nil || legacy.DarkMobileImageURL != nil {
+		t.Fatalf("existing rows need no dark-image backfill: %#v %v", legacy, err)
 	}
 }
