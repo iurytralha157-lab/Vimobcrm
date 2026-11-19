@@ -1,3 +1,5 @@
+import { nullableString } from "@/lib/validation/shared-schema-values";
+
 import { z } from 'zod'
 import { apiEnvelopeSchema, nonNegativeIntegerSchema, timestampSchema, uuidSchema } from './common'
 
@@ -106,3 +108,15 @@ export const apiDeleteUserResponseSchema = z.object({
   success: z.boolean(),
   impact: apiDeleteUserImpactSchema,
 }).passthrough()
+
+
+const userSummarySchema = z
+  .object({
+    id: uuidSchema,
+    name: nullableString,
+    avatar_url: nullableString,
+  })
+  .passthrough();
+export const apiUserSummaryListResponseSchema = apiEnvelopeSchema(
+  z.array(userSummarySchema),
+);

@@ -1,3 +1,5 @@
+
+
 import { z } from 'zod'
 import { apiEnvelopeSchema, nonNegativeIntegerSchema, uuidSchema } from './common'
 import {
@@ -487,3 +489,25 @@ export const apiMetaWebhookHealthResponseSchema = apiEnvelopeSchema(z.object({
   lastError: z.string().nullable(),
   missing: z.boolean(),
 }).passthrough())
+
+
+export const metaCampaignListSchema = z.array(
+  z
+    .object({
+      id: z.string().min(1),
+      name: z.string(),
+      kind: z.enum(["lead_form", "whatsapp", "site"]),
+      status: z.enum(["ACTIVE", "PAUSED", "ARCHIVED", "LEARNING"]),
+      adSets: z.array(
+        z
+          .object({
+            id: z.string().min(1),
+            creatives: z.array(
+              z.object({ id: z.string().min(1) }).passthrough(),
+            ),
+          })
+          .passthrough(),
+      ),
+    })
+    .passthrough(),
+);

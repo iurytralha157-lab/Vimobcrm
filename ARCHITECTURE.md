@@ -1,9 +1,16 @@
 # Arquitetura do Vimob CRM
 
-> Última revisão documental: 2026-10-08. Código examinado: checkout `main`,
-> commit `ef1cefca6faa59a78fd2aecbbecbf31ed1030c4b`.
-> Base inicial: auditoria somente leitura desse checkout. O SHA em produção
-> foi informado pelo usuário, sem conferência da stack em execução.
+> Revisão estrutural: 2026-11-18. Base conferida: checkout `main`, commit
+> `05ff562c4dc4824b7b17ea2fb6c7bda1628b01fb` (5.583 arquivos rastreados).
+> Mapa de pastas, organização dos domínios, contratos, testes, CI e tamanho dos
+> arquivos foram revistos nessa base. As contagens são um retrato desse commit;
+> uma extração de arquivos pode alterá-las sem mudar o comportamento.
+> A auditoria original de 2026-10-08 usou o commit
+> `ef1cefca6faa59a78fd2aecbbecbf31ed1030c4b`. Suas medições operacionais,
+> de segurança e de dependências não foram refeitas nesta revisão estrutural.
+> A reconciliação das imagens de produção está registrada em
+> [production-source-baseline-2026-11-18.md](docs/runbooks/production-source-baseline-2026-11-18.md).
+> Este mapa não substitui uma conferência atual da stack, banco ou filas.
 > "Comprovado" significa comprovado **no repositório**, não em produção.
 > Este guia mistura três tipos de conteúdo, sempre marcados:
 >
@@ -19,10 +26,11 @@
 
 | Fonte | Seções afetadas | Limite |
 |---|---|---|
-| Auditoria estática do commit acima | Inventários e lacunas ao longo do guia | Retrato do repositório |
-| Releitura dirigida do código no mesmo commit | 9 (filas), 16 e 22 (`/readyz`), 17 (dados pessoais) | Não demonstra execução em produção |
+| Revisão estrutural da base `05ff562c` | Mapa, domínios, contratos, testes, CI e tamanho dos arquivos | Inspeção estática; não executa os gates nem confere produção |
+| Auditoria estática de 2026-10-08 (`ef1cefca`) | Medições históricas de dependências, autorização, configuração e filas | Não foi refeita integralmente em 18/11 |
+| Releituras dirigidas registradas nas seções | 9 (filas), 16 e 22 (`/readyz`), 17 (dados pessoais) | Não demonstram execução em produção |
 | Leitura de `docs/deploy-portainer.md` | 9 (WhatsApp), 11 e 15 (sequências de release) | Registro documental; não confirma cutovers ou flags ativos |
-| Relato do usuário sobre o SHA em produção | Cabeçalho | Não é verificação direta do ambiente |
+| Runbook da baseline de 18/11 | Revisões de API, Web e bridge observadas na reconciliação | Registro datado; não comprova estado futuro do ambiente |
 
 **[Regra]** e **[Meta]** são decisões editoriais, não resultados da auditoria.
 
@@ -68,20 +76,22 @@ Supabase Auth inicia a identidade. A API Go resolve usuário, organização,
 papéis e permissões antes de qualquer regra de negócio. Segredos e service role
 nunca chegam ao frontend.
 
-**[Estado] Exceções conhecidas ao fluxo acima** (comprovado):
+**[Estado] Exceções conhecidas ao fluxo acima** (conferidas na base `05ff562c`):
 
 - `lib/api/auth.ts` fala com o Supabase Auth (esperado).
 - `lib/api/user-activity.ts` escreve direto no Data API do Supabase (depende de
   RLS; avaliar mover para a API Go).
-- `app/api/` tem 12 Route Handlers com lógica própria (e-mail, signup,
-  propriedades/CEP, rotas internas). Ver seção 6.
+- `app/api/` tem 12 Route Handlers: BFFs de onboarding, e-mail, CEP e fallback
+  interno de ajuda. Por exemplo, o cadastro valida a requisição e a encaminha
+  à API Go; a existência desses handlers não significa uma segunda API de
+  negócio completa. Ver seção 6.
 
 ---
 
 ## 3. Mapa do repositório
 
 ```text
-.github/workflows/      CI (hoje: docker-images.yml)
+.github/workflows/      docker-images.yml e staging-images.yml
 app/                    rotas Next.js
   (auth)/               login, cadastro, convite, onboarding, reset...
   (protected)/          admin, agenda, crm, dashboard, financeiro, pipeline,
@@ -95,15 +105,15 @@ components/
   ui/                   primitivas shadcn/Radix
   providers/            RootProvider, QueryProvider...
 contexts/AuthContext.tsx   autenticação e organização no browser
-hooks/                  React Query, estado e efeitos (por domínio)
+hooks/                  React Query, estado e efeitos; raiz e pastas por domínio
 lib/
-  api/                  transporte HTTP + normalização de erro (75 módulos)
-  validation/           Zod por domínio (39 módulos)
+  api/                  transporte HTTP + normalização de erro
+  validation/           contratos Zod por domínio e fachadas de compatibilidade
   supabase/             client.ts, server.ts, types.ts (fachada)
   auth/, access/, realtime/, billing/, security/, ...
 integrations/supabase/types.ts   gerado pelo CLI (não editar à mão)
 apps/
-  api/{cmd,internal}    API Go (54 pacotes internos)
+  api/{cmd,internal}    API Go (57 pacotes internos com código de produção)
   worker/               só README (reservado)
 packages/
   auth/                 validação de JWT
@@ -117,17 +127,59 @@ supabase/
   cutovers/, reconciliation/, legacy-migrations/, drafts/, templates/
 deploy/                 portainer-stack.yml, supabase-self-hosted, edge-retirement
 scripts/                audits, c2s, load, local, maintenance, qa, security,
-                        supabase, tests
+                        staging, supabase, tests
 docs/                   audits, integrations, runbooks
-tests/                  E2E (Playwright)
-config/, i18n/, services/, public/
+tests/                  cenários E2E, fixtures e runners locais
+config/                 configuração e constantes do frontend
+i18n/                   traduções
+services/               fachadas de notificações/gamificação sobre lib/api
+public/                 assets estáticos
 proxy.ts                proteção de rotas do Next (substitui middleware.ts)
 ```
+
+O frontend Next.js fica na raiz; a API é um monólito modular em Go. Os módulos
+de `go.work` são `apps/api`, `packages/auth` e `packages/db`. `apps/worker` e
+`packages/config` contêm apenas README; os workers atuais são compostos pela
+API, não por um segundo executável. O gerenciador declarado é `npm@11.13.0`,
+com `package-lock.json` e `npm ci` nos dois workflows. Os arquivos pnpm
+existentes não definem outro fluxo de instalação ativo.
+
+Na base `05ff562c`, havia 102 módulos de código em `lib/api` e 61 em
+`lib/validation`, incluindo os pontos públicos de exportação e excluindo testes
+identificados. São contagens históricas; a extração descrita abaixo muda a
+distribuição de arquivos de validação. Elas não medem endpoints,
+responsabilidades isoladas nem cobertura de testes.
 
 **[Regra]** Cada pasta de topo tem um README de uma página dizendo: o que mora
 ali, quem pode importar dela, o que nunca entra. O guia anterior não reúne a
 descrição de `config/`, `services/`, `i18n/` e `tests/`; há documentação dispersa
 no repositório, inclusive em `tests/e2e/README.md`.
+
+### Primeiro lote estrutural local de 18/11
+
+O working tree deste lote separa responsabilidades mantendo as regras, o SQL
+e as interfaces existentes:
+
+- `lib/validation/auxiliary.ts` passou de 1.361 linhas para 146 como
+  fachada de compatibilidade. Seus 113 exports e 151 declarações foram
+  preservados, com os contratos distribuídos entre os módulos donos. O mapa
+  desses contratos e a regra de imports ficam em
+  [lib/validation/README.md](lib/validation/README.md).
+- A leitura de leads foi extraída para `repository_read.go` (222 linhas), e
+  os scanners/conversores, para `repository_scan.go` (296 linhas), dentro do
+  mesmo pacote `leads`. Assinaturas e SQL permanecem os mesmos. As
+  responsabilidades e o contrato de ordem das colunas estão em
+  [apps/api/internal/leads/README.md](apps/api/internal/leads/README.md).
+
+O escopo, as verificações pertinentes e a reversão do conjunto ficam no
+[runbook deste lote](docs/runbooks/architecture-refactor-2026-11-18.md).
+O preparo de publicação inclui o patch Next 16.4.6 e o par de imagens API/Web;
+seus limites e rollback estão no
+[plano de release](docs/runbooks/architecture-release-2026-11-18.md).
+Esta descrição registra a organização local e não declara resultado de teste,
+build ou publicação. `leads/repository.go` continua acima de 800 linhas, e os
+demais controladores e repositórios grandes ainda aguardam seus próprios
+recortes. As tabelas de tamanho abaixo continuam sendo o retrato da baseline.
 
 ---
 
@@ -156,15 +208,18 @@ existirem):
 | `notifications` / `attention` | notificações e itens de atenção |
 | `gamification` | missões, ranking |
 
-**[Estado]** Presença do mesmo nome nas camadas (comprovado por nome literal;
-ausência de nome não prova ausência de função):
+**[Estado] Organização das camadas na base `05ff562c`:**
 
-- Presente em hooks + lib/api + validation + Go: attention, cadences, help,
-  integrations, leads, pipelines, properties, schedule.
-- Sem hooks próprios: admin, automations, financial, settings, whatsapp (têm
-  hooks na raiz de `hooks/`).
-- Sem nenhuma camada além da UI: chat, crm-management, news, public, pwa,
-  round-robin (Go: `roundrobin`), setup-guide.
+- Existem 33 pastas em `components/features/` e 23 subpastas com hooks de
+  código, incluindo `admin`, `automations`, `leads`, `properties` e `whatsapp`.
+- A organização dos hooks ainda é mista: aproximadamente 160 arquivos de
+  código na raiz convivem com os hooks por domínio. Ao tocar um fluxo, localizar
+  todos os seus consumidores antes de mover o arquivo ou alterar seus exports.
+- `chat`, `crm-management` e `pwa`, por exemplo, compõem capacidades de outros
+  domínios; não precisam ganhar backend ou camada de dados só para repetir o
+  mesmo nome em todas as pastas.
+- Os nomes não são sempre literais: `round-robin` no frontend corresponde a
+  `roundrobin` no Go; o histórico de leads também possui `hooks/lead-history`.
 
 **[Regra]** Ao criar ou renomear domínio, usar nome consistente nas camadas que
 tenham responsabilidade real (`components/features/X`, `hooks/X`, `lib/api/X.ts`,
@@ -193,7 +248,7 @@ a regra de fronteira da seção 5.
 5. `dashboard` consome dados de outros domínios por `lib/api`, nunca por
    componente deles.
 
-**[Estado]** Comprovado: 85 imports cruzados no front em 43 arquivos
+**[Registro de 08/10, não recontado nesta revisão]** 85 imports cruzados no front em 43 arquivos
 (70 `features → features`, 15 `features → hooks` de outro domínio). Casos mais
 centrais:
 
@@ -206,7 +261,8 @@ centrais:
 | `integrations/MetaFormConfigDialog` | properties, distribution | |
 | `automations/NodeConfigPanel`, `leads/CreateLeadDialog` | properties | |
 
-Essas são as dependências por trás da dor "mexi em um lugar e quebrou outro".
+Esses exemplos indicam acoplamentos a revisar ao alterar os fluxos envolvidos;
+a tabela não é um inventário atualizado de todos os imports.
 
 ### 5.2 API Go
 
@@ -221,7 +277,7 @@ Essas são as dependências por trás da dor "mexi em um lugar e quebrou outro".
 3. `distribution` é serviço compartilhado: pode ser consumido por `leads`,
    `meta`, `portals`, `webhooks` pela sua API pública.
 
-**[Estado]** 15 imports de produção entre pacotes de negócio (comprovado):
+**[Registro de 08/10, não recontado nesta revisão]** 15 imports de produção entre pacotes de negócio:
 
 | Consumidor | Importa |
 |---|---|
@@ -238,8 +294,9 @@ da seção 5.3.
 ### 5.3 Enforcement
 
 **[Estado]** Não existe regra geral de fronteira na CI (sem `eslint-plugin-boundaries`,
-`dependency-cruiser`, `depguard` ou `go-arch-lint`). Existe só um teste pontual
-(`lib/access/api-boundary.test.ts`).
+`dependency-cruiser`, `depguard` ou `go-arch-lint`). Há verificações pontuais,
+como `lib/access/api-boundary.test.ts` e os contratos de funções Edge
+aposentadas; elas não formam uma regra geral de imports entre os domínios.
 
 **[Meta]** Criar um **baseline exato por arquivo/pacote** das violações atuais e
 automatizar na CI a rejeição de novas violações. Reduzir o baseline
@@ -250,9 +307,9 @@ gradualmente, sem exigir a refatoração de todos os domínios de uma vez.
 ## 6. Frontend
 
 - `app/`: composição de rotas, layouts, boundaries e redirects.
-  **[Estado]** Divergência comprovada: `app/api/` tem 12 Route Handlers com
-  lógica própria (`email/send`, `onboarding/signup` com rate limit,
-  `properties/cep`, internas). **[Regra]** Route Handlers são exceção documentada
+  **[Estado]** `app/api/` tem 12 Route Handlers de BFF, callbacks e suporte
+  (`email/send`, `onboarding/signup` com rate limit, `properties/cep`, ajuda
+  interna). **[Regra]** Route Handlers são exceção documentada
   e devem ser finos. Lógica de negócio nova vai para a API Go. Cada handler
   define seu acesso: autenticação, credencial/assinatura ou exceção pública
   documentada com validação e limite de uso. Registrar o dono no domínio e,
@@ -308,7 +365,7 @@ migração para a API Go (a presença grava no banco pelo navegador e depende de
 5. Todo job carrega `organization_id` no registro e filtra por ele.
 6. Edge Function ou worker global (sem organização) é declarado como tal.
 
-**[Estado] Comprovado**
+**[Registro de 08/10 para os levantamentos abaixo, não refeito em 18/11]**
 
 - `QueryProvider` recria o `QueryClient` quando muda a organização (proteção
   existente).
@@ -325,16 +382,20 @@ migração para a API Go (a presença grava no banco pelo navegador e depende de
 - Edge Functions: 45 dos 82 entrypoints não mencionam organização diretamente
   (wrappers, globais, tombstones). Isolamento fim a fim **não verificado**.
 
-**[Meta]** Teste automatizado de isolamento entre duas organizações **rodando na
-CI** (hoje existem testes assim, mas o de integração com banco é pulado sem URL de
-teste).
+**[Estado em 18/11]** Há testes com PostgreSQL descartável na CI para convites,
+remoção/reentrada de membros, revogação de papéis e cenários de privacidade
+(seção 13). Isso cobre fluxos específicos, não todo o isolamento do produto.
+**[Meta]** Ampliar os cenários de duas organizações para as demais fronteiras;
+testes de integração fora desses jobs ainda podem pular sem sua URL de teste.
 
 ---
 
 ## 8. API Go
 
 - `apps/api/internal/app/app.go`: dependências e ciclo de vida.
-- `apps/api/internal/app/routes.go`: rotas e middleware (579 pares método/caminho).
+- `apps/api/internal/app/routes.go`: composição das rotas e middleware; conferir
+  o código ao alterar contratos, pois a medição histórica de 579 operações não
+  foi refeita nesta revisão.
 - Pacote por domínio: handlers, regras e repositório.
 - Infraestrutura compartilhada: `tenant`, `httpserver` (envelopes, erros,
   decoder), `pgvalue`, `jsonvalue`, `config`, `authorization`, `permissions`.
@@ -355,16 +416,16 @@ teste).
    exclusão genérica, a planos e artigos. As demais tabelas do inventário não
    admitem mutação genérica; mudanças previstas usam seus fluxos de domínio.
 
-**[Estado] Arquivos grandes no Go (não teste)**
+**[Estado] Exemplos de arquivos grandes no Go na base `05ff562c` (não teste)**
 
 | Arquivo | Linhas |
 |---|---:|
-| `leads/repository.go` | 5.667 |
-| `whatsapp/webhook_native_processor.go` | 4.940 |
-| `meta/repository.go` | 3.733 |
-| `whatsapp/media_queue.go` | 2.700 |
-| `settings/repository.go` | 2.440 |
-| `whatsapp/repository.go` | 2.386 |
+| `leads/repository.go` | ~5.600 |
+| `whatsapp/webhook_native_processor.go` | ~5.700 |
+| `meta/repository.go` | ~3.700 |
+| `whatsapp/media_queue.go` | ~2.850 |
+| `settings/repository.go` | ~2.360 |
+| `whatsapp/repository.go` | ~2.610 |
 
 **[Regra]** Repositório com mais de ~1.500 linhas divide por agregado
 (`leads/repository_board.go`, `repository_history.go`, ...). Os `types.go`
@@ -434,8 +495,8 @@ grandes (`roundrobin`, `leads`, `whatsapp`, `developments`, `automations`,
 
 **[Meta] Separar worker da API** (`apps/worker`), sem trocar o comportamento:
 
-1. Teste de inventário que falha se um worker não estiver na lista (e lista
-   completa, 20 itens).
+1. Teste de inventário que detecta inicializações fora da lista e confere todos
+   os trabalhos existentes; não assumir uma contagem fixa de starters.
 2. Recuperação de panic e timeout total em cada starter.
 3. Ciclo de vida com espera no desligamento.
 4. Executável `apps/worker` inativo, mesma imagem de código.
@@ -448,8 +509,12 @@ grandes (`roundrobin`, `leads`, `whatsapp`, `developments`, `automations`,
 ## 10. Contratos e tipos
 
 - Contrato público: `packages/contracts/openapi/v1.yaml`.
-- **[Estado]** Cobertura medida: **214 de 579 operações = 37%**. O catálogo
-  gerado (`docs/catalogo-contratos-backend.md`) diz 541 e está defasado.
+- **[Estado na base `05ff562c`]** O YAML declara **232 paths e 301 operações
+  HTTP** e se identifica como contrato parcial. Não é o inventário completo
+  do router. A porcentagem histórica de 37% não é uma medição atual; calcular
+  cobertura exige comparar métodos e caminhos do código e do YAML na mesma
+  revisão. O catálogo `docs/catalogo-contratos-backend.md` também é um registro
+  datado, não a fonte do contrato.
 - Tipos HTTP do front são em parte escritos à mão (`lib/api/leads.ts`,
   `lib/api/whatsapp.ts`); a geração de tipos a partir do OpenAPI ainda é
   próximo passo.
@@ -457,15 +522,16 @@ grandes (`roundrobin`, `leads`, `whatsapp`, `developments`, `automations`,
 
 **[Regra]**
 
-1. Rota nova entra no OpenAPI no mesmo PR (CI compara router × YAML).
+1. Rota nova entra no OpenAPI no mesmo PR. Conferir a paridade durante a revisão
+   e nos testes de contrato pertinentes; a comparação geral router × YAML ainda
+   é uma meta da CI (seção 13).
 2. Tipos do front de rota nova vêm do contrato ou de Zod, nunca duplicados à
    mão.
 3. Resposta de erro e envelope são únicos.
 
-**[Meta]** Cobertura 100% das rotas novas já; legado por domínio na ordem dos
-mais críticos. Grupos maiores fora do contrato: `whatsapp` (54), `admin` (38),
-`settings` (33), `public` (18), `integrations` (17), `schedule` (14),
-`ai` (13), `gamification` (12), `analytics` (11), `contracts` (11).
+**[Meta]** Cobertura de todas as rotas novas e expansão do legado por domínio.
+Antes de priorizar um grupo, comparar o router e o contrato atuais; os totais
+por domínio levantados em outubro não foram recontados nesta revisão.
 
 ---
 
@@ -508,16 +574,19 @@ mais críticos. Grupos maiores fora do contrato: `whatsapp` (54), `admin` (38),
 
 ## 12. Testes
 
-**[Estado] Comprovado (arquivos, não casos nem cobertura)**
+**[Estado na base `05ff562c`] (arquivos, não casos nem cobertura)**
 
-- 218 arquivos de teste no front; 471 `_test.go` na API.
+- 664 arquivos identificados como testes em `app`, `components`, `hooks`, `lib`
+  e `contexts`; 939 arquivos `_test.go` em `apps/api`.
 - Domínios de `features/` **sem teste co-localizado**: attention, auth,
-  automations, crm-management, financial, help, home, marketing, news,
-  notifications, onboarding, presence, public, pwa, round-robin, settings, site.
-- Pacotes Go sem teste co-localizado: `audit`, `me`, `telemetry`.
-- Existem E2E (Playwright) e testes SQL (`supabase/tests/*.sql`), mas **a CI não
-  os executa**.
-- Testes Go de integração com banco são pulados quando falta a URL de teste.
+  crm-management, help, marketing, news, notifications, onboarding, presence,
+  public e site. Isso não prova ausência de testes em outra pasta.
+- Pacotes Go sem teste co-localizado: `me`, `telemetry`, `whatsappbinding`.
+- Existem E2E (Playwright) e testes SQL. A CI executa cenários focados de
+  navegador, PostgreSQL e pgTAP, conforme a seção 13; a suíte geral
+  `npm run test:e2e` e toda a pasta `supabase/tests` não são gates gerais.
+- Testes Go de integração com banco podem pular quando falta a URL exigida;
+  os jobs dedicados fornecem URLs para seus cenários específicos.
 
 **[Regra]**
 
@@ -535,21 +604,35 @@ criar lead, distribuição, enviar WhatsApp, troca de organização, checkout).
 
 ## 13. CI e gates de release
 
-**[Estado]** Um único workflow (`docker-images.yml`) executa: `npm ci`, audit de
-dependências, `audit:check` dos inventários, testes de validação e pontuais,
-typecheck, ESLint, verificadores de migrações e Edge Functions, e
-`go test ./apps/api/... ./packages/auth/... ./packages/db/...`. Imagens são
-construídas e publicadas fora de PR.
+**[Estado na base `05ff562c`]** Existem dois workflows:
 
-**[Estado] Fora da CI hoje:** E2E, testes SQL, banco para testes Go de integração,
-lint de fronteira, lint Go dedicado (só `gofmt` via script), verificação de
-contrato OpenAPI × router.
+- `docker-images.yml`: atende push/PR da `main` e execução manual. Os gates
+  estáticos executam `npm ci`, audit de dependências, `audit:check`, validação,
+  testes de contrato, typecheck, ESLint, verificadores de migrations/Edge e
+  `go test ./apps/api/... ./packages/auth/... ./packages/db/...`.
+- Esse workflow também tem jobs de PostgreSQL descartável para convites e
+  acesso de membros. O job `whatsapp-contracts` instala PostgreSQL 17, pgTAP e
+  Chromium e executa testes focados de formulários, permissões, filas e mobile.
+  A publicação de API e Web depende desses quatro gates e não ocorre em PR.
+- `staging-images.yml`: execução manual, restrita à branch `homologacao` em
+  repositório privado e às variáveis próprias de staging. Não é acionado por um
+  push da `main`.
+
+Os workflows geram/publicam imagens; não contêm etapa de atualização da stack.
+Verificar o arquivo do workflow e a execução correspondente antes de declarar
+um gate aprovado.
+
+**[Estado] Fora dos gates gerais:** suíte completa `npm run test:e2e`, todos os
+testes SQL do repositório, todos os cenários Go que exigem banco, lint geral de
+fronteira, lint Go dedicado e comparação completa OpenAPI × router. A presença
+de jobs isolados não significa cobertura integral desses grupos.
 
 **[Meta] Gates adicionais, em ordem**
 
 1. Lint de fronteira com baseline congelado (seção 5).
 2. Comparação router × OpenAPI (falha em rota nova fora do contrato).
-3. Postgres de teste na CI e execução dos testes de integração e SQL.
+3. Ampliar os jobs isolados já existentes para os testes de integração e SQL
+   ainda fora da CI.
 4. Lint Go (`golangci-lint`) com configuração versionada.
 5. Limite de tamanho de arquivo com allowlist dos existentes.
 6. E2E dos fluxos críticos em ambiente isolado.
@@ -562,9 +645,9 @@ integrações externas e capacidade continuam sendo evidências separadas.
 
 ## 14. Ambientes e configuração
 
-**[Estado]**
+**[Registro de 08/10 para as contagens e lacunas abaixo, não refeito em 18/11]**
 
-- Há `.env.example` **só na raiz** (141 chaves). Não há `.env.example` por app.
+- Há `.env.example` **só na raiz** (141 chaves na medição original). Não há `.env.example` por app.
 - Front lê 18 nomes diretos; API Go, 132; scripts, 53 (sobrepostos).
 - `config/env.ts` declara as variáveis públicas obrigatórias, mas **nenhum
   import dele foi encontrado**; não valida nada de fato hoje.
@@ -736,26 +819,28 @@ checkout ou comprovantes.
 
 ## 18. Dívida técnica e limites de tamanho
 
-**[Estado]** Arquivos acima de 400 / 800 / 1.500 linhas (comprovado):
-339 / 127 / 38 no total (Go não teste 135/67/25; `components` 136/46/10).
+**[Estado na base `05ff562c`]** Arquivos acima de 400 / 800 / 1.500 linhas:
+364 / 147 / 48 no recorte de TS/JS/Go sem testes identificados, declarações
+`.d.ts` e o arquivo gerado `integrations/supabase/types.ts`. O total inclui
+scripts e funções Edge legadas, não apenas runtime publicado. Dentro desse
+recorte: API Go não teste 139/70/24; `components` 130/42/13. Contagem de linhas
+e nomes de testes não mede acoplamento, cobertura ou desempenho.
 
 **[Regra]** Arquivo novo ≤ 400 linhas (alvo) e ≤ 800 (limite). Crescimento de
 arquivo legado acima de 800 linhas exige justificativa e plano de divisão.
 **[Meta]** Registrar esses arquivos em baseline e impedir crescimento sem
 justificativa por um gate futuro da CI.
 
-**Fila de divisão (maiores primeiro e que mais quebram):**
+**Exemplos para divisão por responsabilidade (tamanhos aproximados na baseline):**
 
 | Arquivo | Linhas |
 |---|---:|
-| `leads/LeadDetailDialog.tsx` | 2.149 |
-| `auth/screens/CheckoutScreen.tsx` | 2.148 |
-| `dashboard/DashboardScreen.tsx` | 2.096 |
-| `chat/FloatingChat.tsx` | 1.976 |
-| `pipelines/PipelinesScreen.tsx` | 1.944 (piloto, plano em 11 passos) |
-| `properties/PropertyFormScreen.tsx` | 1.741 |
-| `integrations/MetaIntegrationSettings.tsx` | 1.725 |
-| `hooks/use-whatsapp-conversations.ts` | 1.689 |
+| `components/features/leads/LeadDetailDialog.tsx` | 2.400 |
+| `components/features/auth/screens/CheckoutScreen.tsx` | 2.150 |
+| `components/features/chat/FloatingChat.tsx` | 2.700 |
+| `components/features/pipelines/PipelinesScreen.tsx` | 2.100 |
+| `components/features/properties/PropertyFormScreen.tsx` | 2.000 |
+| `hooks/use-whatsapp-conversations.ts` | 2.150 |
 
 **Arquivos de validação que misturam assuntos:** `lib/validation/auxiliary.ts`
 (auditoria, anexos, pagamento, imóveis, site, Realtime), `final-domains.ts`
@@ -785,8 +870,8 @@ além de runbooks em `docs/runbooks/`, README, QUICK_REFERENCE, INDEX e AGENTS.
 | Onde | Problema |
 |---|---|
 | README | `lib/api` descrito só como cliente Go; há Supabase Auth e escrita direta em `user-activity` |
-| README | `.env.example` descrito como catálogo; faltam 20 variáveis |
-| Catálogo de contratos | 541 contratos; router tem 579 |
+| README | Completude do catálogo de variáveis exige recontagem; a medição de 20 ausências é histórica |
+| Catálogo de contratos | Inventário datado; não representa automaticamente o router ou o OpenAPI atuais |
 
 **Arquivos a criar (ordem)**
 

@@ -1,3 +1,7 @@
+import { jsonValueSchema, optionalNullableString, optionalUUID } from "@/lib/validation/shared-schema-values";
+import { dynamicRecordSchema } from "@/lib/validation/final-domains";
+import { stageInactivityPolicySchema } from "@/lib/validation/stage-inactivity";
+
 import { z } from 'zod'
 import { apiEnvelopeSchema, nonNegativeIntegerSchema, timestampSchema, uuidSchema } from './common'
 import { apiQueuePoolSchema, queuePoolSchema } from './queue-runtime'
@@ -190,3 +194,90 @@ export const leadMetaFiltersResponseSchema = apiEnvelopeSchema(z.object({
     campaignId: z.string().min(1),
   })),
 }).passthrough())
+
+
+export const stageAutomationInputSchema = z
+  .object({
+    stage_id: uuidSchema.optional(),
+    automation_type: z.string().trim().max(120).optional(),
+    trigger_days: z.number().int().min(0).max(3_650).nullish(),
+    target_stage_id: optionalUUID,
+    whatsapp_template: optionalNullableString,
+    alert_message: optionalNullableString,
+    target_user_id: optionalUUID,
+    deal_status: z.enum(["open", "won", "lost"]).nullish(),
+    action_config: dynamicRecordSchema.nullish(),
+    is_active: z.boolean().optional(),
+  })
+  .strict()
+  .refine(
+    (value) => Object.keys(value).length > 0,
+    "Informe ao menos um campo",
+  );
+export const stageOperationalConfigInputSchema = z
+  .object({
+    id: uuidSchema.optional(),
+    stage_id: uuidSchema,
+    operation_context: z.string().max(180).optional(),
+    responsible_sector: optionalNullableString,
+    sla_hours: z.number().int().min(0).max(100_000).optional(),
+    automatic_tasks: jsonValueSchema.optional(),
+    automatic_notifications: jsonValueSchema.optional(),
+    automatic_operational_requests: jsonValueSchema.optional(),
+    checklist_template: jsonValueSchema.optional(),
+    approval_flow: jsonValueSchema.optional(),
+    dashboard_destination: optionalNullableString,
+    visibility_rules: jsonValueSchema.optional(),
+  })
+  .strict();
+export const pipelineSLAInputSchema = z
+  .object({
+    pipeline_id: uuidSchema,
+    stage_id: optionalUUID,
+    warning_hours: z.number().int().min(0).max(100_000).optional(),
+    critical_hours: z.number().int().min(0).max(100_000).optional(),
+    sla_start_field: z.string().trim().max(120).optional(),
+  })
+  .strict();
+const stageAutomationSchema = z
+  .object({
+    id: uuidSchema,
+    organization_id: uuidSchema,
+    trigger_type: z.string(),
+    is_active: z.boolean().nullable(),
+    inactivity_policy: stageInactivityPolicySchema.nullish(),
+    inactivity_runtime_available: z.boolean().optional(),
+  })
+  .passthrough();
+const stageOperationalConfigSchema = z
+  .object({
+    organization_id: uuidSchema,
+    stage_id: uuidSchema,
+    operation_context: z.string(),
+    sla_hours: nonNegativeIntegerSchema,
+  })
+  .passthrough();
+const pipelineSLASchema = z
+  .object({
+    id: uuidSchema,
+    organization_id: uuidSchema,
+    pipeline_id: uuidSchema,
+  })
+  .passthrough();
+export const apiStageAutomationResponseSchema = apiEnvelopeSchema(
+  stageAutomationSchema,
+);
+export const apiStageAutomationListResponseSchema = apiEnvelopeSchema(
+  z.array(stageAutomationSchema),
+).extend({ inactivity_runtime_available: z.boolean().optional() });
+export const apiStageOperationalResponseSchema = apiEnvelopeSchema(
+  stageOperationalConfigSchema,
+);
+export const apiStageOperationalListResponseSchema = apiEnvelopeSchema(
+  z.array(stageOperationalConfigSchema),
+);
+export const apiPipelineSLAResponseSchema =
+  apiEnvelopeSchema(pipelineSLASchema);
+export const apiPipelineSLAListResponseSchema = apiEnvelopeSchema(
+  z.array(pipelineSLASchema),
+);

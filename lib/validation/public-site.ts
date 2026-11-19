@@ -1,3 +1,7 @@
+import { dynamicRecordSchema } from "@/lib/validation/final-domains";
+import { finiteNullableNumber, nullableString } from "@/lib/validation/shared-schema-values";
+import { apiEnvelopeSchema, nonNegativeIntegerSchema } from "@/lib/validation/common";
+
 import { z } from "zod";
 
 import {
@@ -209,3 +213,114 @@ export const publicTrackingResponseSchema = z
 export type PublicTrackingResponse = z.infer<
   typeof publicTrackingResponseSchema
 >;
+
+
+export const publicDomainSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(253)
+  .transform((value) => value.toLowerCase());
+export const publicSiteQuerySchema = z.record(
+  z.string(), z.union([
+    z.string(),
+    z.number().finite(),
+    z.boolean(),
+    z.null(),
+    z.undefined(),
+  ]),
+);
+export const apiPublicSiteResolveResponseSchema = z
+  .object({
+    found: z.boolean(),
+    site_config: dynamicRecordSchema.optional(),
+  })
+  .passthrough();
+export const apiPublicDataResponseSchema = z.unknown();
+export const publicSiteConfigSchema = z
+  .object({
+    id: uuidSchema,
+    organization_id: uuidSchema,
+    is_active: z.boolean(),
+    maintenance_mode: z.boolean(),
+    maintenance_message: z.string().max(500).nullable(),
+    subdomain: nullableString,
+    custom_domain: nullableString,
+    site_title: nullableString,
+    site_description: nullableString,
+    primary_color: nullableString,
+    secondary_color: nullableString,
+    accent_color: nullableString,
+  })
+  .passthrough();
+export const publicPropertySchema = z
+  .object({
+    id: uuidSchema,
+    codigo: z.string(),
+    titulo: nullableString,
+    valor_venda: finiteNullableNumber,
+    valor_aluguel: finiteNullableNumber,
+    destaque: z.boolean().nullable(),
+  })
+  .passthrough();
+export const publicHomeDataSchema = z
+  .object({
+    featured: z.array(publicPropertySchema),
+    exclusive: z.array(publicPropertySchema),
+    latest: z.array(publicPropertySchema),
+    types: z.array(z.string()),
+    cities: z.array(z.string()),
+  })
+  .passthrough();
+export const publicPropertiesDataSchema = z
+  .object({
+    properties: z.array(publicPropertySchema),
+    total: nonNegativeIntegerSchema,
+    page: z.number().int().min(1),
+    limit: z.number().int().min(1),
+    totalPages: nonNegativeIntegerSchema,
+    types: z.array(z.string()),
+    cities: z.array(z.string()),
+    neighborhoods: z.array(z.string()),
+    condominiums: z.array(z.string()),
+    purposes: z.array(z.string()),
+  })
+  .passthrough();
+export const publicPropertyDataSchema = z
+  .object({
+    property: publicPropertySchema.nullable(),
+  })
+  .passthrough();
+export const publicSiteResolveServerSchema = z
+  .object({
+    found: z.boolean().optional(),
+    site_config: publicSiteConfigSchema.optional(),
+  })
+  .passthrough();
+export const publicMenuItemListEnvelopeSchema = apiEnvelopeSchema(
+  z.array(
+    z
+      .object({
+        id: uuidSchema,
+        organization_id: uuidSchema,
+        label: z.string(),
+        link_type: z.string(),
+        href: z.string(),
+        position: nonNegativeIntegerSchema,
+        open_in_new_tab: z.boolean(),
+        is_active: z.boolean(),
+      })
+      .passthrough(),
+  ),
+).partial({ data: true });
+export const publicSearchFilterListEnvelopeSchema = apiEnvelopeSchema(
+  z.array(
+    z
+      .object({
+        filter_key: z.string(),
+        label: z.string(),
+        position: nonNegativeIntegerSchema,
+      })
+      .passthrough(),
+  ),
+).partial({ data: true });
