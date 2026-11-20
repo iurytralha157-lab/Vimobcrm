@@ -9,16 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import {
   Plus,
   Search,
   Loader2,
@@ -31,11 +21,11 @@ import {
 import {
   useInfiniteProperties,
   useUpdateProperty,
-  useDeleteProperty,
   type Property,
   type PropertyFilters,
 } from "@/hooks/use-properties";
 import { PropertyCard } from "@/components/features/properties/PropertyCard";
+import { PropertyDeleteDialog } from "@/components/features/properties/PropertyDeleteDialog";
 import { PropertyHistoryDialog } from "@/components/features/properties/PropertyHistoryDialog";
 import { PropertyPreviewDialog } from "@/components/features/properties/PropertyPreviewDialog";
 import { PropertySectionTabs } from "@/components/features/properties/PropertySectionTabs";
@@ -64,7 +54,6 @@ import { ALL_FILTER_VALUE, PropertyFiltersPanel } from "@/components/features/pr
 import { LaunchDevelopmentsSection } from "@/components/features/properties/list/LaunchDevelopmentsSection";
 import { getPresetFilters, type PropertyCatalogPreset } from "@/components/features/properties/list/property-catalog-presets";
 import { getPropertySiteInfo } from "@/lib/api/property-support";
-import { isPropertyWorkspaceConflict } from "@/lib/property-concurrency";
 import { getPropertyNumericFilterErrors, getPropertyCatalogLocationId } from "@/lib/validation/property-filter-input";
 import { formatPtBRNumber } from "@/lib/utils/formatting";
 
@@ -200,7 +189,6 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
   const properties = data?.pages.flatMap((page) => page.properties) || [];
   const totalCount = data?.pages[0]?.totalCount || 0;
   const updateProperty = useUpdateProperty();
-  const deleteProperty = useDeleteProperty();
 
   const openEdit = (property: Property) => {
     router.push(`/properties/${property.id}/edit`);
@@ -208,26 +196,6 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
 
   const openDetails = (property: Property) => {
     router.push(`/properties/${property.id}`);
-  };
-
-  const handleDelete = async (property: Property) => {
-    await deleteProperty.mutateAsync({
-      id: property.id,
-      expected_updated_at: property.updated_at,
-    });
-  };
-
-  const confirmDelete = async () => {
-    if (!deletePropertyTarget) return;
-    try {
-      await handleDelete(deletePropertyTarget);
-      setDeletePropertyTarget(null);
-    } catch (error) {
-      if (isPropertyWorkspaceConflict(error)) {
-        setDeletePropertyTarget(null);
-      }
-      // The mutation already exposes the safe error message through the shared toast flow.
-    }
   };
 
   const handleChangeStatus = async (
@@ -655,44 +623,15 @@ export default function Properties({ preset = "all" }: PropertiesScreenProps) {
           onOpenChange={setHistoryOpen}
         />
 
-        <AlertDialog
-          open={Boolean(deletePropertyTarget)}
-          onOpenChange={(nextOpen) => {
-            if (!nextOpen && !deleteProperty.isPending)
-              setDeletePropertyTarget(null);
-          }}
-        >
-          <AlertDialogContent className="w-[calc(100vw-24px)] max-w-[440px] rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-5 shadow-none">
-            <AlertDialogHeader>
-              <AlertDialogTitle className="text-[14px] font-normal">
-                Excluir imóvel?
-              </AlertDialogTitle>
-              <AlertDialogDescription className="text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
-                {deletePropertyTarget
-                  ? `O imóvel ${deletePropertyTarget.code || deletePropertyTarget.title || ""} será removido da carteira. Esta ação não pode ser desfeita.`
-                  : "Esta ação não pode ser desfeita."}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]">
-                Cancelar
-              </AlertDialogCancel>
-              <AlertDialogAction
-                onClick={(event) => {
-                  event.preventDefault();
-                  void confirmDelete();
-                }}
-                disabled={deleteProperty.isPending}
-                className="h-9 rounded-[6px] bg-destructive/70 text-[12px] font-light text-destructive-foreground shadow-none hover:bg-destructive"
-              >
-                {deleteProperty.isPending && (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                )}
-                Excluir imóvel
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        {deletePropertyTarget &&
+          canDeleteProperty &&
+          activeOrganization.status === "ready" &&
+          deletePropertyTarget.organization_id === organizationId && (
+            <PropertyDeleteDialog
+              property={deletePropertyTarget}
+              onClose={() => setDeletePropertyTarget(null)}
+            />
+          )}
       </div>
     </AppLayout>
   );

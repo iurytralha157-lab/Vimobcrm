@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -15,6 +17,41 @@ type leadPropertyInterestsChange struct {
 	Before, After  []string
 	Added, Removed int
 	OperationID    string
+}
+
+// Secondary interests live in JSON, so they need the same protection from
+// concurrent property deletion that the primary property gets from its FK.
+func lockNewLeadSecondaryPropertyInterests(ctx context.Context, tx pgx.Tx, organizationID string, primary *string, currentIDs, requestedIDs []string) error {
+	var secondaryIDs []string
+	for _, id := range requestedIDs {
+		if (primary == nil || id != *primary) && !containsLeadPropertyID(currentIDs, id) {
+			secondaryIDs = append(secondaryIDs, id)
+		}
+	}
+	if len(secondaryIDs) == 0 {
+		return nil
+	}
+
+	var locked int
+	err := tx.QueryRow(ctx, `
+		select count(*) from (
+			select id from public.properties
+			where organization_id = $1::uuid and id = any($2::uuid[])
+			order by id
+			for key share nowait
+		) as locked_interests
+	`, organizationID, secondaryIDs).Scan(&locked)
+	var databaseError *pgconn.PgError
+	if errors.As(err, &databaseError) && databaseError.Code == "55P03" {
+		return fmt.Errorf("%w: O imóvel de interesse está sendo alterado. Aguarde e tente novamente.", ErrLeadPropertyUnavailable)
+	}
+	if err != nil {
+		return err
+	}
+	if locked != len(secondaryIDs) {
+		return ErrInvalidReference
+	}
+	return nil
 }
 
 // Normalize only a property command, after its lead snapshot was locked and

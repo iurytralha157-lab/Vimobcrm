@@ -1,25 +1,25 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "a0e19f4229aadd3ebe27024f26316826d74c551c871d6a957252b782345de35b",
-  "surfaceInventoryDigestSha256": "f76fdfbf73e647777515f916c36b53d88c1e6e0fdc86bbbf9da4c9b041f72c4d",
+  "sourceDigestSha256": "35032d758fee3e8dccfaeaf3efbc6403e059166cf9ebf0327f40ff7184208f76",
+  "surfaceInventoryDigestSha256": "983a9d73e66d594cda210f4ad81d069f17547668aea84a1979943b261a5c76e4",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 674,
+    "filesScanned": 675,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
     "filesWithFindings": 72,
-    "findings": 161,
+    "findings": 162,
     "protectedReachableFilesWithFindings": 68,
-    "protectedReachableFindings": 157,
+    "protectedReachableFindings": 158,
     "bySurfaceScope": {
       "protected-only": 116,
-      "protected-and-public": 41,
+      "protected-and-public": 42,
       "public-only": 2,
       "infrastructure": 2
     },
     "byPriority": {
-      "P1": 116,
+      "P1": 117,
       "P2": 27,
       "P3": 18
     },
@@ -43,7 +43,7 @@
         "priority": "P1"
       },
       "heavy-font": {
-        "count": 8,
+        "count": 9,
         "guidance": "Texto normal usa 300; títulos usam 400.",
         "label": "Tipografia pesada",
         "priority": "P1"
@@ -208,6 +208,15 @@
       }
     },
     {
+      "file": "components/features/chat/FloatingChat.tsx",
+      "count": 2,
+      "score": 7,
+      "rules": {
+        "heavy-shadow": 1,
+        "heavy-font": 1
+      }
+    },
+    {
       "file": "components/features/admin/home-publications/PublicationImageField.tsx",
       "count": 2,
       "score": 6,
@@ -297,14 +306,6 @@
       "score": 4,
       "rules": {
         "hardcoded-surface": 2
-      }
-    },
-    {
-      "file": "components/features/chat/FloatingChat.tsx",
-      "count": 1,
-      "score": 4,
-      "rules": {
-        "heavy-shadow": 1
       }
     },
     {
@@ -628,6 +629,15 @@
       }
     },
     {
+      "file": "components/features/chat/FloatingChat.tsx",
+      "count": 2,
+      "score": 7,
+      "rules": {
+        "heavy-shadow": 1,
+        "heavy-font": 1
+      }
+    },
+    {
       "file": "components/features/admin/home-publications/PublicationImageField.tsx",
       "count": 2,
       "score": 6,
@@ -717,14 +727,6 @@
       "score": 4,
       "rules": {
         "hardcoded-surface": 2
-      }
-    },
-    {
-      "file": "components/features/chat/FloatingChat.tsx",
-      "count": 1,
-      "score": 4,
-      "rules": {
-        "heavy-shadow": 1
       }
     },
     {
@@ -1082,6 +1084,15 @@
       "rule": "heavy-shadow",
       "surfaceScope": "protected-and-public",
       "weight": 4
+    },
+    {
+      "file": "components/features/chat/FloatingChat.tsx",
+      "line": 1873,
+      "match": "font-semibold",
+      "priority": "P1",
+      "rule": "heavy-font",
+      "surfaceScope": "protected-and-public",
+      "weight": 3
     },
     {
       "file": "components/features/chat/FloatingChatButton.tsx",

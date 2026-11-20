@@ -3,15 +3,32 @@ import test from "node:test";
 
 import {
   apiPropertyCreateResponseSchema,
+  apiPropertyDeletionImpactResponseSchema,
   apiPropertyListResponseSchema,
   apiPropertyResponseSchema,
   apiPropertySchema,
   apiPropertyWithCapabilitiesSchema,
+  propertyDeleteInputSchema,
   propertyUpdateInputSchema,
 } from "./properties";
 
 const PROPERTY_ID = "11111111-1111-4111-8111-111111111111";
 const ORGANIZATION_ID = "22222222-2222-4222-8222-222222222222";
+
+test("exclusão valida o número inteiro de leads sem perder o valor zero", () => {
+  const version = { expected_updated_at: "2026-11-20T12:00:00Z" };
+  assert.equal(propertyDeleteInputSchema.safeParse(version).success, true);
+  for (const count of [0, 2]) {
+    assert.deepEqual(propertyDeleteInputSchema.parse({ ...version, expected_linked_leads_count: count }), {
+      ...version, expected_linked_leads_count: count,
+    });
+    assert.equal(apiPropertyDeletionImpactResponseSchema.parse({ data: { linked_leads_count: count } }).data.linked_leads_count, count);
+  }
+  for (const count of [-1, 1.5, null, "2"]) {
+    assert.equal(propertyDeleteInputSchema.safeParse({ ...version, expected_linked_leads_count: count }).success, false);
+    assert.equal(apiPropertyDeletionImpactResponseSchema.safeParse({ data: { linked_leads_count: count } }).success, false);
+  }
+});
 
 test("PATCH de imóvel aceita versão ISO com offset junto de uma alteração", () => {
   const result = propertyUpdateInputSchema.safeParse({

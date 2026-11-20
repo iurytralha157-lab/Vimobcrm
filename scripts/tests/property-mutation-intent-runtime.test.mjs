@@ -11,7 +11,7 @@ const ts = require('typescript');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 function evaluate(file, dependencies, globals = {}) {
   const source = ts.transpileModule(readFileSync(path.join(root, file), 'utf8'), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   const compiledModule = { exports: {} };
   vm.runInNewContext(source, { module: compiledModule, exports: compiledModule.exports,
@@ -39,7 +39,11 @@ function fixture(expired = true) {
   }, { Headers, URL, AbortController, DOMException, Date: FakeDate, setTimeout, clearTimeout,
     process: { env: { NODE_ENV: 'production', NEXT_PUBLIC_VIMOB_API_URL: 'https://inert.example' } },
     fetch: async (url, options) => {
-      requests.push({ url, method: options.method, actor: options.headers.get('Authorization'), organization: options.headers.get('X-Organization-ID') });
+      const body = options.body ? JSON.parse(options.body) : undefined;
+      requests.push({ url, method: options.method, body, actor: options.headers.get('Authorization'), organization: options.headers.get('X-Organization-ID') });
+      if (String(url).endsWith('/deletion-impact')) {
+        return new Response(JSON.stringify({ data: { linked_leads_count: 2 } }), { status: 200 });
+      }
       return new Response(JSON.stringify({ data: { id: 'synthetic-id', units: [] } }), { status: 200 });
     },
   });
@@ -67,7 +71,7 @@ function fixture(expired = true) {
 }
 
 const commands = {
-  delete: f => f.properties.deleteProperty('property-a', '2026-10-12T00:00:00Z', 'org-a'),
+  delete: f => f.properties.deleteProperty('property-a', { expected_updated_at: '2026-10-12T00:00:00Z' }, 'org-a'),
   update: f => f.properties.updateProperty('property-a', { title: 'Synthetic' }, 'org-a'),
   offer: f => f.workspace.upsertOffer('org-a', 'property-a', 'sale', { price: 100 }),
   key: f => f.workspace.createKey('org-a', 'property-a', { label: 'Synthetic' }),
@@ -140,4 +144,75 @@ test('property recovery read forwards an explicitly pinned session without a cal
   f.switchSession();
   await assert.rejects(pending, error => error.code === 'api_request_identity_changed');
   assert.equal(f.requests.length, 0);
+});
+
+test('property deletion carries the checked lead count and keeps the fallback without a count', async () => {
+  const f = fixture(false);
+  const impact = await f.properties.getPropertyDeletionImpact('property-a', 'org-a', {
+    expectedUserId: 'actor-a', expectedSessionId: 'session-a',
+  });
+  assert.equal(impact.linked_leads_count, 2);
+  assert.match(String(f.requests[0].url), /\/v1\/properties\/property-a\/deletion-impact$/);
+  assert.equal(f.requests[0].method, 'GET');
+  assert.equal(f.requests[0].organization, 'org-a');
+  const version = { expected_updated_at: '2026-10-12T00:00:00Z' };
+  await f.properties.deleteProperty('property-a', { ...version, expected_linked_leads_count: 2 }, 'org-a');
+  await f.properties.deleteProperty('property-a', { ...version, expected_linked_leads_count: 0 }, 'org-a');
+  await f.properties.deleteProperty('property-a', version, 'org-a');
+  assert.deepEqual(f.requests.slice(1).map(request => request.body), [
+    { ...version, expected_linked_leads_count: 2 }, { ...version, expected_linked_leads_count: 0 }, version,
+  ]);
+});
+
+test('property deletion confirms only a successful impact lookup', async () => {
+  const calls = [];
+  let impact = { isPending: true, isFetching: true };
+  const alertComponents = Object.fromEntries(
+    ['AlertDialog', 'AlertDialogAction', 'AlertDialogCancel', 'AlertDialogContent',
+      'AlertDialogDescription', 'AlertDialogFooter', 'AlertDialogHeader', 'AlertDialogTitle']
+      .map(name => [name, name]),
+  );
+  const { PropertyDeleteDialog } = evaluate('components/features/properties/PropertyDeleteDialog.tsx', {
+    'react/jsx-runtime': require('react/jsx-runtime'),
+    'lucide-react': { Loader2: 'Loader2' },
+    '@/components/ui/alert-dialog': alertComponents,
+    '@/components/ui/button': { Button: 'Button' },
+    '@/hooks/use-properties': {
+      usePropertyDeletionImpact: () => impact,
+      useDeleteProperty: () => ({ isPending: false, mutateAsync: async input => { calls.push(JSON.parse(JSON.stringify(input))); } }),
+    },
+    '@/lib/property-concurrency': { isPropertyWorkspaceConflict: () => false },
+  });
+  function descendants(node) {
+    if (!node || typeof node !== 'object') return [];
+    return [node, ...[node.props?.children].flat().flatMap(descendants)];
+  }
+  const render = () => descendants(PropertyDeleteDialog({
+    property: { id: 'property-a', code: 'A', updated_at: '2026-10-12T00:00:00Z' },
+    onClose: () => calls.push('closed'),
+  }));
+  const action = () => render().find(node => node.type === 'AlertDialogAction');
+  const status = () => render().find(node => node.props.role === 'status').props.children;
+  const confirm = () => action().props.onClick({ preventDefault() {} });
+  assert.equal(action().props.disabled, true);
+  confirm();
+  assert.deepEqual(calls, []);
+  impact = { isError: true, refetch: async () => calls.push('retried') };
+  assert.equal(action(), undefined);
+  render().find(node => node.type === 'Button').props.onClick();
+  assert.deepEqual(calls, ['retried']);
+  impact = { isSuccess: true, data: 1 };
+  assert.match(status(), /1 lead vinculado/);
+  impact = { isSuccess: true, data: 2 };
+  assert.match(status(), /2 leads vinculados/);
+  impact = { isSuccess: true, isFetching: true, data: 2 };
+  assert.equal(action().props.disabled, true);
+  impact = { isSuccess: true, data: 0 };
+  assert.equal(status(), null);
+  assert.equal(action().props.disabled, false);
+  confirm();
+  await new Promise(setImmediate);
+  assert.deepEqual(calls, ['retried', {
+    id: 'property-a', expected_updated_at: '2026-10-12T00:00:00Z', expected_linked_leads_count: 0,
+  }, 'closed']);
 });

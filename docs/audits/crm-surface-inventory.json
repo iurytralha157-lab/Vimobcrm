@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "f76fdfbf73e647777515f916c36b53d88c1e6e0fdc86bbbf9da4c9b041f72c4d",
+  "sourceDigestSha256": "983a9d73e66d594cda210f4ad81d069f17547668aea84a1979943b261a5c76e4",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -2971,10 +2971,10 @@
           "kind": "dropdownMenu"
         },
         {
-          "id": "overlay:d768b5aaeae10236a551",
+          "id": "overlay:a1e936abedc576bf6bdd",
           "column": 9,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 606,
+          "line": 574,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -2987,24 +2987,6 @@
             "/properties/third-party"
           ],
           "kind": "sheet"
-        },
-        {
-          "id": "overlay:a05cf2a6df38fbe97713",
-          "column": 9,
-          "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 658,
-          "owner": "Properties",
-          "routes": [
-            "/properties",
-            "/properties/developments",
-            "/properties/developments/[id]",
-            "/properties/launches",
-            "/properties/ready",
-            "/properties/rentals",
-            "/properties/settings",
-            "/properties/third-party"
-          ],
-          "kind": "alertDialog"
         },
         {
           "id": "overlay:d2524cc344a658fd7c7d",
@@ -3101,6 +3083,24 @@
             "/properties/owners"
           ],
           "kind": "dialog"
+        },
+        {
+          "id": "overlay:ea6d1ab41950b6d858a2",
+          "column": 5,
+          "file": "components/features/properties/PropertyDeleteDialog.tsx",
+          "line": 51,
+          "owner": "PropertyDeleteDialog",
+          "routes": [
+            "/properties",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/ready",
+            "/properties/rentals",
+            "/properties/settings",
+            "/properties/third-party"
+          ],
+          "kind": "alertDialog"
         },
         {
           "id": "overlay:91e0b786fe8eece113b3",
@@ -22201,10 +22201,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:94be22b85e9580d6a836",
+          "id": "cta:6d9d0fc1db4573a8af23",
           "column": 17,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 430,
+          "line": 398,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -22220,10 +22220,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:3c439a955236413c76cc",
+          "id": "cta:a5c8d70ee0bdb4a9aa4e",
           "column": 19,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 443,
+          "line": 411,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -22239,10 +22239,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d97ad13f64f200df73f8",
+          "id": "cta:043524d9d10619ac32a0",
           "column": 19,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 485,
+          "line": 453,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -22258,10 +22258,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e36832c63622b92ac573",
+          "id": "cta:f51f1d83f845f38e4dcb",
           "column": 23,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 528,
+          "line": 496,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -22277,10 +22277,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d0209b4c9288523a283c",
+          "id": "cta:8200a6682fdaefe0b3b3",
           "column": 23,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 538,
+          "line": 506,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -22296,10 +22296,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:cafd524852ac888fb7ab",
+          "id": "cta:c7e924d14572506ba6d3",
           "column": 19,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 586,
+          "line": 554,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -23201,6 +23201,25 @@
           ],
           "kind": "actionButton",
           "tag": "button"
+        },
+        {
+          "id": "cta:2eb0f446d0ce97deee99",
+          "column": 13,
+          "file": "components/features/properties/PropertyDeleteDialog.tsx",
+          "line": 79,
+          "owner": "PropertyDeleteDialog",
+          "routes": [
+            "/properties",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/ready",
+            "/properties/rentals",
+            "/properties/settings",
+            "/properties/third-party"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
         },
         {
           "id": "cta:ccbd8ba261c28c855718",
@@ -44839,44 +44858,6 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:1f1c4f0cf14aefb0165f",
-          "column": 15,
-          "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 677,
-          "owner": "Properties",
-          "routes": [
-            "/properties",
-            "/properties/developments",
-            "/properties/developments/[id]",
-            "/properties/launches",
-            "/properties/ready",
-            "/properties/rentals",
-            "/properties/settings",
-            "/properties/third-party"
-          ],
-          "kind": "AlertDialogCancel",
-          "tag": "AlertDialogCancel"
-        },
-        {
-          "id": "control:9135268d6072c37cd5bb",
-          "column": 15,
-          "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 680,
-          "owner": "Properties",
-          "routes": [
-            "/properties",
-            "/properties/developments",
-            "/properties/developments/[id]",
-            "/properties/launches",
-            "/properties/ready",
-            "/properties/rentals",
-            "/properties/settings",
-            "/properties/third-party"
-          ],
-          "kind": "AlertDialogAction",
-          "tag": "AlertDialogAction"
-        },
-        {
           "id": "control:3b847c871e7406d65028",
           "column": 11,
           "file": "components/features/properties/property-locations/DeletionDialog.tsx",
@@ -44931,6 +44912,44 @@
           ],
           "kind": "TabsTrigger",
           "tag": "TabsTrigger"
+        },
+        {
+          "id": "control:c5bf3a9ee7b1c328b71f",
+          "column": 11,
+          "file": "components/features/properties/PropertyDeleteDialog.tsx",
+          "line": 72,
+          "owner": "PropertyDeleteDialog",
+          "routes": [
+            "/properties",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/ready",
+            "/properties/rentals",
+            "/properties/settings",
+            "/properties/third-party"
+          ],
+          "kind": "AlertDialogCancel",
+          "tag": "AlertDialogCancel"
+        },
+        {
+          "id": "control:0a736959f8a9308c83a0",
+          "column": 13,
+          "file": "components/features/properties/PropertyDeleteDialog.tsx",
+          "line": 83,
+          "owner": "PropertyDeleteDialog",
+          "routes": [
+            "/properties",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/ready",
+            "/properties/rentals",
+            "/properties/settings",
+            "/properties/third-party"
+          ],
+          "kind": "AlertDialogAction",
+          "tag": "AlertDialogAction"
         },
         {
           "id": "control:6441cfa514b0783cd323",
@@ -47480,7 +47499,7 @@
         }
       ]
     },
-    "digestSha256": "dac85231ec3a3b231b161f11ef400f3d02a161756a5efb33eb1d8ca261945f1d"
+    "digestSha256": "66449cffa74fab153c8f80c55bb6c068bdfa4ebea0f66d76a04615ac7f00b837"
   },
   "routes": [
     {
@@ -54821,6 +54840,22 @@
       "access": [
         "protected"
       ],
+      "file": "components/features/properties/PropertyDeleteDialog.tsx",
+      "routes": [
+        "/properties",
+        "/properties/developments",
+        "/properties/developments/[id]",
+        "/properties/launches",
+        "/properties/ready",
+        "/properties/rentals",
+        "/properties/settings",
+        "/properties/third-party"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
       "file": "components/features/properties/PropertyFormScreen.tsx",
       "routes": [
         "/properties/[id]/edit",
@@ -62036,9 +62071,9 @@
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 90,
       "asChildPrimitiveControlsWithUnrecognizedChild": 2,
-      "ctasAll": 1632,
+      "ctasAll": 1633,
       "ctasByKind": {
-        "actionButton": 1458,
+        "actionButton": 1459,
         "external": 6,
         "internal": 33,
         "internalDynamic": 80,
@@ -62047,8 +62082,8 @@
       "forms": 54,
       "formsRouteReachable": 54,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1571,
-      "internalCtasRouteReachable": 1539,
+      "internalCtas": 1572,
+      "internalCtasRouteReachable": 1540,
       "overlays": 254,
       "overlaysByKind": {
         "alertDialog": 74,
@@ -62076,7 +62111,7 @@
     "protectedAccessChecksThreePersonas": 213,
     "renderableRouteViewportChecksDesktopAndMobile": 174,
     "routeReachableFormImplementations": 54,
-    "routeReachableInternalCtaImplementations": 1539,
+    "routeReachableInternalCtaImplementations": 1540,
     "routeReachableOverlayImplementations": 249,
     "routeReachableSupplementalOverlayAndTabControls": 292
   },

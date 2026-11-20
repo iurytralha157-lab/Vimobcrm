@@ -23,6 +23,7 @@ var (
 	ErrInvalidInput                     = errors.New("invalid property input")
 	ErrPropertyNotFound                 = errors.New("property not found")
 	ErrPropertyHasLinkedLeads           = errors.New("property has linked leads")
+	ErrPropertyDeleteImpactChanged      = errors.New("property deletion impact changed")
 	ErrPropertyHasDependencies          = errors.New("property has linked dependencies")
 	ErrPropertyLocationInUse            = errors.New("property location is in use")
 	ErrPropertyLocationIdentityConflict = errors.New("property location identity conflicts with an existing catalog entry")
@@ -60,11 +61,19 @@ type HistoryEvent struct {
 }
 
 type DeletePropertyInput struct {
-	ExpectedUpdatedAt string `json:"expected_updated_at"`
+	ExpectedUpdatedAt        string `json:"expected_updated_at"`
+	ExpectedLinkedLeadsCount *int64 `json:"expected_linked_leads_count"`
 }
 
 func (input DeletePropertyInput) Validate() error {
+	if input.ExpectedLinkedLeadsCount != nil && *input.ExpectedLinkedLeadsCount < 0 {
+		return fmt.Errorf("%w: expected_linked_leads_count must be non-negative", ErrInvalidInput)
+	}
 	return validateRequiredWorkspaceTimestamp(input.ExpectedUpdatedAt, "expected_updated_at")
+}
+
+type PropertyDeletionImpact struct {
+	LinkedLeadsCount int64 `json:"linked_leads_count"`
 }
 
 type propertyRequest map[string]any

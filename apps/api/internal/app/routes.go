@@ -760,6 +760,7 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	mux.Handle("POST /v1/properties/{id}/keys", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreateKey)))
 	mux.Handle("POST /v1/properties/{id}/keys/{keyId}/movements", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.MoveKey)))
 	mux.Handle("PATCH /v1/properties/{id}", withModuleAnyPermission("properties", []string{permissions.PropertyView, permissions.PropertyManage}, http.HandlerFunc(propertiesHandler.Update)))
+	mux.Handle("GET /v1/properties/{id}/deletion-impact", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.ShowDeletionImpact)))
 	mux.Handle("DELETE /v1/properties/{id}", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.Delete)))
 	mux.Handle("POST /v1/property-images", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.UploadImage)))
 	mux.Handle("GET /v1/property-captors/{id}", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.ShowPropertyCaptor)))

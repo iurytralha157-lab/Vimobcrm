@@ -110,7 +110,7 @@ export async function removeDemoProperties(organizationId: string) {
   for (const property of properties.filter((item) => item.is_demo)) {
     const { error: deleteError } = await propertiesAPI.deleteProperty(
       property.id,
-      property.updated_at,
+      { expected_updated_at: property.updated_at },
       organizationId,
     );
 

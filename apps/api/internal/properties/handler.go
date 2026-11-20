@@ -214,6 +214,23 @@ func (handler Handler) Update(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, map[string]Property{"data": property})
 }
 
+func (handler Handler) ShowDeletionImpact(w http.ResponseWriter, r *http.Request) {
+	setPropertyWorkspacePrivateHeaders(w)
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
+	}
+
+	impact, err := handler.repo.DeletionImpact(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writePropertyError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, map[string]PropertyDeletionImpact{"data": impact})
+}
+
 func (handler Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := tenant.FromContext(r.Context())
 	if !ok || tenantContext.OrganizationID == "" {
@@ -257,6 +274,8 @@ func writePropertyError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusNotFound, "property_not_found", "Property was not found.")
 	case errors.Is(err, ErrPropertyHasLinkedLeads):
 		httpserver.WriteError(w, r, http.StatusConflict, "property_has_linked_leads", "N\u00e3o \u00e9 poss\u00edvel excluir este im\u00f3vel porque h\u00e1 leads vinculados a ele. Desvincule o im\u00f3vel desses leads e tente novamente.")
+	case errors.Is(err, ErrPropertyDeleteImpactChanged):
+		httpserver.WriteError(w, r, http.StatusConflict, "property_delete_impact_changed", "Os vínculos deste imóvel mudaram. Confira a quantidade de leads e confirme a exclusão novamente.")
 	case errors.Is(err, ErrPropertyHasDependencies):
 		httpserver.WriteError(w, r, http.StatusConflict, "property_has_dependencies", "N\u00e3o \u00e9 poss\u00edvel excluir este im\u00f3vel porque existem registros vinculados. Remova os v\u00ednculos e tente novamente.")
 	case errors.Is(err, ErrPropertyLocationInUse):

@@ -146,9 +146,16 @@ test('desktop Escape outside the floating chat preserves its conversation and hi
   await expect(input).toHaveCount(0); await expect(search).toBeFocused();
   await page.keyboard.press('Escape');
   assert.equal(await page.evaluate(() => harness.ctx.state.activeConversation), null);
-  await expect(page.locator('#floating-whatsapp-chat')).toBeFocused();
+  const surface = page.locator('#floating-whatsapp-chat');
+  await expect(surface).toBeFocused();
+  await expect(surface.getByText('WhatsApp', { exact: true })).toHaveCSS('color', 'rgb(255, 255, 255)');
+  const headerColor = await surface.locator('.bg-vimob-accent-strong').evaluate(el => getComputedStyle(el).backgroundColor);
+  assert.match(headerColor, /^color\(srgb [^/]+\)$/, 'header color is opaque');
   await page.keyboard.press('Escape');
-  await expect(page.locator('#floating-whatsapp-chat')).toHaveCount(0);
+  await expect(surface).toHaveCount(0);
+  const launcher = page.getByRole('button', { name: 'Abrir chat do WhatsApp', exact: true });
+  await expect(launcher).toHaveCSS('background-color', headerColor);
+  await expect(launcher.locator('svg')).toHaveCSS('width', '28px');
 });
 
 test('Escape in an unrelated desktop modal does not navigate the floating chat', async t => {

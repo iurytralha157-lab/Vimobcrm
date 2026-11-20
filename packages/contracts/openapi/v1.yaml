@@ -4207,7 +4207,11 @@ paths:
           $ref: "#/components/responses/APIError"
     delete:
       summary: Delete a property in the current organization
-      description: Requires the last observed property revision to prevent deletion of a newer concurrent edit.
+      description: >-
+        Requires the last observed property revision. If leads are linked,
+        requires the count from deletion-impact to confirm unlinking them.
+        A changed count returns property_delete_impact_changed. The operation
+        removes the links and the property in one transaction, preserving the leads.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/PathId"
@@ -4220,11 +4224,46 @@ paths:
       responses:
         "204":
           description: Property deleted.
+        "400":
+          $ref: "#/components/responses/APIError"
         "403":
           $ref: "#/components/responses/APIError"
         "404":
           $ref: "#/components/responses/APIError"
         "409":
+          $ref: "#/components/responses/APIError"
+  /v1/properties/{id}/deletion-impact:
+    get:
+      summary: Count distinct leads linked to a property before deletion
+      description: Requires the same property management permission as deletion.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: Current number of linked leads in the organization.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/PropertyWorkspaceCacheControl"
+            Vary:
+              $ref: "#/components/headers/PropertyWorkspaceVary"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [linked_leads_count]
+                    properties:
+                      linked_leads_count:
+                        type: integer
+                        format: int64
+                        minimum: 0
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
           $ref: "#/components/responses/APIError"
   /v1/properties/{id}/workspace:
     get:
@@ -16897,6 +16936,11 @@ components:
           type: string
           format: date-time
           description: Version returned by the last property read.
+        expected_linked_leads_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Count confirmed by the caller. Required when the property has linked leads.
     PropertyCatalogItem:
       type: object
       required: [id, organization_id, name]

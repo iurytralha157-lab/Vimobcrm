@@ -277,6 +277,12 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return Lead{}, err
 	}
 
+	if input.InterestPropertyIDs.Set {
+		primary := optionalString(selectedLeadPropertyID(current, input), 36)
+		if err := lockNewLeadSecondaryPropertyInterests(ctx, tx, tenantContext.OrganizationID, primary, leadInterestPropertyIDs(current), input.InterestPropertyIDs.Value); err != nil {
+			return Lead{}, err
+		}
+	}
 	addRawAssignment("updated_at = now()")
 
 	query := `

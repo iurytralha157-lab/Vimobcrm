@@ -480,8 +480,13 @@ export const propertyUpdateInputSchema = z
 export const propertyDeleteInputSchema = z
   .object({
     expected_updated_at: z.string().trim().datetime({ offset: true }),
+    expected_linked_leads_count: nonNegativeIntegerSchema.optional(),
   })
   .strict();
+
+export const apiPropertyDeletionImpactResponseSchema = apiEnvelopeSchema(
+  z.object({ linked_leads_count: nonNegativeIntegerSchema }).strict(),
+);
 
 export const apiPropertySitePublicationSchema = z.object({
   public_visible: z.boolean().optional(),

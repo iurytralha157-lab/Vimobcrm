@@ -12,11 +12,13 @@ import {
   propertiesAPI,
   type PropertyHistoryEvent,
   type PropertyCreateInput as PropertyAPICreateInput,
+  type PropertyDeleteInput as PropertyAPIDeleteInput,
   type PropertyUpdateInput as PropertyAPIUpdateInput,
   type PropertyWithCapabilities,
 } from "@/lib/api/properties";
-import { stringifyErrorMessage as getErrorMessage } from "@/lib/api/vimob-error";
+import { stringifyErrorMessage as getErrorMessage, VimobAPIError } from "@/lib/api/vimob-error";
 import type { VimobAPIRequestIntent } from "@/lib/api/vimob-client";
+import { capturePropertyMutationIntent } from "@/lib/api/property-mutation-intent";
 import {
   enforceClientActionRateLimit,
   getClientRateLimitMessage,
@@ -55,9 +57,9 @@ type PropertyUpdateInput = PropertyAPIUpdateInput & {
   expected_updated_at: string;
   requestIntent?: VimobAPIRequestIntent;
 };
-type PropertyDeleteInput = {
+type PropertyDeleteInput = PropertyAPIDeleteInput & {
   id: string;
-  expected_updated_at: string;
+  expected_linked_leads_count: number;
 };
 
 export interface PropertyFilters {
@@ -496,7 +498,7 @@ export function useDeleteProperty() {
   const { user } = useAuth();
 
   return usePropertyMutation({
-    mutationFn: async ({ id, expected_updated_at }: PropertyDeleteInput, scope) => {
+    mutationFn: async ({ id, ...input }: PropertyDeleteInput, scope) => {
       const organizationId = scope.organizationId;
       if (!user?.id) throw new Error("Usuário não autenticado");
       if (!organizationId) throw new Error("Usuário não possui organização");
@@ -508,20 +510,32 @@ export function useDeleteProperty() {
 
       const { error } = await propertiesAPI.deleteProperty(
         id,
-        expected_updated_at,
+        input,
         organizationId,
         scope.requestIntent,
       );
       if (error) throw error;
     },
-    onSuccess: (_data, _variables, scope) => {
+    onSuccess: (_data, variables, scope) => {
       const organizationId = scope.organizationId;
       queryClient.invalidateQueries({ queryKey: ["properties", organizationId] });
       queryClient.invalidateQueries({ queryKey: ["properties-infinite", organizationId] });
+      if (variables.expected_linked_leads_count > 0) {
+        for (const key of ["leads", "lead", "stages-with-leads", "conversation-lead-detail"]) {
+          void queryClient.invalidateQueries({ queryKey: [key, organizationId] });
+        }
+      }
       if (scope.isCurrent()) toast.success("Imóvel excluído!");
     },
     onError: async (error, variables, scope) => {
       const organizationId = scope.organizationId;
+      if (error instanceof VimobAPIError && error.code === "property_delete_impact_changed") {
+        if (scope.isCurrent()) toast.error("Os vínculos deste imóvel mudaram. Confira a quantidade e confirme novamente.");
+        await queryClient.invalidateQueries({
+          queryKey: ["property-deletion-impact", organizationId, variables.id],
+        });
+        return;
+      }
       if (isPropertyWorkspaceConflict(error)) {
         await refreshPropertyAfterConflict(
           queryClient,
@@ -538,5 +552,29 @@ export function useDeleteProperty() {
       }
       if (scope.isCurrent()) toast.error("Erro ao excluir imóvel: " + getErrorMessage(error));
     },
+  });
+}
+
+export function usePropertyDeletionImpact(property: Pick<Property, "id" | "organization_id">) {
+  const { activeOrganization, user, tenantContext } = useAuth();
+  const accessSignature = useTenantQueryAccessSignature();
+  const { id, organization_id: organizationId } = property;
+  const actorId = user?.id;
+
+  return useQuery({
+    queryKey: ["property-deletion-impact", organizationId, id, accessSignature],
+    queryFn: async ({ signal }) => {
+      const intent = capturePropertyMutationIntent({ expectedUserId: actorId ?? null, signal });
+      const impact = await propertiesAPI.getPropertyDeletionImpact(id, organizationId, intent);
+      return impact.linked_leads_count;
+    },
+    enabled: Boolean(actorId && tenantContext?.userId === actorId
+      && activeOrganization.status === "ready"
+      && activeOrganization.organizationId === organizationId
+      && tenantContext?.organizationId === organizationId),
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: "always",
+    retry: false,
   });
 }

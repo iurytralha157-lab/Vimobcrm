@@ -163,6 +163,9 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 	if err := lockLeadCreationProperty(ctx, tx, tenantContext, input, creation); err != nil {
 		return CreateResult{}, err
 	}
+	if err := lockNewLeadSecondaryPropertyInterests(ctx, tx, tenantContext.OrganizationID, input.PropertyID, nil, input.InterestPropertyIDs); err != nil {
+		return CreateResult{}, err
+	}
 
 	leadMetadata := make(LeadMetadata, len(input.Metadata)+1)
 	for key, value := range input.Metadata {

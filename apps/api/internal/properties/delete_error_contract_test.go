@@ -106,3 +106,20 @@ func TestPropertyDependencyForeignKeyViolationUsesGenericConflictContract(t *tes
 		t.Fatalf("error code = %q, want property_has_dependencies", payload.Error.Code)
 	}
 }
+
+func TestChangedDeletionImpactUsesConflictContract(t *testing.T) {
+	request := httptest.NewRequest(http.MethodDelete, "/v1/properties/example", nil)
+	response := httptest.NewRecorder()
+	writePropertyError(response, request, ErrPropertyDeleteImpactChanged)
+	var payload struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusConflict || payload.Error.Code != "property_delete_impact_changed" {
+		t.Fatalf("deletion impact change contract = %d %q", response.Code, payload.Error.Code)
+	}
+}

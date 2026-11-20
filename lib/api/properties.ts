@@ -2,6 +2,7 @@ import type { z } from 'zod'
 import type { Tables } from '@/lib/supabase/types'
 import {
   apiPropertyHistoryResponseSchema,
+  apiPropertyDeletionImpactResponseSchema,
   apiPropertyCreateResponseSchema,
   apiPropertyManagedTermsSchema,
   apiPortfolioSettingsResponseSchema,
@@ -233,12 +234,16 @@ export const propertiesAPI = {
     }
   },
 
-  async deleteProperty(propertyId: string, expectedUpdatedAt: string, organizationId: string, intent?: VimobAPIRequestIntent) {
-    const body = parseDomainInput(
-      propertyDeleteInputSchema,
-      { expected_updated_at: expectedUpdatedAt },
-      'properties.delete',
-    )
+  async getPropertyDeletionImpact(propertyId: string, organizationId: string, intent: VimobAPIRequestIntent) {
+    const response = await vimobAPIRequest<unknown>(`/v1/properties/${propertyId}/deletion-impact`, {
+      ...intent,
+      organizationId,
+    })
+    return validateDomainResponse(apiPropertyDeletionImpactResponseSchema, response, 'properties.deletion-impact').data
+  },
+
+  async deleteProperty(propertyId: string, input: PropertyDeleteInput, organizationId: string, intent?: VimobAPIRequestIntent) {
+    const body = parseDomainInput(propertyDeleteInputSchema, input, 'properties.delete')
     await vimobAPIRequest<null>(`/v1/properties/${propertyId}`, {
       ...capturePropertyMutationIntent(intent),
       method: 'DELETE',

@@ -1863,14 +1863,14 @@ export function FloatingChat() {
     if (!activeConversation) {
       return (
         <div className={cn(
-          "relative flex shrink-0 items-center justify-between",
+          "relative flex shrink-0 items-center justify-between bg-vimob-accent-strong text-white",
           mobile
-            ? "border-b border-[var(--app-border)] bg-primary/50 px-4 py-3 text-primary-foreground"
-            : "relative z-10 h-12 bg-primary/50 px-3.5 text-primary-foreground shadow-[0_2px_8px_rgba(0,0,0,0.08)]"
+            ? "px-4 py-3"
+            : "z-10 h-12 px-3.5 shadow-[0_2px_8px_rgba(0,0,0,0.08)]"
         )} style={{ zIndex: isStartingConversation ? 60 : undefined }}>
           <div className="flex items-center gap-2">
             <MessageCircle className="h-4 w-4" />
-            <span className="text-[length:var(--app-font-size-caption)] font-light">WhatsApp</span>
+            <span className="text-[length:var(--app-font-size-caption)] font-semibold">WhatsApp</span>
             {unreadCount > 0 && (
               <Badge variant="secondary" className="flex h-5 min-w-5 items-center justify-center px-1.5 text-[10px]">
                 {unreadCount > 99 ? "99+" : unreadCount}
@@ -1884,7 +1884,7 @@ export function FloatingChat() {
               size="icon"
               aria-label="Fechar chat do WhatsApp"
               className={cn(
-                "rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text-primary)] [&_svg]:size-3.5",
+                "rounded-[6px] bg-black/15 text-white hover:bg-black/25 hover:text-white [&_svg]:size-3.5",
                 mobile
                   ? "h-11 w-11"
                   : "h-8 w-8"
