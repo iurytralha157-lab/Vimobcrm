@@ -303,20 +303,29 @@ func (repo Repository) superviseSessionLocked(ctx context.Context, session Sessi
 		)
 	}
 
-	statusResult, err := repo.invokeEvolutionSupervisorRead(ctx, "instance.status", map[string]any{
+	statusPayload := map[string]any{
 		"session_id":  session.ID,
 		"instance_id": instanceKey,
 		"token":       token,
-	})
+	}
+	confirmHealthLoss := repo.sessionHealthNotificationWriter != nil && sessionHealthConfirmationEligible(session)
+	observation, err := observeSessionStatus(ctx, confirmHealthLoss, func(ctx context.Context) (map[string]any, error) {
+		return repo.invokeEvolutionSupervisorRead(ctx, "instance.status", statusPayload)
+	}, waitForSessionHealthRecheck)
 	if err != nil {
 		return errors.Join(err, repo.recordSessionProbeFailure(ctx, session, claimToken, err, 0))
 	}
-	observedStatus, authoritative, instanceMissing := evolutionConnectionObservation(statusResult)
+	statusResult := observation.result
+	observedStatus, authoritative, instanceMissing := observation.status, observation.authoritative, observation.missing
 	if !authoritative {
 		observationErr := fmt.Errorf("%w: Evolution Go connection status is unavailable", ErrProviderOutcomeUnknown)
 		return errors.Join(observationErr, repo.recordSessionProbeFailure(ctx, session, claimToken, observationErr, 0))
 	}
-	applied, err := repo.updateSessionStatusFromProviderIfCurrent(ctx, session, observedStatus, statusResult, claimToken, !instanceMissing)
+	if instanceMissing && confirmHealthLoss {
+		observationErr := fmt.Errorf("%w: Evolution Go instance was not found during health observation", ErrProviderOutcomeUnknown)
+		return errors.Join(observationErr, repo.recordSessionProbeFailure(ctx, session, claimToken, observationErr, whatsappSessionSupervisorMissingBackoff))
+	}
+	applied, err := repo.updateSessionStatusFromProviderIfCurrent(ctx, session, observedStatus, statusResult, claimToken, !instanceMissing, observation.confirmedLoss)
 	if err != nil {
 		return err
 	}
@@ -390,7 +399,7 @@ func (repo Repository) superviseSessionLocked(ctx context.Context, session Sessi
 			verificationErr := fmt.Errorf("%w: Evolution Go post-recovery status is unavailable", ErrProviderOutcomeUnknown)
 			return errors.Join(verificationErr, repo.recordSessionRecoveryFailure(ctx, session, now))
 		}
-		applied, updateErr := repo.updateSessionStatusFromProviderIfCurrent(ctx, session, status, statusResult, claimToken, !missing)
+		applied, updateErr := repo.updateSessionStatusFromProviderIfCurrent(ctx, session, status, statusResult, claimToken, !missing, false)
 		if updateErr != nil {
 			return updateErr
 		}
@@ -576,7 +585,7 @@ func (repo Repository) recoverSession(ctx context.Context, session Session, inst
 	if latestStatus != "disconnected" {
 		// The provider's own reconnect completed during the grace/recheck window.
 		// Do not restart a client that has just become connected or QR-ready.
-		applied, err := repo.updateSessionStatusFromProviderIfCurrent(ctx, session, latestStatus, latestStatusResult, claimToken, true)
+		applied, err := repo.updateSessionStatusFromProviderIfCurrent(ctx, session, latestStatus, latestStatusResult, claimToken, true, false)
 		if err != nil {
 			return evolutionRecoveryWaiting, err
 		}
@@ -1223,10 +1232,13 @@ func (repo Repository) updateSessionStatusFromProviderIfCurrent(
 	result map[string]any,
 	claimToken string,
 	clearProbeFailure bool,
+	confirmedHealthLoss bool,
 ) (bool, error) {
 	if normalizedStatus != "connected" && normalizedStatus != "qr_ready" && normalizedStatus != "disconnected" {
 		return false, nil
 	}
+	notifyHealthLoss := confirmedHealthLoss && normalizedStatus == "disconnected" && claimToken != "" &&
+		repo.sessionHealthNotificationWriter != nil && sessionHealthConfirmationEligible(session)
 
 	rawData := firstMap(result, "data.data", "data.instance", "data.session", "data", "instance", "session")
 	wuid := firstString(rawData, "jid", "Jid", "wuid", "ownerJid", "phone", "number", "Name", "name")
@@ -1274,8 +1286,21 @@ func (repo Repository) updateSessionStatusFromProviderIfCurrent(
 		        and supervisor_state.lease_expires_at > now()
 		    )
 		  )
+		  and (
+		    not $9::boolean
+		    or (
+		      updated_at is not distinct from $10::timestamptz
+		      and owner_user_id::text = $11::text
+		      and provider = $12::text
+		      and instance_name = $13::text
+		      and instance_id::text is not distinct from $14::text
+		      and lower(coalesce(advanced_settings->>'auto_reconnect_enabled', 'true')) <> 'false'
+		      and lower(coalesce(advanced_settings->>'auto_reconnect_blocked_reason', '')) <> 'user_logged_out'
+		    )
+		  )
 		for update
-	`, session.OrganizationID, session.ID, strings.TrimSpace(session.Status), expectedWebhookAt, expectedWebhookRank, expectedWebhookKey, claimToken, normalizedStatus).Scan(&currentPhone)
+	`, session.OrganizationID, session.ID, strings.TrimSpace(session.Status), expectedWebhookAt, expectedWebhookRank, expectedWebhookKey,
+		claimToken, normalizedStatus, notifyHealthLoss, session.UpdatedAt, session.OwnerUserID, session.Provider, session.InstanceName, session.InstanceID).Scan(&currentPhone)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if claimToken != "" {
 			if _, err := tx.Exec(ctx, `
@@ -1357,6 +1382,11 @@ func (repo Repository) updateSessionStatusFromProviderIfCurrent(
 			where session_id = $1::uuid
 			  and organization_id = $2::uuid
 		`, session.ID, session.OrganizationID, time.UnixMilli(observedAtMillis).UTC(), normalizedStatus); err != nil {
+			return false, err
+		}
+	}
+	if notifyHealthLoss {
+		if err := repo.recordConfirmedSessionDisconnect(ctx, tx, session); err != nil {
 			return false, err
 		}
 	}

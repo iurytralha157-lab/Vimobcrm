@@ -105,12 +105,12 @@ func buildDispatchNotificationContent(eventKey string, request DispatchNotificat
 		if content == "" {
 			content = "Sua pontuacao foi atualizada."
 		}
-	case "whatsapp_disconnected":
+	case "whatsapp_disconnected", "whatsapp_disconnected_admin":
 		if title == "" {
 			title = "WhatsApp desconectado"
 		}
 		if content == "" {
-			sessionName := firstNotificationText(stringFromMap(variables, "session_name"), stringFromMap(variables, "display_name"), "Sessao")
+			sessionName := firstNotificationText(stringFromMap(variables, "session_name"), stringFromMap(variables, "display_name"), stringFromMap(variables, "nome_sessao"), "Sessao")
 			content = sessionName + " foi desconectada."
 		}
 	case "schedule_reminder", "appointment_reminder":
@@ -159,7 +159,7 @@ func notificationTypeForEvent(eventKey string) string {
 		return "gamification"
 	case "schedule_reminder", "appointment_reminder", "appointment_outcome_pending":
 		return "schedule"
-	case "whatsapp_disconnected":
+	case "whatsapp_disconnected", "whatsapp_disconnected_admin":
 		return "whatsapp"
 	case "test_push":
 		return "test"

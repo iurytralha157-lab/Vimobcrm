@@ -118,6 +118,7 @@ type Repository struct {
 
 	liveBoundDeadBacklogBypassEnabled bool
 	privateCollisionCaptureEnabled    bool
+	sessionHealthNotificationWriter   SessionHealthNotificationWriter
 }
 
 type scanner interface {

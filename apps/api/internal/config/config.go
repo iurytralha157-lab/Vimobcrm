@@ -23,6 +23,7 @@ import (
 type Config struct {
 	Environment              string
 	BackgroundWorkersEnabled bool
+	OperationsChecksToken    string
 	StageInactivityEnabled   bool
 	LogLevel                 slog.Level
 	HTTP                     HTTPConfig
@@ -207,6 +208,7 @@ type WhatsAppConfig struct {
 	BacklogRecoveryWindowUTC       string
 	BacklogRecoveryBatch           int
 	SessionSupervisorEnabled       bool
+	SessionHealthNotifications     bool
 	SessionSupervisorInitialDelay  time.Duration
 	SessionSupervisorInterval      time.Duration
 	SessionSupervisorBatch         int
@@ -227,6 +229,7 @@ func Load() (Config, error) {
 	cfg := Config{
 		Environment:              env,
 		BackgroundWorkersEnabled: loadBackgroundWorkersEnabled(),
+		OperationsChecksToken:    strings.TrimSpace(os.Getenv("OPERATIONS_CHECKS_COMMAND_TOKEN")),
 		StageInactivityEnabled:   parseBool("STAGE_INACTIVITY_WORKER_ENABLED", false),
 		LogLevel:                 parseLogLevel(getEnv("API_LOG_LEVEL", "info")),
 		HTTP: HTTPConfig{
@@ -350,6 +353,7 @@ func Load() (Config, error) {
 			BacklogRecoveryBatch:           int(parseInt("WHATSAPP_BACKLOG_RECOVERY_BATCH", 40)),
 			LegacyNativeCompatEnabled:      parseBool("WHATSAPP_LEGACY_NATIVE_COMPAT_ENABLED", false),
 			SessionSupervisorEnabled:       parseBool("WHATSAPP_SESSION_SUPERVISOR_ENABLED", true),
+			SessionHealthNotifications:     parseBool("WHATSAPP_SESSION_HEALTH_NOTIFICATIONS_ENABLED", false),
 			SessionSupervisorInitialDelay:  parseDuration("WHATSAPP_SESSION_SUPERVISOR_INITIAL_DELAY", 30*time.Second),
 			SessionSupervisorInterval:      parseDuration("WHATSAPP_SESSION_SUPERVISOR_INTERVAL", time.Minute),
 			SessionSupervisorBatch:         int(parseInt("WHATSAPP_SESSION_SUPERVISOR_BATCH", 50)),
@@ -622,6 +626,14 @@ func (cfg Config) Validate() error {
 	}
 	if err := validateSessionIDAllowlist("WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS", cfg.WhatsApp.SessionSupervisorRecoveryIDs); err != nil {
 		validationErrors = append(validationErrors, err)
+	}
+	if cfg.WhatsApp.SessionHealthNotifications && !cfg.WhatsApp.SessionSupervisorEnabled {
+		validationErrors = append(validationErrors, errors.New("WHATSAPP_SESSION_HEALTH_NOTIFICATIONS_ENABLED requires WHATSAPP_SESSION_SUPERVISOR_ENABLED"))
+	}
+	if token := cfg.OperationsChecksToken; token != "" && (len(token) < 32 || len(token) > 256 || strings.IndexFunc(token, func(r rune) bool {
+		return r < '!' || r > '~'
+	}) >= 0) {
+		validationErrors = append(validationErrors, errors.New("OPERATIONS_CHECKS_COMMAND_TOKEN must contain 32 to 256 printable non-whitespace ASCII bytes"))
 	}
 	if cfg.WhatsApp.SessionSupervisorEnabled && (cfg.WhatsApp.SessionSupervisorBatch < 1 || cfg.WhatsApp.SessionSupervisorBatch > 100) {
 		validationErrors = append(validationErrors, errors.New("WHATSAPP_SESSION_SUPERVISOR_BATCH must be between 1 and 100"))

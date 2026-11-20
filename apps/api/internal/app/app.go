@@ -390,7 +390,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		})
 	})
 	automationsHandler := automations.NewHandler(automationsRepository)
-	whatsappHandler := whatsapp.NewHandler(whatsapp.NewRepository(postgres, gamificationRepository, whatsapp.StorageConfig{
+	whatsappRepository := whatsapp.NewRepository(postgres, gamificationRepository, whatsapp.StorageConfig{
 		WhatsAppPostFormFollowUpGuardEnabled: cfg.WhatsApp.PostFormFollowUpGuardEnabled,
 		LegacyNativeCompatEnabled:            cfg.WhatsApp.LegacyNativeCompatEnabled,
 		PrivateCollisionCaptureEnabled:       cfg.WhatsApp.PrivateCollisionCaptureEnabled,
@@ -406,7 +406,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			WebhookProcessorMode:     cfg.EvolutionGo.WebhookProcessorMode,
 			WebhookRolloutSessionIDs: cfg.EvolutionGo.WebhookRolloutSessionIDs,
 		},
-	}, realtimeHub)).WithAutoReply(aiService, cfg.AI.AutoReplyToken).WithWorkerConfig(whatsapp.WorkerConfig{
+	}, realtimeHub)
+	if cfg.BackgroundWorkersEnabled && cfg.WhatsApp.SessionHealthNotifications {
+		whatsappRepository = whatsappRepository.WithSessionHealthNotifications(leadsRepository.EnqueueSessionHealthNotification)
+	}
+	whatsappHandler := whatsapp.NewHandler(whatsappRepository).WithAutoReply(aiService, cfg.AI.AutoReplyToken).WithWorkerConfig(whatsapp.WorkerConfig{
 		AIWorkerEnabled:                cfg.WhatsApp.AIWorkerEnabled,
 		AIWorkerInterval:               cfg.WhatsApp.AIWorkerInterval,
 		AIFollowUpWorkerEnabled:        cfg.WhatsApp.AIFollowUpWorkerEnabled,
@@ -543,6 +547,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		leadsHandler:             leadsHandler,
 		automationStageHandler:   leads.NewAutomationStageCommandHandler(leadsRepository, tenantRepository, cfg.Automations.CommandToken),
 		automationQueueHandler:   leads.NewAutomationDistributionCommandHandler(leadsRepository, tenantRepository, cfg.Automations.CommandToken),
+		operationsChecks:         newOperationsChecksHandler(leadsRepository, cfg.OperationsChecksToken, cfg.BackgroundWorkersEnabled, cfg.HTTP.WriteTimeout),
 		marketingHandler:         marketingHandler,
 		meHandler:                meHandler,
 		metaHandler:              metaHandler,

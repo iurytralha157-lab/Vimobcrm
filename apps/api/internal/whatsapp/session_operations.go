@@ -309,7 +309,7 @@ func (repo Repository) GetConnectionStatus(ctx context.Context, tenantContext te
 	return reconcileSessionConnectionObservation(
 		connectionStatusResponse(normalizedStatus, instanceMissing, wuid),
 		func() (bool, error) {
-			return repo.updateSessionStatusFromProviderIfCurrent(ctx, session, normalizedStatus, result, "", true)
+			return repo.updateSessionStatusFromProviderIfCurrent(ctx, session, normalizedStatus, result, "", true, false)
 		},
 		func() (Session, error) { return repo.GetSession(ctx, tenantContext, session.ID) },
 	)

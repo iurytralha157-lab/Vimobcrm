@@ -65,6 +65,7 @@ type routeDependencies struct {
 	leadsHandler             leads.Handler
 	automationStageHandler   leads.AutomationStageCommandHandler
 	automationQueueHandler   leads.AutomationDistributionCommandHandler
+	operationsChecks         operationsChecksHandler
 	marketingHandler         *marketing.Handler
 	meHandler                me.Handler
 	metaHandler              meta.Handler
@@ -213,6 +214,8 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	mux.HandleFunc("POST /v1/internal/whatsapp/auto-reply", whatsappHandler.AutoReply)
 	mux.Handle("POST /v1/internal/automations/stage-command", dependencies.automationStageHandler)
 	mux.Handle("POST /v1/internal/automations/distribution-command", dependencies.automationQueueHandler)
+	mux.HandleFunc("POST /v1/internal/operations/sla-check", dependencies.operationsChecks.sla)
+	mux.HandleFunc("POST /v1/internal/operations/pool-check", dependencies.operationsChecks.pool)
 	mux.Handle("GET /v1/me", withActiveAuthTenant(http.HandlerFunc(meHandler.Show)))
 	mux.Handle("GET /v1/me/account-status", withActiveAuth(http.HandlerFunc(meHandler.ShowAccountStatus)))
 	mux.Handle("GET /v1/me/profile", withActiveAuthTenant(http.HandlerFunc(meHandler.ShowProfile)))
