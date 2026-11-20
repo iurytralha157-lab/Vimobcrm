@@ -37,10 +37,10 @@ export function getOwnWhatsAppStartNotice({
     session.provider !== "evolution"
   ).map((session) => session.id);
 
+  const currentSession = sessions.find(session => session.id === conversation.session_id);
   const currentRouteAvailable = !getWhatsAppMessageInputState(conversation, null, sessions, currentUserId).disabled;
   if (currentRouteAvailable) {
     if (!conversation.id) return null;
-    const currentSession = sessions.find(session => session.id === conversation.session_id);
     if (attendanceMissing && conversation.lead?.assignee?.id === currentUserId
       && currentSession?.provider === "evolution_go" && ownConnectedSessionIds.includes(currentSession.id)) {
       return { kind: "start", ownConnectedSessionIds: [currentSession.id], preserveComposer: true, resumeCapture: true };
@@ -53,6 +53,7 @@ export function getOwnWhatsAppStartNotice({
   }
 
   if (ownConnectedSessionIds.length === 0) {
+    if (conversation.id && currentSession?.status === "connected" && currentSession.provider !== "evolution") return null;
     return { kind: "connect", ownConnectedSessionIds };
   }
 

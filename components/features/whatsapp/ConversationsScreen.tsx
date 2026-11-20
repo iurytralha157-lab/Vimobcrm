@@ -907,8 +907,13 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   }, [sendPreviewConversations, metaConversations, activePlatform, trimmedSearchTerm, onlyLeads, withoutLeadOnly, pendingReplyOnly]);
 
   const whatsappMessageInputState = useMemo(
-    () => getWhatsAppMessageInputState(selectedConversation, selectedSessionId, sessions, currentUserId),
-    [selectedConversation, selectedSessionId, sessions, currentUserId],
+    () => getWhatsAppMessageInputState(
+      selectedConversation,
+      selectedConversation?.id && selectedLeadId && !selectedConversation.is_group ? null : selectedSessionId,
+      sessions,
+      currentUserId,
+    ),
+    [selectedConversation, selectedLeadId, selectedSessionId, sessions, currentUserId],
   );
   const selectedAttendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
     if (

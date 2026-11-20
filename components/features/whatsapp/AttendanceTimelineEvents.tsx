@@ -31,7 +31,7 @@ export function AttendanceTimelineEvents({ entries = [] }: AttendanceTimelineEve
               <LogIn className="h-3 w-3 shrink-0 text-primary" aria-hidden="true" />
               <span className="truncate">
                 <strong className="font-medium text-[var(--app-text-primary)]">{formatWhatsAppPersonName(entry.userName)}</strong>
-                {entry.markerKind === "started" ? " iniciou uma conversa" : " entrou no atendimento"}
+                {entry.markerKind === "started" ? " iniciou uma conversa" : " entrou na conversa"}
               </span>
               <time className="shrink-0 text-[var(--app-text-tertiary)]" dateTime={entry.markerAt}>
                 {attendanceDateFormatter.format(new Date(entry.markerAt))}

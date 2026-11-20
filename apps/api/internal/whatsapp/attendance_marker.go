@@ -20,7 +20,7 @@ func confirmHumanWhatsAppAttendance(
 	organizationID, messageRowID string,
 ) error {
 	var entryID, leadID, conversationID, sessionID, bindingID, userID string
-	var actorName, entrySource string
+	var actorName, entrySource, handoffID string
 	var ingressSequenceCutoff int64
 	var acceptedAt time.Time
 	var priorConversation bool
@@ -31,6 +31,7 @@ func confirmHumanWhatsAppAttendance(
 		       entry.actor_name_snapshot, entry.entry_source,
 		       entry.ingress_sequence_cutoff,
 		       coalesce(outbox.sent_at, clock_timestamp()),
+		       coalesce(outbox.payload->>'attendance_handoff_id', ''),
 		       exists (
 		         select 1
 		         from public.whatsapp_messages as previous
@@ -82,13 +83,16 @@ func confirmHumanWhatsAppAttendance(
 	`, organizationID, messageRowID).Scan(
 		&entryID, &leadID, &conversationID, &sessionID, &bindingID,
 		&userID, &actorName, &entrySource, &ingressSequenceCutoff,
-		&acceptedAt, &priorConversation,
+		&acceptedAt, &handoffID, &priorConversation,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
+	}
+	if handoffID != "" {
+		return confirmWhatsAppHandoff(ctx, tx, handoffID, organizationID, leadID, userID, entryID, messageRowID, acceptedAt)
 	}
 
 	markerKind := "started"

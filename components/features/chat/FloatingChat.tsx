@@ -743,9 +743,10 @@ export function FloatingChat() {
   const activeLeadAutomations = useLeadActiveAutomationExecutions(activeConversationLeadId, { enabled: canStartAutomations && shouldSyncFloatingChat });
   const cancelLeadExecutions = useCancelLeadExecutions();
   const isReadOnlyMode = !canMutateActiveConversation;
+  // A persisted lead conversation sends on its own session even if the inbox was filtered to another number.
   const whatsappMessageInputState = getWhatsAppMessageInputState(
     activeConversation,
-    selectedSessionId,
+    activeConversation?.id && activeConversationLeadId && !activeConversation.is_group ? null : selectedSessionId,
     sessions,
     currentUserId,
   );
@@ -1779,7 +1780,8 @@ export function FloatingChat() {
     currentUserId, canOperate: canOperateWhatsApp && !localReadOnly && !sessionsFailed, loadingSessions,
     attendanceMissing: attendanceGate.attendance?.joined === false });
   const pendingConnection = Boolean(pendingPhone && !activeConversation && originalOrganization && canOperateWhatsApp
-    && !loadingSessions && !sessions?.some(session => eligibleLeadStartSession(session, currentUserId, pendingLeadId, originalOrganization)));
+    && !loadingSessions && !sessionsFailed
+    && sessions?.every(session => !eligibleLeadStartSession(session, currentUserId, pendingLeadId, originalOrganization)));
   const activeConversationFilterCount = [
     selectedSessionId !== "all",
     hideGroups,
@@ -2064,7 +2066,9 @@ export function FloatingChat() {
   const DisconnectedState = () => <div className="flex-1 flex flex-col items-center justify-center p-6 text-center bg-[var(--app-surface-solid)]">
       <Phone className="h-12 w-12 text-muted-foreground mb-4" />
       {pendingPhone && <p className="mb-2 max-w-full truncate text-[12px] font-light">{pendingLeadName || pendingPhone}</p>}
-      <p className="text-[14px] font-light text-muted-foreground mb-2">Nenhum WhatsApp conectado</p>
+      <p className="text-[14px] font-light text-muted-foreground mb-2">{pendingConnection && sessions?.some(session => session.status === "connected" && session.provider !== "evolution")
+        ? "Nenhum WhatsApp disponível para enviar neste atendimento"
+        : "Nenhum WhatsApp conectado"}</p>
       {originalOrganization && canOperateWhatsApp ? <OwnWhatsAppStartNotice
         notice={{ kind: "connect", ownConnectedSessionIds: [] }}
         unavailableReason={localReadOnly ? "read_only" : sessionsFailed ? "sessions_failed" : undefined}

@@ -301,6 +301,13 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 	if !input.InternalAutomation && session.OwnerUserID != tenantContext.UserID && !leadAssigned {
 		return SendMessageResponse{}, ErrSessionAccessRevoked
 	}
+	handoffID := ""
+	if leadAssigned && !input.InternalAutomation {
+		handoffID, err = latestAssignedWhatsAppHandoff(ctx, tx, tenantContext.OrganizationID, lockedLeadID, tenantContext.UserID)
+		if err != nil {
+			return SendMessageResponse{}, err
+		}
+	}
 	if lockedSessionID != session.ID || lockedRemoteJID != conversation.RemoteJID || lockedIsGroup != conversation.IsGroup {
 		return SendMessageResponse{}, fmt.Errorf("%w: identidade da conversa mudou; recarregue antes de enviar", ErrInvalidReference)
 	}
@@ -511,6 +518,7 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 		"action":                  action,
 		"body":                    body,
 		"attendance_send_origin":  attendanceSendOrigin(input.InternalAutomation),
+		"attendance_handoff_id":   handoffID,
 		"session_access_grant_id": accessGrantID,
 	})
 	if _, err := tx.Exec(ctx, `

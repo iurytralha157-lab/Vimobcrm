@@ -41,6 +41,7 @@ import {
   DEFAULT_NEGATIVE_REPLY_KEYWORDS,
   DEFAULT_POSITIVE_REPLY_KEYWORDS,
 } from '@/lib/automations';
+import { canSelectAutomationSender } from '@/components/features/automations/flow-editor-compatibility';
 
 interface NodeConfigPanelProps {
   selectedNode: Node;
@@ -61,7 +62,7 @@ interface NodeConfigPanelProps {
   setStageId?: (id: string) => void;
   position?: { x: number; y: number };
   // Start node extras
-  sessions?: Array<{ id: string; instance_name: string; display_name?: string | null; status: string }>;
+  sessions?: Array<{ id: string; instance_name: string; display_name?: string | null; status: string; can_send?: boolean }>;
   whatsappSessionId?: string;
   setWhatsAppSessionId?: (id: string) => void;
   users?: Array<{ id: string; name: string | null; email: string }>;
@@ -187,6 +188,9 @@ export function NodeConfigPanel({
   const connectedSessions = sessions?.filter(s => s.status === 'connected') || [];
   const inboundSessionId = typeof selectedNode.data.session_id === 'string' ? selectedNode.data.session_id : '';
   const storedInboundSession = sessions?.find(session => session.id === inboundSessionId);
+  const outboundSessions = sessions?.filter(canSelectAutomationSender) || [];
+  const storedOutboundSession = sessions?.find(session => session.id === whatsappSessionId);
+  const outboundSessionUnavailable = Boolean(whatsappSessionId && !outboundSessions.some(session => session.id === whatsappSessionId));
 
   return (
     <div
@@ -403,15 +407,25 @@ export function NodeConfigPanel({
                 </div>
               )}
 
-              {connectedSessions.length > 0 && setWhatsAppSessionId && (
+              {setWhatsAppSessionId && (
                 <div className="space-y-1.5 border-t border-[var(--app-border)] pt-2">
                   <Label htmlFor="automation-outbound-whatsapp-session" className="text-xs">Sessão para enviar mensagens</Label>
                   <Select value={whatsappSessionId || ''} onValueChange={setWhatsAppSessionId}>
                     <SelectTrigger id="automation-outbound-whatsapp-session" className="h-9"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                    <SelectContent className="z-[200]">{connectedSessions.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>{s.display_name || s.instance_name}</SelectItem>
-                    ))}</SelectContent>
+                    <SelectContent className="z-[200]">
+                      {outboundSessionUnavailable && whatsappSessionId && (
+                        <SelectItem value={whatsappSessionId} disabled>
+                          {storedOutboundSession?.display_name || storedOutboundSession?.instance_name || 'Sessão salva'} — indisponível para envio
+                        </SelectItem>
+                      )}
+                      {outboundSessions.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>{s.display_name || s.instance_name}</SelectItem>
+                      ))}
+                    </SelectContent>
                   </Select>
+                  {outboundSessions.length === 0 && (
+                    <p className="text-xs text-muted-foreground">Nenhuma sessão conectada com permissão de envio disponível.</p>
+                  )}
                 </div>
               )}
 

@@ -337,6 +337,12 @@ func loadAttendanceResponse(
 	if err := rows.Err(); err != nil {
 		return AttendanceResponse{}, err
 	}
+	rows.Close()
+	handoffs, err := loadWhatsAppHandoffMarkers(ctx, tx, tenantContext.OrganizationID, scope)
+	if err != nil {
+		return AttendanceResponse{}, err
+	}
+	response.Entries = append(response.Entries, handoffs...)
 	return response, nil
 }
 

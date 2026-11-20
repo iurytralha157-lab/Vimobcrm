@@ -173,6 +173,20 @@ Valide a admissão e a repetição idempotente em banco descartável como
 Após aplicar, faça uma nova execução controlada e confira a entrega pelo
 recibo do provedor. A migration não reprocessa efeitos antigos.
 
+### Aviso interno após troca de responsável
+
+Em uma troca direta de responsável, o primeiro envio humano aceito pelo
+WhatsApp registra uma entrada na conversa. O chat exibe o nome do novo
+responsável e o horário confirmado. O aviso é consultado pelo endpoint
+autorizado de atendimento e fica fora do corpo transmitido ao provedor.
+Reações, automações, envios pendentes e confirmações de uma troca anterior
+não registram essa entrada.
+
+Aplique `20261120145750_whatsapp_lead_handoff_markers.sql` antes da API Go
+que consulta os registros. A migration é aditiva, sem preenchimento
+retroativo. O marcador conserva o formato que a Web anterior já aceita.
+Ao reverter as imagens, preserve o esquema e os avisos confirmados.
+
 ### Captura de respostas às automações
 
 A captura usa a confirmação de um envio de automação pelo dono da conexão. A

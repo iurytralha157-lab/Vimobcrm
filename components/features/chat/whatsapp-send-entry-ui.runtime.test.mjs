@@ -13,15 +13,20 @@ const input = {};
 Function('exports', ts.transpileModule(readFileSync(join(repository, 'lib/whatsapp-message-input.ts'), 'utf8'), { compilerOptions: compileOptions }).outputText)(input);
 const helpers = {};
 Function('require', 'exports', ts.transpileModule(read('lib/whatsapp-own-start.ts'), { compilerOptions: compileOptions }).outputText)(() => input, helpers);
-const parsed = ts.createSourceFile('FloatingChat.tsx', read('components/features/chat/FloatingChat.tsx'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-const declarations = new Map();
-function visit(node) {
-  if ((ts.isVariableDeclaration(node) || ts.isFunctionDeclaration(node)) && node.name) declarations.set(node.name.getText(parsed), node);
-  ts.forEachChild(node, visit);
+function screenDeclarations(path) {
+  const parsed = ts.createSourceFile(path, read(path), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const declarations = new Map();
+  function visit(node) {
+    if ((ts.isVariableDeclaration(node) || ts.isFunctionDeclaration(node)) && node.name) declarations.set(node.name.getText(parsed), node);
+    ts.forEachChild(node, visit);
+  }
+  visit(parsed);
+  return declarations;
 }
-visit(parsed);
-function actual(name, dependencies) {
+const floatingDeclarations = screenDeclarations('components/features/chat/FloatingChat.tsx');
+function actual(name, dependencies, declarations = floatingDeclarations) {
   const node = declarations.get(name); assert.ok(node, name);
+  const parsed = node.getSourceFile();
   const code = ts.transpileModule(ts.isVariableDeclaration(node) ? `const ${node.getText(parsed)};` : node.getText(parsed), { compilerOptions: compileOptions }).outputText;
   return Function(...Object.keys(dependencies), `${code};return ${name}`)(...Object.values(dependencies));
 }
@@ -31,15 +36,71 @@ const conversation = { id: 'original', session_id: shared.id, lead_id: 'lead-a',
   lead: { id: 'lead-a', assignee: { id: 'viewer' } } };
 const notice = patch => helpers.getOwnWhatsAppStartNotice({ conversation, sessions: [shared, own], currentUserId: 'viewer', canOperate: true, ...patch });
 
+test('pending lead only offers connection after session verification and accepts an authorized shared session', () => {
+  const eligibleLeadStartSession = actual('eligibleLeadStartSession', {});
+  const pendingConnection = overrides => actual('pendingConnection', {
+    pendingPhone: '+5511999998888', pendingLeadId: 'lead-a', activeConversation: null,
+    originalOrganization: true, canOperateWhatsApp: true, currentUserId: 'viewer',
+    loadingSessions: false, sessionsFailed: false, sessions: [], eligibleLeadStartSession, ...overrides,
+  });
+  assert.equal(pendingConnection({}), true);
+  assert.equal(pendingConnection({ loadingSessions: true }), false);
+  assert.equal(pendingConnection({ sessionsFailed: true }), false);
+  assert.equal(pendingConnection({ sessions: undefined }), false);
+  assert.equal(pendingConnection({ sessions: [shared] }), false);
+});
+
 test('an authorized original route offers the owned route while keeping its working composer', () => {
   assert.deepEqual(notice(), { kind: 'start', ownConnectedSessionIds: ['own-a'], preserveComposer: true });
   assert.equal(input.getWhatsAppMessageInputState(conversation, null, [shared, own], 'viewer').sendSessionId, 'shared');
   assert.equal(input.getWhatsAppMessageInputState(conversation, own.id, [shared, own], 'viewer').disabled, true, 'never send across physical sessions');
 });
+test('the opened shared conversation sends on its exact session despite a different inbox filter', () => {
+  const composer = (activeConversation, sessions) => actual('whatsappMessageInputState', {
+    activeConversation, activeConversationLeadId: activeConversation.lead_id ?? activeConversation.lead?.id,
+    selectedSessionId: own.id, sessions, currentUserId: 'viewer',
+    getWhatsAppMessageInputState: input.getWhatsAppMessageInputState,
+  });
+  assert.equal(composer(conversation, [own, shared]).sendSessionId, shared.id);
+  assert.equal(composer(conversation, [own, shared]).disabled, false);
+  assert.equal(composer(conversation, [own]).disabled, true);
+  assert.equal(composer(conversation, [own, { ...shared, can_send: false }]).disabled, true);
+  const reassigned = { ...conversation, lead: { ...conversation.lead, assignee: { id: 'another-broker' } } };
+  assert.match(composer(reassigned, [own, shared]).placeholder, /responsabilidade/);
+  assert.equal(composer({ ...conversation, historical_lead_view: true }, [own, shared]).disabled, true);
+  assert.equal(composer({ ...conversation, is_group: true }, [own, shared]).disabled, true);
+  assert.equal(composer({ ...conversation, session_id: null }, [own, shared]).disabled, true);
+  assert.equal(composer({ ...conversation, lead_id: null, lead: null }, [own, shared]).disabled, true);
+  assert.equal(composer({ ...conversation, id: null }, [own, shared]).sendSessionId, own.id);
+});
 test('missing original grant still offers owned start, and absence of an owned route does not disable an authorized original', () => {
   assert.deepEqual(notice({ sessions: [own] }), { kind: 'start', ownConnectedSessionIds: ['own-a'] });
   assert.equal(notice({ sessions: [shared] }), null);
   assert.equal(notice({ conversation: { ...conversation, session_id: own.id } }), null);
+});
+test('an existing connected shared route keeps its actual composer restriction instead of asking to connect', () => {
+  for (const [blocked, session, reason] of [
+    [{ ...conversation, historical_lead_view: true }, shared, /Histórico/],
+    [{ ...conversation, contact_phone: null }, shared, /sem telefone/],
+    [conversation, { ...shared, can_send: false }, /Sem permissão/],
+    [{ ...conversation, lead: { ...conversation.lead, assignee: { id: 'different-broker' } } }, shared, /responsabilidade/],
+  ]) {
+    assert.equal(notice({ conversation: blocked, sessions: [session] }), null);
+    const composer = input.getWhatsAppMessageInputState(blocked, null, [session], 'viewer');
+    assert.equal(composer.disabled, true);
+    assert.match(composer.placeholder, reason);
+  }
+});
+test('a conversation opened by deep link uses its exact shared session in the conversations page', () => {
+  const declarations = screenDeclarations('components/features/whatsapp/ConversationsScreen.tsx');
+  const composer = (selectedConversation, sessions) => actual('whatsappMessageInputState', {
+    selectedConversation, selectedLeadId: selectedConversation.lead_id, selectedSessionId: own.id,
+    sessions, currentUserId: 'viewer', useMemo: compute => compute(),
+    getWhatsAppMessageInputState: input.getWhatsAppMessageInputState,
+  }, declarations);
+  assert.equal(composer(conversation, [own, shared]).sendSessionId, shared.id);
+  assert.equal(composer(conversation, [own, { ...shared, can_send: false }]).disabled, true);
+  assert.equal(composer({ ...conversation, historical_lead_view: true }, [own, shared]).disabled, true);
 });
 test('a new lead uses the normal own-account composer and only asks to connect when no owned account is available', () => {
   const draft = { ...conversation, id: null, session_id: null };
@@ -61,6 +122,27 @@ const React = { Fragment: 'Fragment', createElement: (type, props, ...children) 
 const noticeExports = {};
 Function('require', 'exports', 'React', ts.transpileModule(read('components/features/whatsapp/OwnWhatsAppStartNotice.tsx'), { compilerOptions: compileOptions }).outputText)(id => id === 'next/link' ? { default: 'Link' } : { Loader2: 'Loader2' }, noticeExports, React);
 const tree = item => typeof item === 'object' && item ? [item, ...(item.children ?? []).flatMap(tree)] : [];
+
+test('the shared chat renderer shows a name entering the conversation only for a confirmed joined marker', () => {
+  const personName = {};
+  Function('exports', ts.transpileModule(read('lib/whatsapp-person-name.ts'), { compilerOptions: compileOptions }).outputText)(personName);
+  const timeline = {};
+  Function('require', 'exports', 'React', ts.transpileModule(read('components/features/whatsapp/AttendanceTimelineEvents.tsx'), { compilerOptions: compileOptions }).outputText)(
+    id => id === 'lucide-react' ? { LogIn: 'LogIn' } : personName, timeline, React,
+  );
+  const entries = [
+    { id: 'transfer-2', userName: 'FULANO', markerKind: 'joined', markerAt: '2026-11-20T15:03:00Z' },
+    { id: 'first', userName: 'JULIA', markerKind: 'started', markerAt: '2026-11-20T15:00:00Z' },
+    { id: 'pending', userName: 'RAFAEL', markerKind: 'joined', markerAt: null },
+    { id: 'join', userName: 'ANA', markerKind: 'joined', markerAt: '2026-11-20T15:01:00Z' },
+  ];
+  const nodes = tree(timeline.AttendanceTimelineEvents({ entries }));
+  const labels = nodes.filter(node => node.type === 'span').map(({ children: [name, activity] }) => name.children.join('') + activity);
+  assert.deepEqual(labels, ['Julia iniciou uma conversa', 'Ana entrou na conversa', 'Fulano entrou na conversa']);
+  assert.deepEqual(nodes.filter(node => node.type === 'time').map(node => node.props.dateTime),
+    ['2026-11-20T15:00:00Z', '2026-11-20T15:01:00Z', '2026-11-20T15:03:00Z']);
+});
+
 const noop = () => {};
 test('actual floating renderer keeps the original input alongside the optional owned-start action', () => {
   const render = actual('renderMessageInput', { React, cn: (...x) => x.filter(Boolean).join(' '), originalOrganization: true,

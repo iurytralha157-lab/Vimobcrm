@@ -30,6 +30,10 @@ export function automationEditorSession(config: Record<string, unknown>, default
   return replaceSessions ? defaultSessionId : storedSessionId || defaultSessionId
 }
 
+export function canSelectAutomationSender(session: { status: string; can_send?: boolean }) {
+  return session.status === 'connected' && session.can_send === true
+}
+
 export function automationEditorReplyConfig(config: Record<string, unknown>) {
   return {
     on_reply_message: config.on_reply_message ?? null,

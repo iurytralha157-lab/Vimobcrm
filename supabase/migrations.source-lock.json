@@ -1150,6 +1150,10 @@
     {
       "file": "20261117174447_add_home_publication_dark_image_variants.sql",
       "sha256": "3865082674f05b86ee4505a8fe8e8ea92626d671757eae9c708009805cf625a7"
+    },
+    {
+      "file": "20261120145750_whatsapp_lead_handoff_markers.sql",
+      "sha256": "f8786bdf5c2645538b9c29c65e3215fdcd606cdd2aed58e9b7335012caef1478"
     }
   ]
 }

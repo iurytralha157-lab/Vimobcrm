@@ -7,6 +7,7 @@ export const CI_DATABASE = 'vimob_whatsapp_clone';
 export const CI_ROOT_NAME = 'vimob-whatsapp-ci';
 export const GO_PACKAGE = 'github.com/vimob-crm/vimob-crm/apps/api/internal/whatsapp';
 export const GO_TESTS = Object.freeze([
+  'TestLocalWhatsAppHandoffMarkerFollowsEachAcceptedTransfer',
   'TestWhatsAppCITargetRejectsAllConnectionOverrides',
   'TestWhatsAppCIRuntimeRejectsWrongIdentityAndExpiredProof',
   'TestWebhookRouteClaimLockedHeadAllowsIndependentSameSession',

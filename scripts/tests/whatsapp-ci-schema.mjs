@@ -94,4 +94,5 @@ export const MIGRATIONS = Object.freeze([
   '20261114210348_protect_automation_execution_lead_scope.sql',
   '20261114210410_fence_whatsapp_automation_reply_identity.sql',
   '20261114210427_arbitrate_whatsapp_automation_reply_deadlines.sql',
+  '20261120145750_whatsapp_lead_handoff_markers.sql',
 ]);
