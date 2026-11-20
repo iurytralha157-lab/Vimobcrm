@@ -1960,7 +1960,7 @@ test("dashboard valida corretores e liga cache, tenant e cancelamento", () => {
     dashboardHookSource,
     /function useDashboardQueryScope\(\)[\s\S]*?isTenantContextForOrganization\([\s\S]*?createTenantQueryAccessSignature\(/,
   );
-  assert.ok([...dashboardHookSource.matchAll(/enabled: isReady/g)].length >= 8);
+  assert.ok([...dashboardHookSource.matchAll(/enabled:\s*isReady\b/g)].length >= 8);
   assert.ok([...dashboardHookSource.matchAll(/accessSignature/g)].length >= 17);
   assert.doesNotMatch(dashboardHookSource, /Math\.abs\(/);
   assert.match(
