@@ -32,16 +32,22 @@ const names = new Set(['getWhatsAppRealtimeScopeKey', 'getWhatsAppRealtimeRefres
   'dispatchWhatsAppMessagesReconcile', 'matchesWhatsAppMessagesQuery',
   'scheduleWhatsAppRealtimeRefresh', 'whatsappRealtimeRefreshCoordinators', 'useWhatsAppConversations',
   'useWhatsAppLeadRealtime', 'WHATSAPP_CONVERSATIONS_REFETCH_MS', 'WHATSAPP_CONVERSATIONS_PAGINATED_REFETCH_MS']);
-const hookPath = process.env.WHATSAPP_LIST_REFRESH_BASELINE || resolve(repository, 'hooks/use-whatsapp-conversations.ts');
-const source = ts.createSourceFile(hookPath, readFileSync(hookPath, 'utf8'), ts.ScriptTarget.Latest, true);
-const statements = source.statements.filter(node => ts.isFunctionDeclaration(node) ? names.has(node.name?.text)
-  : ts.isVariableStatement(node) && node.declarationList.declarations.some(declaration => names.has(declaration.name.getText(source))));
+const hookPaths = process.env.WHATSAPP_LIST_REFRESH_BASELINE
+  ? [process.env.WHATSAPP_LIST_REFRESH_BASELINE]
+  : ['whatsapp-message-cache', 'use-whatsapp-conversation-queries', 'use-whatsapp-realtime']
+    .map(name => resolve(repository, 'hooks/whatsapp', name + '.ts'));
+const statements = hookPaths.flatMap(path => {
+  const source = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true);
+  return source.statements.filter(node => ts.isFunctionDeclaration(node) ? names.has(node.name?.text)
+    : ts.isVariableStatement(node) && node.declarationList.declarations.some(declaration => names.has(declaration.name.getText(source))))
+    .map(node => node.getText(source).replace(/^export /, ''));
+});
 assert.equal(statements.length, names.size);
 const activityPath = resolve(repository, 'hooks/whatsapp/use-whatsapp-lead-activity-realtime.ts');
 const activitySource = ts.createSourceFile(activityPath, readFileSync(activityPath, 'utf8'), ts.ScriptTarget.Latest, true);
 const activityHook = activitySource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'useWhatsAppLeadActivityRealtime');
 assert.ok(activityHook);
-const code = ts.transpileModule([...statements.map(node => node.getText(source)), activityHook.getText(activitySource)].join('\n'), {
+const code = ts.transpileModule([...statements, activityHook.getText(activitySource)].join('\n'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
 }).outputText;
 const scope = { organizationId: 'org-a', userId: 'actor-a', accessScope: 'sid-a:permissions-a' };

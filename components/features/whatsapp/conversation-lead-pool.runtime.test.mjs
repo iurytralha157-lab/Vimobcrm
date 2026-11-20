@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import { canOperateLeadFromFreshRead } from '../../../lib/lead-operation-capability.ts';
+import { getWhatsAppAvatarCandidates } from '../../../lib/whatsapp-avatar.ts';
 
 // Execute the actual panel render and callbacks with closed hook reads. No DOM,
 // database, provider, service or browser is started by this focused runtime test.
@@ -35,6 +36,7 @@ function fixture(options = {}) {
   Object.assign(dependencies, {
     React: { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }) },
     canOperateLeadFromFreshRead,
+    getWhatsAppAvatarCandidates,
     useState: initial => [initial === '' ? 'Feedback sintético' : initial, () => {}],
     useRef: initial => ({ current: initial }), useLayoutEffect() {},
     useQueryClient: () => ({ invalidateQueries: async value => requests.push(['invalidate', value]) }),
@@ -52,7 +54,7 @@ function fixture(options = {}) {
     useDealStatusChange: () => ({ isPending: false }),
     toast: { success() {}, error() {} }, cn: (...values) => values.filter(Boolean).join(' '),
     normalizePhoneToE164: value => value || '', formatPhoneForDisplay: value => value,
-    formatWhatsAppPersonName: value => value || '', format: () => '16/10/26 14:00',
+    formatWhatsAppPersonName: value => value || '',
     getConversationAssigneeLabel: id => id ? 'Corretor atual' : 'Sem responsável',
     getConversationPropertyLabel: () => 'Nenhum',
   });

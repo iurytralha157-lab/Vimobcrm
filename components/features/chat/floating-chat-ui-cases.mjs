@@ -4,6 +4,10 @@ import { CONVERSATION_LIST_UI } from '../../../components/features/whatsapp/conv
 import { calls, cn, declaration, evaluate, jsx, nodes, prop, propText, text, value } from './floating-chat-source-fixture.mjs';
 
 const F = 'components/features/chat/FloatingChat.tsx';
+const HEADER = 'components/features/chat/FloatingChatHeader.tsx';
+const FILTERS = 'components/features/chat/FloatingConversationFilters.tsx';
+const SURFACE = 'components/features/chat/FloatingChatSurface.tsx';
+const VIEWPORT = 'components/features/chat/FloatingMessagesViewport.tsx';
 const B = 'components/features/chat/FloatingChatButton.tsx';
 const M = 'components/features/whatsapp/MessageBubble.tsx';
 const MEDIA = 'components/features/whatsapp/message-bubble/MessageMedia.tsx';
@@ -18,13 +22,13 @@ const labelled = (path, label) => one(jsx(path, 'Button', n => prop(n, 'aria-lab
 const hasToken = (classes, token) => assert.ok(classes.split(/\s+/).includes(token), `missing ${token} in ${classes}`);
 
 export function compactPresentation() {
-  const header = one(jsx(F, 'div', n => propText(n, 'className').includes('h-12 bg-primary/50')), 'list header');
+  const header = one(jsx(HEADER, 'div', n => propText(n, 'className').includes('justify-between bg-primary')), 'list header');
   for (const mobile of [false, true]) {
     const classes = prop(header, 'className', { cn, mobile });
-    hasToken(classes, 'bg-primary/50'); hasToken(classes, 'text-primary-foreground');
+    hasToken(classes, 'bg-primary');
     if (!mobile) for (const token of ['h-12', 'px-3.5', 'shadow-[0_2px_8px_rgba(0,0,0,0.08)]']) hasToken(classes, token);
   }
-  const search = one(jsx(F, 'Input', n => prop(n, 'aria-label') === 'Buscar conversas'), 'search');
+  const search = one(jsx(FILTERS, 'Input', n => prop(n, 'aria-label') === 'Buscar conversas'), 'search');
   assert.equal(prop(search, 'className', { CONVERSATION_LIST_UI }), CONVERSATION_LIST_UI.search);
   hasToken(CONVERSATION_LIST_UI.search, 'h-8');
   hasToken(CONVERSATION_LIST_UI.search, 'text-[length:var(--app-font-size-caption)]');
@@ -35,11 +39,12 @@ export function compactPresentation() {
   const classes = prop(launcher, 'className', { cn, panelPresent: false, isDragging: false });
   for (const token of ['h-14', 'w-14', 'rounded-full', 'bg-primary']) hasToken(classes, token);
   assert.ok(!classes.includes('bg-primary/50'));
-  assert.equal(prop(one(jsx(B, 'MessageCircle'), 'launcher icon'), 'className'), 'h-7 w-7');
+  assert.equal(prop(one(jsx(B, 'MessageCircle'), 'launcher icon'), 'aria-hidden'), 'true');
+  hasToken(classes, '[&_svg]:size-7');
   const counter = one(jsx(B, 'span', n => propText(n, 'className').includes('h-[26px]')), 'counter');
   for (const token of ['h-[26px]', 'min-w-[26px]', 'text-[12px]']) hasToken(prop(counter, 'className'), token);
-  assert.ok(jsx(F, 'div', n => propText(n, 'className').includes('shadow-[0_12px_32px_rgba(0,0,0,0.10)]')).length > 0);
-  assert.ok(!nodes(F, n => ts.isStringLiteral(n) && /shadow-\[[^\]]*rgba\(255,69,41,/.test(n.text)).length);
+  assert.ok(jsx(SURFACE, 'div', n => propText(n, 'className').includes('shadow-[0_12px_32px_rgba(0,0,0,0.10)]')).length > 0);
+  for (const path of [HEADER, SURFACE]) assert.ok(!nodes(path, n => ts.isStringLiteral(n) && /shadow-\[[^\]]*rgba\(255,69,41,/.test(n.text)).length);
   hasToken(CONVERSATION_LIST_UI.pagination, '[&_svg]:size-3.5');
 }
 
@@ -76,22 +81,22 @@ export function metadataAlignment() {
 }
 
 export function contextChips() {
-  const classes = value(F, 'contextChipClassName');
+  const classes = value(HEADER, 'contextChipClassName');
   for (const token of ['min-h-[18px]', 'max-w-full', 'whitespace-normal', '[overflow-wrap:anywhere]', 'rounded-[4px]', 'border-0', 'px-1.5', 'text-[9px]', 'font-medium', 'text-white']) hasToken(classes, token);
-  const context = one(attribute(F, 'data-floating-chat-context'), 'header context');
+  const context = one(attribute(HEADER, 'data-floating-chat-context'), 'header context');
   const layout = prop(context, 'className');
   for (const token of ['flex-wrap', 'gap-1.5', 'px-3', 'pb-2.5', 'pt-0.5']) hasToken(layout, token);
   assert.ok(!/flex-nowrap|overflow-hidden/.test(layout));
   const colors = [];
   const colorHelper = color => { colors.push(color); return { color: '#fff', backgroundColor: color }; };
-  const styles = nodes(F, n => (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) && propText(n, 'style').includes('getTagColorStyleWithWhiteText'));
+  const styles = nodes(HEADER, n => (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) && propText(n, 'style').includes('getTagColorStyleWithWhiteText'));
   assert.ok(styles.length >= 2);
   for (const node of styles) {
     const result = prop(node, 'style', { getTagColorStyleWithWhiteText: colorHelper, lt: { tag: { color: '#123456' } }, stageColor: '#654321' });
     assert.equal(result.color, '#fff');
   }
   assert.ok(colors.includes('#123456') && colors.includes('#654321'));
-  const pipeline = one(jsx(F, 'Badge', n => propText(n, 'className').includes('bg-primary/10 text-primary')), 'pipeline chip');
+  const pipeline = one(jsx(HEADER, 'Badge', n => propText(n, 'className').includes('bg-primary/10 text-primary')), 'pipeline chip');
   hasToken(prop(pipeline, 'className', { cn, contextChipClassName: classes }), 'bg-primary/10');
 }
 
@@ -157,12 +162,12 @@ export function navigationPresentation() {
     if (unreadCount > 99) assert.ok(text(rendered).includes('99+'));
   }
   assert.equal(clicked, 3);
-  assert.ok(jsx(F, 'ScrollToLatestButton').length); assert.ok(jsx(CM, 'ScrollToLatestButton').length);
+  assert.ok(jsx(VIEWPORT, 'ScrollToLatestButton').length); assert.ok(jsx(CM, 'ScrollToLatestButton').length);
 }
 
 export function greyNavigation() {
   for (const [label, handler] of [['Voltar à lista de conversas', 'clearActiveConversation'], ['Fechar chat do WhatsApp', 'closeChat']]) {
-    const button = labelled(F, label); let clicked = 0;
+    const button = labelled(HEADER, label); let clicked = 0;
     for (const mobile of [false, true]) {
       const classes = prop(button, 'className', { cn, mobile });
       for (const token of ['bg-[var(--app-surface-soft)]', 'hover:bg-[var(--app-surface-muted)]', 'rounded-[6px]', mobile ? 'h-11' : 'h-9']) hasToken(classes, token);

@@ -30,7 +30,7 @@ const cache = productionCache();
 
 // Extract the actual helpers, retaining their predicates, dispatch and timer keys.
 function productionReconciliation() {
-  const path = process.env.WHATSAPP_RECONCILIATION_BASELINE || resolve(repository, 'hooks/use-whatsapp-conversations.ts');
+  const path = process.env.WHATSAPP_RECONCILIATION_BASELINE || resolve(repository, 'hooks/whatsapp/whatsapp-message-cache.ts');
   const source = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true);
   const names = new Set(['reconcileWhatsAppMessageQueries', 'scheduleWhatsAppMessageReconciliation',
     'dispatchWhatsAppMessagesReconcile', 'matchesWhatsAppMessagesQuery', 'scheduledMessageReconciliations',
@@ -39,7 +39,7 @@ function productionReconciliation() {
     ? names.has(node.name?.text) : ts.isVariableStatement(node)
       && node.declarationList.declarations.some(declaration => names.has(declaration.name.getText(source))));
   assert.equal(statements.length, names.size, 'all production helpers must be present');
-  const code = ts.transpileModule(statements.map(node => node.getText(source)).join('\n'), {
+  const code = ts.transpileModule(statements.map(node => node.getText(source).replace(/^export /, '')).join('\n'), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
   }).outputText;
   const timers = [];

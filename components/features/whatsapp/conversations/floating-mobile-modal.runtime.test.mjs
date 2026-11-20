@@ -148,13 +148,13 @@ test('desktop Escape outside the floating chat preserves its conversation and hi
   assert.equal(await page.evaluate(() => harness.ctx.state.activeConversation), null);
   const surface = page.locator('#floating-whatsapp-chat');
   await expect(surface).toBeFocused();
-  await expect(surface.getByText('WhatsApp', { exact: true })).toHaveCSS('color', 'rgb(255, 255, 255)');
-  const headerColor = await surface.locator('.bg-vimob-accent-strong').evaluate(el => getComputedStyle(el).backgroundColor);
-  assert.match(headerColor, /^color\(srgb [^/]+\)$/, 'header color is opaque');
+  await expect(surface.getByText('WhatsApp', { exact: true })).toHaveClass(/text-neutral-950/);
+  const brandOrange = 'rgb(255, 69, 41)';
+  await expect(surface.locator('div.bg-primary')).toHaveCSS('background-color', brandOrange);
   await page.keyboard.press('Escape');
   await expect(surface).toHaveCount(0);
   const launcher = page.getByRole('button', { name: 'Abrir chat do WhatsApp', exact: true });
-  await expect(launcher).toHaveCSS('background-color', headerColor);
+  await expect(launcher).toHaveCSS('background-color', brandOrange);
   await expect(launcher.locator('svg')).toHaveCSS('width', '28px');
 });
 

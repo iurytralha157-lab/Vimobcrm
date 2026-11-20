@@ -29,7 +29,7 @@ export function ConversationListPreview({ conversation, draftText }: {
     ? conversation.last_message_status?.trim() || "unknown"
     : null;
   return (
-    <span data-conversation-preview className="flex min-w-0 flex-1 items-center text-left text-[11px] text-muted-foreground" title={hasDraft ? draftText : undefined}>
+    <span data-conversation-preview className="flex min-w-0 flex-1 items-center text-left text-[11px] text-[color:var(--conversation-meta-color,var(--muted-foreground))]" title={hasDraft ? draftText : undefined}>
       {status && <span data-conversation-receipt-slot className="flex h-4 w-5 shrink-0 items-center text-foreground">
         <MessageStatus fromMe status={status} />
       </span>}

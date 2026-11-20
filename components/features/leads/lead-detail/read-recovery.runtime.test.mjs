@@ -37,7 +37,8 @@ function presentation(source) {
     return element || 'null';
   };
   return { guard: guard.getText(ast), mobile: mobile.getText(ast), desktop: desktop.getText(ast),
-    capability: declaration('canOperateLead'), mobileNotice: notice('MobileContentV2'), desktopNotice: notice('DesktopContentV2') };
+    capability: [declaration('canUseLeadActions'), declaration('canOperateLead')].join('\n'),
+    mobileNotice: notice('MobileContentV2'), desktopNotice: notice('DesktopContentV2') };
 }
 
 before(async () => {

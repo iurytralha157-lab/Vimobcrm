@@ -1,42 +1,26 @@
-import { useState, useEffect, useLayoutEffect, useMemo, useRef, useId, type CSSProperties, type ReactNode } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useId, type ReactNode } from 'react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { getClientRateLimitMessage } from '@/lib/client-action-rate-limit';
 import { PropertyPickerDialog } from '@/components/features/properties/PropertyPickerDialog';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
 
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from '@/components/ui/drawer';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { LeadAttachmentsStatus } from '@/components/features/leads/LeadAttachmentsStatus';
 import {
-  Phone, Mail, MessageCircle, Loader2, X, Plus, User,
-  Calendar, FileEdit, Activity, Contact,
-  ChevronDown, FileText, Paperclip
+  Phone, Mail, MessageCircle, X, Plus, User, FileEdit, Activity, Contact
 } from 'lucide-react';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
 import { cn } from '@/lib/utils';
 import { getTagColorStyleWithWhiteText } from '@/lib/tag-color';
-import { commandSearchFilter } from '@/lib/search-text';
 import { ptBR, enUS } from 'date-fns/locale';
 import { useCompleteCadenceTask } from '@/hooks/use-lead-tasks';
 import { useLeadCadenceState } from '@/hooks/leads/use-lead-cadence-state';
 import { useLeadFeedbackDraft } from '@/hooks/leads/use-lead-feedback-draft';
 import { useLeadAttachmentUploadDraft } from '@/hooks/leads/use-lead-attachment-upload-draft';
-import { LeadAttachmentUploadRecovery } from '@/components/features/leads/lead-detail/LeadAttachmentUploadRecovery';
 import { useRecordLeadFeedback } from '@/hooks/leads/use-record-lead-feedback';
 import { useLeadMoveContract } from '@/hooks/leads/use-lead-move-contract';
 import { useLeadOutcomeDraft } from '@/hooks/leads/use-lead-outcome-draft';
@@ -62,7 +46,6 @@ import { LeadUnifiedThread } from '@/components/features/leads/LeadUnifiedThread
 import { ReentryBadge } from '@/components/features/leads/ReentryBadge';
 import { CopyLeadPhoneButton } from '@/components/features/leads/CopyLeadPhoneButton';
 import { QueuePoolClaimButton } from '@/components/features/leads/QueuePoolClaimButton';
-import { LeadCadencePanel } from '@/components/features/leads/LeadCadencePanel';
 import { resolvedFirstResponse } from '@/components/features/leads/lead-detail/first-response';
 
 import type { TaskOutcome } from '@/components/features/leads/TaskOutcomeDialog';
@@ -84,9 +67,12 @@ import { canOperateLeadFromFreshRead, leadProgressCapability, mergeLeadOperation
 import pipelineDetailStyles from '@/components/features/leads/lead-detail/PipelineLeadDetail.module.css';
 import { PipelineMobileLeadHeader } from '@/components/features/leads/lead-detail/PipelineMobileLeadHeader';
 import { LeadTagPickerContent } from '@/components/features/leads/lead-detail/LeadTagPickerContent';
+import { LeadDetailActions } from '@/components/features/leads/lead-detail/LeadDetailActions';
+import { LeadDetailAssigneePicker } from '@/components/features/leads/lead-detail/LeadDetailAssigneePicker';
+import { LeadDetailAttachments } from '@/components/features/leads/lead-detail/LeadDetailAttachments';
+import { LeadDetailStageStepper } from '@/components/features/leads/lead-detail/LeadDetailStageStepper';
 import { LeadDetailReadNotice } from '@/components/features/leads/lead-detail/LeadDetailReadNotice';
 import { getLeadDetailReadState } from '@/components/features/leads/lead-detail/read-recovery';
-import { LeadAssigneeCatalogNotice } from '@/components/features/leads/lead-detail/LeadAssigneeCatalogNotice';
 import type { TagCatalog } from '@/lib/validation/tag-catalog';
 import { VimobAPIError } from '@/lib/api/vimob-client';
 import { getGlobalSignOutSessionId } from '@/lib/auth/global-sign-out';
@@ -107,20 +93,17 @@ import type { LeadCadenceTaskState } from '@/lib/validation';
 import {
   buildCampaignTrackingDetails,
   CampaignTrackingHover,
-  CompactScheduleEventsList,
   getCadenceTaskType,
   getDealStatusTriggerClass,
   getErrorMessage,
   getLeadPropertyFallback,
   getLeadSourceLabel,
-  getStageStepperStyle,
   hasTagId,
   InfoLine,
   LeadDetailOverlays,
   LeadProfileHover,
   mergePropertyFallback,
   OUTCOME_CADENCE_TASK_TYPES,
-  stageTooltipClassName,
   useLeadDetailPipelineCache,
   type LeadDetailDialogProps,
   type LeadDetailLead,
@@ -767,8 +750,6 @@ export function LeadDetailDialog({
   // A transient access failure hides all portals but retains the unsaved form and its original CAS revision.
   if (!leadProp || !localLead || readAccessBlocked) return null;
 
-  const currentStageIndex = stages.findIndex(s => s.id === localLead.stage_id);
-  const stageStepperStyle = getStageStepperStyle(stages.length);
   const assigneeName = localLead.assignee?.name || '';
   const leadTags = Array.isArray(localLead.tags) ? localLead.tags.filter(hasTagId) : [];
   const safeAllTags = Array.isArray(allTags) ? allTags.filter(Boolean) : [];
@@ -1432,31 +1413,49 @@ export function LeadDetailDialog({
       : leadHistoryQuery.isError && !localLead.first_response_at
         ? 'Indisponível'
         : leadHistoryQuery.historyComplete === false ? 'Histórico parcial' : 'Não registrado';
-  const renderScheduleEvents = () => (
-    <>
-      {scheduleError && (
-        <div role="alert" className="mt-2 flex flex-wrap items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-2 text-[11px] text-[var(--app-text-secondary)]">
-          <span>{scheduleEvents.length > 0 ? 'Não foi possível atualizar a agenda.' : 'Não foi possível carregar a agenda.'}</span>
-          <Button type="button" variant="ghost" size="sm" className={cn('h-7 rounded-[5px] px-2 text-[11px]', (isMobile || isTablet) && 'h-10')} onClick={() => void refetchScheduleEvents()}>
-            Tentar novamente
-          </Button>
-        </div>
-      )}
-      {schedulePending && scheduleEvents.length === 0 ? (
-        <p role="status" className="mt-2 text-[11px] text-[var(--app-text-tertiary)]">Carregando compromissos...</p>
-      ) : (scheduleEvents.length > 0 || !scheduleError) && (
-        <CompactScheduleEventsList
-          events={scheduleEvents}
-          locale={dateLocale}
-          onEditEvent={canViewLeadSchedule ? handleEditScheduleEvent : undefined}
-        />
-      )}
-      {schedulePreview.hasNextPage && (
-        <Button type="button" variant="ghost" className="mt-2 h-9 text-xs" disabled={schedulePreview.isFetchingNextPage} onClick={() => void schedulePreview.fetchNextPage()}>
-          {schedulePreview.isFetchingNextPage ? 'Carregando...' : 'Ver mais compromissos'}
-        </Button>
-      )}
-    </>
+  const renderStageStepper = (mobile: boolean) => (
+    <LeadDetailStageStepper stages={stages} activeStageId={localLead.stage_id} mobile={mobile}
+      pipeline={variant === 'pipeline'} disabled={!canProgressLead} onMove={handleMoveToStage} />
+  );
+  const renderAssigneePicker = (mobile: boolean) => (
+    <LeadDetailAssigneePicker mobile={mobile} open={assigneePopoverOpen} disabled={!canTransferLead}
+      updating={isUpdatingAssignee} assigneeName={assigneeName} users={assignableUsers}
+      catalogState={allUsersState} catalogBlocked={assigneeCatalogBlocked}
+      portalClassName={variant === 'pipeline' ? pipelineDetailStyles.portal : undefined}
+      searchClassName={variant === 'pipeline' ? pipelineDetailStyles.assigneeSearch : undefined}
+      onOpenChange={handleAssigneePopoverChange} onSelect={handleAssignUser} />
+  );
+  const renderAttachments = (mobile: boolean) => (
+    <LeadDetailAttachments mobile={mobile} canOperate={canOperateLead} attachments={attachments}
+      loading={attachmentsLoading} error={attachmentsError} fetching={attachmentsFetching} uploading={isUploading}
+      inputRef={fileInputRef} uploadDraft={attachmentUploadDraft.draft} onUpload={handleFileUpload}
+      onOpen={handleOpenAttachment} onRefetch={() => void refetchAttachments()} onClearDraft={attachmentUploadDraft.clear} />
+  );
+  const renderActionSections = (mobile: boolean) => (
+    <LeadDetailActions
+      mobile={mobile}
+      schedule={{
+        visible: canViewLeadSchedule, manageable: canManageLeadSchedule, events: scheduleEvents,
+        summary: scheduleSummaryLabel, locale: dateLocale, error: scheduleError, pending: schedulePending,
+        hasNextPage: schedulePreview.hasNextPage, fetchingNextPage: schedulePreview.isFetchingNextPage,
+        onRefetch: () => void refetchScheduleEvents(),
+        onFetchNextPage: () => void schedulePreview.fetchNextPage(),
+        onEditEvent: handleEditScheduleEvent,
+        onSchedule: () => {
+          setEditingScheduleEvent(null);
+          setScheduleDefaultType('visit');
+          setScheduleFormOpen(true);
+        },
+      }}
+      cadence={{
+        appearance: variant === 'pipeline' ? 'pipeline' : 'default',
+        state: leadCadenceState, isLoading: leadCadenceLoading, error: leadCadenceError,
+        isCompleting: cadenceActionPending || completeCadenceTask.isPending, canOperate: canOperateLead,
+        onRetry: () => void refetchLeadCadence(), onTaskClick: handleCadenceTaskClick,
+        onTaskInspect: (task) => { setTaskInspectOnly(true); setSelectedTask(task); setRoteiroDialogOpen(true); },
+      }}
+      feedback={{ value: feedback, canProgress: canProgressLead, pending: updateLead.isPending, onChange: setFeedback, onSave: handleSaveFeedback }}
+    />
   );
 
   const MobileContentV2 = () => {
@@ -1480,44 +1479,8 @@ export function LeadDetailDialog({
       { id: 'actions', label: 'Ações', icon: Activity, badge: scheduleEvents.length ? String(scheduleEvents.length) : undefined },
       { id: 'history', label: 'Histórico', icon: MessageCircle },
     ];
-    // The shared primary-action rule fixes height at 2rem; keep mobile hit areas at 40px.
-    const mobilePrimaryActionStyle = { height: '2.5rem' };
     const isCompactPipelineHeader = variant === 'pipeline' && isMobile;
-
-    const headerStages = (
-      <div
-        data-lead-stage-stepper
-        className="lead-detail-v2-scroll flex min-w-0 flex-1 items-center overflow-x-auto pb-0.5"
-        style={{ ...stageStepperStyle, '--lead-stage-step-size': '2.5rem' } as CSSProperties}
-      >
-        {stages.map((stage, idx) => {
-          const isActive = stage.id === localLead.stage_id;
-          const isPast = idx < currentStageIndex;
-
-          return (
-            <button
-              key={stage.id}
-              type="button"
-              disabled={!canProgressLead}
-              aria-label={`Mover para ${stage.name}`}
-              aria-current={isActive ? 'step' : undefined}
-              data-lead-stage-step
-              onClick={() => handleMoveToStage(stage.id)}
-              className={cn(
-                'lead-stage-step relative flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] text-[11px] font-normal',
-                isActive
-                  ? (variant === 'pipeline' ? 'bg-primary/50 text-white' : 'bg-primary text-primary-foreground')
-                  : isPast
-                    ? (variant === 'pipeline' ? 'bg-primary/50 text-white' : 'bg-primary/10 text-primary')
-                    : 'bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]',
-              )}
-            >
-              {idx + 1}
-            </button>
-          );
-        })}
-      </div>
-    );
+    const headerStages = renderStageStepper(true);
 
     const headerCloseAction = (
       <button type="button" aria-label="Fechar detalhes do lead" title="Fechar" onClick={handleCloseLeadDetail} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:ring-1 focus-visible:ring-primary/30">
@@ -1594,58 +1557,7 @@ export function LeadDetailDialog({
       </div>
     );
 
-    const headerAssignee = (
-      <Popover open={assigneePopoverOpen} onOpenChange={handleAssigneePopoverChange}>
-        <PopoverTrigger asChild>
-          <Button
-            variant="ghost"
-            aria-label="Alterar responsável pelo lead"
-             className="h-10 min-w-0 justify-start rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-xs font-light text-[var(--app-text-secondary)]"
-            disabled={!canTransferLead}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <User className="mr-1.5 h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{assigneeName || 'Sem responsável'}</span>
-            {isUpdatingAssignee ? <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin" /> : <ChevronDown className="ml-auto h-3.5 w-3.5" />}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent
-          className={cn('app-header-popover w-[calc(100vw-2rem)] max-w-[380px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1', variant === 'pipeline' && pipelineDetailStyles.portal)}
-          align="start"
-          collisionPadding={12}
-          onWheelCapture={(event) => event.stopPropagation()}
-          onTouchMoveCapture={(event) => event.stopPropagation()}
-        >
-          <Command filter={commandSearchFilter} className={cn("max-h-[min(72vh,430px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2", variant === 'pipeline' && pipelineDetailStyles.assigneeSearch)}>
-            <CommandInput aria-label="Buscar responsável" placeholder="Buscar responsável..." className="h-10 border-none focus:ring-0" />
-            <CommandList
-              className="max-h-[min(58vh,340px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin [-webkit-overflow-scrolling:touch]"
-              onWheelCapture={(event) => event.stopPropagation()}
-              onTouchMoveCapture={(event) => event.stopPropagation()}
-            >
-              <LeadAssigneeCatalogNotice state={allUsersState} />
-              {!assigneeCatalogBlocked && <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">Nenhum encontrado.</CommandEmpty>}
-              {!assigneeCatalogBlocked && <CommandGroup>
-                <CommandItem onSelect={() => handleAssignUser(null)} className="min-h-10 cursor-pointer rounded-[6px] px-3 py-2">
-                  Sem responsável
-                </CommandItem>
-                {assignableUsers.map((user) => (
-                  <CommandItem key={user.id} onSelect={() => handleAssignUser(user.id)} className="min-h-10 cursor-pointer rounded-[6px] px-3 py-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <Avatar className="h-7 w-7">
-                        <AvatarImage src={user.avatar_url || undefined} alt={user.name || user.email || 'Responsável'} />
-                        <AvatarFallback className="text-[10px]">{(user.name || user.email || 'U')[0]}</AvatarFallback>
-                      </Avatar>
-                      <span className="truncate">{user.name || user.email}</span>
-                    </div>
-                  </CommandItem>
-                ))}
-              </CommandGroup>}
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
-    );
+    const headerAssignee = renderAssigneePicker(true);
 
     const headerStatus = (
       <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange} disabled={!canOperateLead || dealStatusChange.isPending || stageMovePending}>
@@ -1779,38 +1691,7 @@ export function LeadDetailDialog({
                   disabled={!canOperateLead || !canViewProperties}
                 />}
 
-                <section className="min-w-0 rounded-[6px] bg-[var(--app-surface-soft)] px-3">
-                  <div className="flex h-8 items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2 text-[var(--app-text-secondary)]"><FileText className="h-3 w-3 shrink-0" aria-hidden="true" /><h3 className="leading-none" style={{ color: "var(--app-text-secondary)", fontSize: "11px", fontWeight: 400 }}>Documentação</h3></div>
-                    {canOperateLead && (
-                      <>
-                        <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-6 rounded-[6px] px-2 text-[10px] font-light" disabled={isUploading || Boolean(attachmentUploadDraft.draft)} onClick={() => fileInputRef.current?.click()}>
-                          {isUploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
-                          Anexar
-                        </Button>
-                        <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileUpload} />
-                      </>
-                    )}
-                  </div>
-                  {(attachmentsLoading || attachmentsError) && <div className="pb-3 pt-2"><LeadAttachmentsStatus loading={attachmentsLoading} error={attachmentsError} empty={attachments.length === 0} retrying={attachmentsFetching} onRetry={() => void refetchAttachments()} /></div>}
-                  <LeadAttachmentUploadRecovery draft={attachmentUploadDraft.draft} canRetry={canOperateLead} checking={attachmentsFetching}
-                    onCheck={() => void refetchAttachments()} onRetry={() => { if (attachmentUploadDraft.draft) void handleFileUpload({ target: { files: [attachmentUploadDraft.draft.file] } }); }} onClear={attachmentUploadDraft.clear} />
-                  {attachments.length > 0 && (
-                    <div className="space-y-2 pb-3 pt-2">
-                      {attachments.map((doc) => (
-                        <button
-                          key={doc.id}
-                          type="button"
-                          className="flex min-h-10 w-full items-center gap-2 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2 py-2 text-left text-xs font-light outline-none transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:ring-1 focus-visible:ring-primary/30"
-                          onClick={() => void handleOpenAttachment(doc)}
-                        >
-                          <FileText className="h-3.5 w-3.5 text-primary" />
-                          <span className="truncate">{doc.file_name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </section>
+                {renderAttachments(true)}
               </div>
             </div>
           )}
@@ -1822,58 +1703,7 @@ export function LeadDetailDialog({
               <div className="space-y-3 pb-4">
 
 
-                {canViewLeadSchedule && <section className="lead-agenda-card rounded-[8px] bg-[var(--app-surface-soft)] p-3">
-                  <div className="flex items-center justify-between">
-                    <div className="lead-agenda-summary min-w-0">
-                      <h3 className="text-[12px] font-normal">Agenda</h3>
-                      <p className="text-[10px] text-[var(--app-text-tertiary)]">{scheduleSummaryLabel}</p>
-                    </div>
-                    <Button
-                      size="sm"
-                      disabled={!canManageLeadSchedule}
-                      className="lead-detail-primary-action lead-agenda-action h-10 shrink-0 rounded-[6px] border-0 bg-primary/50 px-2.5 text-primary-foreground shadow-none hover:bg-primary hover:text-primary-foreground"
-                      style={mobilePrimaryActionStyle}
-                      onClick={() => {
-                        setEditingScheduleEvent(null);
-                        setScheduleDefaultType('visit');
-                        setScheduleFormOpen(true);
-                      }}
-                    >
-                      <Calendar className="h-3.5 w-3.5" />
-                      Agendar
-                    </Button>
-                  </div>
-                  {renderScheduleEvents()}
-                </section>}
-
-                <LeadCadencePanel
-                  appearance={variant === 'pipeline' ? 'pipeline' : 'default'}
-                  state={leadCadenceState}
-                  isLoading={leadCadenceLoading}
-                  error={leadCadenceError}
-                  isCompleting={cadenceActionPending || completeCadenceTask.isPending}
-                  canOperate={canOperateLead}
-                  onRetry={() => void refetchLeadCadence()}
-                  onTaskClick={handleCadenceTaskClick}
-                  onTaskInspect={(task) => { setTaskInspectOnly(true); setSelectedTask(task); setRoteiroDialogOpen(true); }}
-                />
-
-                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
-                  <Textarea
-                    aria-label="Feedback do lead"
-                    placeholder="Registre o feedback sobre atendimento, perfil ou próximos passos..."
-                    value={feedback}
-                    onChange={(event) => setFeedback(event.target.value)}
-                    disabled={!canProgressLead}
-                    rows={2}
-                    className="h-16 min-h-16 resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2.5 text-xs font-light leading-4"
-                  />
-                  <div className="mt-2 flex justify-end">
-                    <Button className="lead-detail-primary-action h-10 rounded-[6px] px-3" style={mobilePrimaryActionStyle} disabled={!canProgressLead || !feedback.trim() || updateLead.isPending} onClick={handleSaveFeedback}>
-                      Registrar feedback
-                    </Button>
-                  </div>
-                </section>
+                {renderActionSections(true)}
               </div>
             </div>
           )}
@@ -1957,52 +1787,7 @@ export function LeadDetailDialog({
             <DialogDescription>Dados, ações e histórico do lead.</DialogDescription>
           </DialogHeader>
 
-          <ScrollArea className="w-full" type="scroll">
-            <TooltipProvider delayDuration={0}>
-              <nav
-                data-tour="lead-detail-stages"
-                data-lead-stage-stepper
-                className="lead-stage-rail flex min-w-max items-center pb-3"
-                style={stageStepperStyle}
-              >
-                {stages.map((stage, idx) => {
-                  const isActive = stage.id === localLead.stage_id;
-                  const isPast = idx < currentStageIndex;
-
-                  return (
-                    <Tooltip key={stage.id}>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          disabled={!canProgressLead}
-                          aria-label={`Mover para ${stage.name}`}
-                          aria-current={isActive ? 'step' : undefined}
-                          data-lead-stage-step
-                          onClick={() => handleMoveToStage(stage.id)}
-                          className={cn(
-                            'lead-stage-step group relative flex h-8 w-8 items-center justify-center rounded-[6px] text-xs font-normal transition-colors',
-                            isActive
-                              ? (variant === 'pipeline' ? 'bg-primary/50 text-white' : 'bg-primary text-primary-foreground')
-                              : isPast
-                                ? (variant === 'pipeline' ? 'bg-primary/50 text-white' : 'bg-primary/10 text-primary')
-                                : (variant === 'pipeline'
-                                  ? 'bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-muted'
-                                  : 'bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-primary/10 hover:text-primary'),
-                          )}
-                        >
-                          {idx + 1}
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" align="center" sideOffset={8} className={stageTooltipClassName}>
-                        {stage.name}
-                      </TooltipContent>
-                    </Tooltip>
-                  );
-                })}
-              </nav>
-            </TooltipProvider>
-            <ScrollBar orientation="horizontal" className="h-1" />
-          </ScrollArea>
+          {renderStageStepper(false)}
         </div>
 
         <div className={cn('lead-detail-v2-grid grid min-h-0 flex-1 grid-cols-[280px_1fr_340px] xl:grid-cols-[330px_1fr_390px] grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden', variant === 'contacts' && 'grid-cols-[minmax(220px,0.9fr)_minmax(0,1.1fr)_minmax(240px,1fr)] xl:grid-cols-[minmax(220px,0.9fr)_minmax(0,1.1fr)_minmax(240px,1fr)] [&>div]:min-w-0')}>
@@ -2034,56 +1819,7 @@ export function LeadDetailDialog({
                 {variant === 'pipeline' && desktopHeaderTags}
 
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                  <Popover open={assigneePopoverOpen} onOpenChange={handleAssigneePopoverChange}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        aria-label="Alterar responsável pelo lead"
-                        className="h-8 min-w-0 justify-start rounded-[6px] bg-[var(--app-surface-soft)] px-3 text-xs font-light text-[var(--app-text-secondary)]"
-                        disabled={!canTransferLead}
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        <User className="mr-1.5 h-3.5 w-3.5 shrink-0" />
-                        <span className="truncate">{assigneeName || 'Sem responsável'}</span>
-                        {isUpdatingAssignee ? <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin" /> : <ChevronDown className="ml-auto h-3.5 w-3.5" />}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      className={cn('w-[300px] overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-1 shadow-none', variant === 'pipeline' && pipelineDetailStyles.portal)}
-                      align="start"
-                      collisionPadding={12}
-                      onWheelCapture={(event) => event.stopPropagation()}
-                      onTouchMoveCapture={(event) => event.stopPropagation()}
-                    >
-                      <Command filter={commandSearchFilter} className={cn("max-h-[min(72vh,420px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2", variant === 'pipeline' && pipelineDetailStyles.assigneeSearch)}>
-                        <CommandInput aria-label="Buscar responsável" placeholder="Buscar..." className="h-9 border-none focus:ring-0" />
-                        <CommandList
-                          className="max-h-[min(56vh,320px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin [-webkit-overflow-scrolling:touch]"
-                          onWheelCapture={(event) => event.stopPropagation()}
-                          onTouchMoveCapture={(event) => event.stopPropagation()}
-                        >
-                          <LeadAssigneeCatalogNotice state={allUsersState} />
-                          {!assigneeCatalogBlocked && <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">Nenhum encontrado.</CommandEmpty>}
-                          {!assigneeCatalogBlocked && <CommandGroup>
-                            <CommandItem onSelect={() => handleAssignUser(null)} className="cursor-pointer rounded-[6px] px-3 py-2">
-                              Sem responsável
-                            </CommandItem>
-                            {assignableUsers.map((user) => (
-                              <CommandItem key={user.id} onSelect={() => handleAssignUser(user.id)} className="cursor-pointer rounded-[6px] px-3 py-2">
-                                <div className="flex min-w-0 items-center gap-2">
-                                  <Avatar className="h-7 w-7">
-                                    <AvatarImage src={user.avatar_url || undefined} alt={user.name || user.email || 'Responsável'} />
-                                    <AvatarFallback className="text-[10px]">{(user.name || user.email || 'U')[0]}</AvatarFallback>
-                                  </Avatar>
-                                  <span className="truncate">{user.name || user.email}</span>
-                                </div>
-                              </CommandItem>
-                            ))}
-                          </CommandGroup>}
-                        </CommandList>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
+                  {renderAssigneePicker(false)}
 
                   <div onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                     <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange} disabled={!canOperateLead || dealStatusChange.isPending || stageMovePending}>
@@ -2145,38 +1881,7 @@ export function LeadDetailDialog({
                   disabled={!canOperateLead || !canViewProperties}
                 />}
 
-                <div data-tour="lead-detail-documents" className="min-w-0 rounded-[6px] bg-[var(--app-surface-soft)] px-3">
-                  <div className="flex h-8 items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2 text-[var(--app-text-secondary)]"><FileText className="h-3 w-3 shrink-0" aria-hidden="true" /><h3 className="leading-none" style={{ color: "var(--app-text-secondary)", fontSize: "11px", fontWeight: 400 }}>Documentação</h3></div>
-                    {canOperateLead && (
-                      <>
-                        <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-6 rounded-[6px] px-2 text-[10px] font-light" disabled={isUploading || Boolean(attachmentUploadDraft.draft)} onClick={() => fileInputRef.current?.click()}>
-                          {isUploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
-                          Anexar
-                        </Button>
-                        <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileUpload} />
-                      </>
-                    )}
-                  </div>
-                  {(attachmentsLoading || attachmentsError) && <div className="pb-3 pt-2"><LeadAttachmentsStatus loading={attachmentsLoading} error={attachmentsError} empty={attachments.length === 0} retrying={attachmentsFetching} onRetry={() => void refetchAttachments()} /></div>}
-                  <LeadAttachmentUploadRecovery draft={attachmentUploadDraft.draft} canRetry={canOperateLead} checking={attachmentsFetching}
-                    onCheck={() => void refetchAttachments()} onRetry={() => { if (attachmentUploadDraft.draft) void handleFileUpload({ target: { files: [attachmentUploadDraft.draft.file] } }); }} onClear={attachmentUploadDraft.clear} />
-                  {attachments.length > 0 && (
-                    <div className="max-h-44 space-y-2 overflow-y-auto pb-3 pr-1 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                      {attachments.map((doc) => (
-                        <button
-                          key={doc.id}
-                          type="button"
-                            className="flex w-full items-center gap-2 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2 py-2 text-left text-xs font-light outline-none transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:ring-1 focus-visible:ring-primary/30"
-                          onClick={() => void handleOpenAttachment(doc)}
-                        >
-                          <FileText className="h-3.5 w-3.5 text-primary" />
-                          <span className="truncate">{doc.file_name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {renderAttachments(false)}
 
               </section>
             </div>
@@ -2187,61 +1892,7 @@ export function LeadDetailDialog({
               <div className="space-y-4">
 
 
-                {canViewLeadSchedule && <section data-tour="lead-detail-agenda" className="lead-agenda-card rounded-[8px] bg-[var(--app-surface-soft)] p-3">
-                  <div className="flex items-center justify-between">
-                    <div className="lead-agenda-summary min-w-0">
-                      <h3 className="text-[12px] font-normal">Agenda</h3>
-                      <p className="text-[10px] text-[var(--app-text-tertiary)]">{scheduleSummaryLabel}</p>
-                    </div>
-                    <Button
-                      size="sm"
-                      disabled={!canManageLeadSchedule}
-                      className="lead-detail-primary-action lead-agenda-action h-8 shrink-0 rounded-[6px] border-0 bg-primary/50 px-2.5 text-primary-foreground shadow-none hover:bg-primary hover:text-primary-foreground"
-                      onClick={() => {
-                        setEditingScheduleEvent(null);
-                        setScheduleDefaultType('visit');
-                        setScheduleFormOpen(true);
-                      }}
-                    >
-                      <Calendar className="h-3.5 w-3.5" />
-                      Agendar
-                    </Button>
-                  </div>
-                  {renderScheduleEvents()}
-                </section>}
-
-                <LeadCadencePanel
-                  appearance={variant === 'pipeline' ? 'pipeline' : 'default'}
-                  state={leadCadenceState}
-                  isLoading={leadCadenceLoading}
-                  error={leadCadenceError}
-                  isCompleting={cadenceActionPending || completeCadenceTask.isPending}
-                  canOperate={canOperateLead}
-                  onRetry={() => void refetchLeadCadence()}
-                  onTaskClick={handleCadenceTaskClick}
-                  onTaskInspect={(task) => { setTaskInspectOnly(true); setSelectedTask(task); setRoteiroDialogOpen(true); }}
-                />
-
-                <section data-tour="lead-detail-feedback" className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
-                  <Textarea
-                    aria-label="Feedback do lead"
-                    placeholder="Registre o feedback sobre atendimento, perfil ou próximos passos..."
-                    value={feedback}
-                    onChange={(event) => setFeedback(event.target.value)}
-                    disabled={!canProgressLead}
-                    rows={2}
-                    className="h-16 min-h-16 resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2.5 text-xs font-light leading-4"
-                  />
-                  <div className="mt-2 flex justify-end">
-                    <Button
-                      className="lead-detail-primary-action h-8 rounded-[6px] px-3"
-                      disabled={!canProgressLead || !feedback.trim() || updateLead.isPending}
-                      onClick={handleSaveFeedback}
-                    >
-                      Registrar feedback
-                    </Button>
-                  </div>
-                </section>
+                {renderActionSections(false)}
               </div>
             </div>
           </main>

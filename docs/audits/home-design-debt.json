@@ -1,16 +1,16 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "35032d758fee3e8dccfaeaf3efbc6403e059166cf9ebf0327f40ff7184208f76",
-  "surfaceInventoryDigestSha256": "983a9d73e66d594cda210f4ad81d069f17547668aea84a1979943b261a5c76e4",
+  "sourceDigestSha256": "daff213168df70dc0f7f11cbf0963cc02b394a0785102aa5f91609295fdf2ccc",
+  "surfaceInventoryDigestSha256": "dfef0b69f3afb02de1b57732238acc4b118238d0ea7bd595a15e46ef761f2549",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 675,
+    "filesScanned": 691,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
-    "filesWithFindings": 72,
+    "filesWithFindings": 73,
     "findings": 162,
-    "protectedReachableFilesWithFindings": 68,
+    "protectedReachableFilesWithFindings": 69,
     "protectedReachableFindings": 158,
     "bySurfaceScope": {
       "protected-only": 116,
@@ -208,15 +208,6 @@
       }
     },
     {
-      "file": "components/features/chat/FloatingChat.tsx",
-      "count": 2,
-      "score": 7,
-      "rules": {
-        "heavy-shadow": 1,
-        "heavy-font": 1
-      }
-    },
-    {
       "file": "components/features/admin/home-publications/PublicationImageField.tsx",
       "count": 2,
       "score": 6,
@@ -306,6 +297,14 @@
       "score": 4,
       "rules": {
         "hardcoded-surface": 2
+      }
+    },
+    {
+      "file": "components/features/chat/FloatingConversationFilters.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
       }
     },
     {
@@ -437,6 +436,14 @@
       }
     },
     {
+      "file": "components/features/chat/FloatingChatHeader.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "heavy-font": 1
+      }
+    },
+    {
       "file": "components/features/dashboard/CampaignLeadsChart.tsx",
       "count": 1,
       "score": 3,
@@ -486,14 +493,6 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceSummary.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/properties/detail/tabs/KeysTab.tsx",
       "count": 1,
       "score": 3,
       "rules": {
@@ -629,15 +628,6 @@
       }
     },
     {
-      "file": "components/features/chat/FloatingChat.tsx",
-      "count": 2,
-      "score": 7,
-      "rules": {
-        "heavy-shadow": 1,
-        "heavy-font": 1
-      }
-    },
-    {
       "file": "components/features/admin/home-publications/PublicationImageField.tsx",
       "count": 2,
       "score": 6,
@@ -727,6 +717,14 @@
       "score": 4,
       "rules": {
         "hardcoded-surface": 2
+      }
+    },
+    {
+      "file": "components/features/chat/FloatingConversationFilters.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
       }
     },
     {
@@ -842,6 +840,14 @@
       }
     },
     {
+      "file": "components/features/chat/FloatingChatHeader.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "heavy-font": 1
+      }
+    },
+    {
       "file": "components/features/dashboard/CampaignLeadsChart.tsx",
       "count": 1,
       "score": 3,
@@ -907,14 +913,6 @@
     },
     {
       "file": "components/features/properties/detail/tabs/TechnicalTab.tsx",
-      "count": 1,
-      "score": 3,
-      "rules": {
-        "oversized-radius": 1
-      }
-    },
-    {
-      "file": "components/features/properties/developments/PropertyDevelopmentsScreen.tsx",
       "count": 1,
       "score": 3,
       "rules": {
@@ -1077,24 +1075,6 @@
       "weight": 3
     },
     {
-      "file": "components/features/chat/FloatingChat.tsx",
-      "line": 276,
-      "match": "shadow-[0_8px_24px_rgba",
-      "priority": "P1",
-      "rule": "heavy-shadow",
-      "surfaceScope": "protected-and-public",
-      "weight": 4
-    },
-    {
-      "file": "components/features/chat/FloatingChat.tsx",
-      "line": 1873,
-      "match": "font-semibold",
-      "priority": "P1",
-      "rule": "heavy-font",
-      "surfaceScope": "protected-and-public",
-      "weight": 3
-    },
-    {
       "file": "components/features/chat/FloatingChatButton.tsx",
       "line": 162,
       "match": "shadow-[0_8px_24px_rgba",
@@ -1107,6 +1087,24 @@
       "file": "components/features/chat/FloatingChatButton.tsx",
       "line": 162,
       "match": "shadow-[0_10px_28px_rgba",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/features/chat/FloatingChatHeader.tsx",
+      "line": 105,
+      "match": "font-semibold",
+      "priority": "P1",
+      "rule": "heavy-font",
+      "surfaceScope": "protected-and-public",
+      "weight": 3
+    },
+    {
+      "file": "components/features/chat/FloatingConversationFilters.tsx",
+      "line": 84,
+      "match": "shadow-[0_8px_24px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
       "surfaceScope": "protected-and-public",

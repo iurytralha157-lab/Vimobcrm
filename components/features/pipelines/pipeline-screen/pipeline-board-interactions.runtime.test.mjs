@@ -57,21 +57,22 @@ before(async () => {
   // LeadCard's real operation scope now consumes the app's QueryClient and SID.
   // Keep that hook real; provide the same provider boundary to both consumers.
   await writeFile(entry, `import React from'react';import{createRoot}from'react-dom/client';import{QueryClient,QueryClientProvider}from'@tanstack/react-query';import{PipelineBoard as RawBoard}from${JSON.stringify(join(repository, 'components/features/pipelines/pipeline-screen/PipelineBoard.tsx'))};import{Dialog,DialogContent,DialogTitle,DialogDescription}from'@/components/ui/dialog';import{Drawer,DrawerContent,DrawerTitle,DrawerDescription}from'@/components/ui/drawer';
-    function PipelineBoard(props){return React.createElement(React.Profiler,{id:'board',onRender:(id,phase,actualDuration)=>window.h.renders.push({phase,actualDuration})},React.createElement(RawBoard,props))};const h=window.h={renders:[],cardRenders:0,opened:0,chats:0,active:0,sidebar:216,dragging:false,mobile:innerWidth<768,overlay:null,critical:false,transition:false,single:false,rootClicks:0,rootPointers:0};
+    function PipelineBoard(props){
+      const {handleMobileStageNavigation,...navigation}=usePipelineBoardNavigation({filteredStages:props.filteredStages,pipelineBoardQueryKeyId:h.scrollScope||'',isMobile:props.isMobile,shouldLoadPipelineLeads:!!h.scrollScope});
+      return React.createElement(React.Profiler,{id:'board',onRender:(id,phase,actualDuration)=>window.h.renders.push({phase,actualDuration})},React.createElement(RawBoard,{...props,...navigation,onMobileStageNavigation:handleMobileStageNavigation}));
+    };const h=window.h={renders:[],cardRenders:0,opened:0,chats:0,sidebar:216,dragging:false,mobile:innerWidth<768,overlay:null,critical:false,transition:false,single:false,rootClicks:0,rootPointers:0};
     h.stages=Array.from({length:5},(_,stage)=>({id:'stage'+stage,name:'Etapa sintética '+stage+' com nome longo',color:'#ff4529',is_qualified:stage===2,total_lead_count:6,total_value:3600000,leads:Array.from({length:6},(_,index)=>({id:'lead'+stage+'-'+index,stage_id:'stage'+stage,name:'Lead sintético '+stage+'-'+index+' com nome longo',phone:'5511999999999',email:'lead@example.invalid',can_operate:true,organization_id:'synthetic-org',assigned_user_id:'synthetic-user',assignee:{name:'Corretor'},created_at:'2026-10-01T12:00:00Z',stage_entered_at:'2026-10-01T12:00:00Z',source:'meta',lead_meta:[{platform:'meta',campaign_name:'Campanha sintética com nome bastante longo'}],tags:[{name:'Prioridade '.repeat(12),color:'#ff4529'}],valor_interesse:600000}))}));
     const sourceVariants=[{}, {source:'whatsapp'}, {source:'google',lead_meta:[{platform:'google',campaign_name:'Campanha sintética Google'}]}, {source:'site',lead_meta:[],interest_property:{code:'TESTE-123',title:'Imóvel sintético'}}, {source:'manual',lead_meta:[]}, {source:'indicacao',lead_meta:[]}];
     h.stages.forEach(stage=>stage.leads.forEach((lead,index)=>Object.assign(lead,sourceVariants[index])));
     const noop=()=>{};const onOpenLead=()=>{h.opened++};const root=createRoot(document.getElementById('root'));const queryClient=new QueryClient({defaultOptions:{queries:{retry:false,gcTime:Infinity},mutations:{retry:false}}});const renderWithQueries=element=>root.render(React.createElement(QueryClientProvider,{client:queryClient},element));
     h.shell=()=>React.createElement('div',{className:'app-shell',style:{height:'100vh',display:'flex',overflow:'hidden'}},!h.mobile&&React.createElement('aside',{style:{width:h.sidebar,flexShrink:0}},'Sidebar'),React.createElement('main',{onClick:()=>{h.rootClicks++},onPointerDown:()=>{h.rootPointers++},style:{flex:1,minWidth:0,minHeight:0,display:'flex',flexDirection:'column',padding:h.mobile?'64px 20px 65px':'76px 24px 12px'}},React.createElement('div',{style:{height:52,flexShrink:0}},'Pipeline'),React.createElement(PipelineBoard,{
-      stages:h.stages,filteredStages:h.single?h.stages.slice(0,1):h.stages,visibleStages:h.mobile?[h.stages[h.active]]:h.stages,stageValueMap:new Map(h.stages.map(s=>[s.id,{totalValue:s.total_value}])),stageCountMetaMap:new Map(h.stages.map(s=>[s.id,{total:6,remaining:0,canLoadMore:false}])),selectedPipelineId:'pipeline',pendingMoveLeadIds:h.pendingMoveLeadIds,isMobile:h.mobile,isLoading:false,isInitialLeadsLoading:false,isPipelineBoardTransitioning:h.transition,leadsPlaceholderData:false,hasCriticalLoadError:h.critical,hasPipelineBoardError:false,isRefreshing:false,pipelinesFetching:false,leadVisibilityFetching:false,hasPreviousMobileStage:h.active>0,hasNextMobileStage:h.active<4,canEditPipeline:true,hasWhatsAppModule:true,canViewWhatsApp:true,canOperateWhatsApp:true,canShowColumnActions:!h.mobile,isDragDisabled:false,nowMs:h.nowMs||Date.parse('2026-10-12T12:00:00Z'),editingStageId:null,editingStageName:'',savingStageNameId:null,loadMoreIsPending:false,onDragStart:()=>{h.dragging=true},onDragEnd:result=>{h.dragging=false;h.drop=result},onCriticalLoadRetry:noop,onBoardRefresh:noop,onMobileStageNavigation:direction=>{h.active+=direction==='next'?1:-1;h.render()},onEditingStageNameChange:noop,onStartEditingStage:noop,onCommitStageName:noop,onCancelEditingStage:noop,onOpenStageSettings:(stage,tab)=>{h.settingsRequests=(h.settingsRequests||[]).concat({stageId:stage.id,tab})},onOpenLead:onOpenLead,onAssignLeadNow:noop,onLoadMore:noop,onCreateStage:noop,onCreatePipeline:noop
+      stages:h.stages,filteredStages:h.single?h.stages.slice(0,1):h.stages,stageValueMap:new Map(h.stages.map(s=>[s.id,{totalValue:s.total_value}])),stageCountMetaMap:new Map(h.stages.map(s=>[s.id,{total:6,remaining:0,canLoadMore:false}])),selectedPipelineId:'pipeline',pendingMoveLeadIds:h.pendingMoveLeadIds,isMobile:h.mobile,isLoading:false,isInitialLeadsLoading:false,isPipelineBoardTransitioning:h.transition,leadsPlaceholderData:false,hasCriticalLoadError:h.critical,hasPipelineBoardError:false,isRefreshing:false,pipelinesFetching:false,leadVisibilityFetching:false,canEditPipeline:true,hasWhatsAppModule:true,canViewWhatsApp:true,canOperateWhatsApp:true,canShowColumnActions:!h.mobile,isDragDisabled:false,nowMs:h.nowMs||Date.parse('2026-10-12T12:00:00Z'),editingStageId:null,editingStageName:'',savingStageNameId:null,loadMoreIsPending:false,onDragStart:()=>{h.dragging=true},onDragEnd:result=>{h.dragging=false;h.drop=result},onCriticalLoadRetry:noop,onBoardRefresh:noop,onEditingStageNameChange:noop,onStartEditingStage:noop,onCommitStageName:noop,onCancelEditingStage:noop,onOpenStageSettings:(stage,tab)=>{h.settingsRequests=(h.settingsRequests||[]).concat({stageId:stage.id,tab})},onOpenLead:onOpenLead,onAssignLeadNow:noop,onLoadMore:noop,onCreateStage:noop,onCreatePipeline:noop
     })));
     h.render=()=>renderWithQueries(React.createElement(React.Fragment,null,h.shell(),h.overlay==='dialog'?React.createElement(Dialog,{open:true,onOpenChange:noop},React.createElement(DialogContent,null,React.createElement(DialogTitle,null,'Popup sintético'),React.createElement(DialogDescription,null,'Teste da camada real Radix'))):h.overlay==='drawer'?React.createElement(Drawer,{open:true,onOpenChange:noop,shouldScaleBackground:false},React.createElement(DrawerContent,{showHandle:false,style:{height:'80dvh'}},React.createElement(DrawerTitle,null,'Drawer sintético'),React.createElement(DrawerDescription,null,'Teste da camada real Vaul'))):null));h.render();`);
 
   let entrySource = await readFile(entry, 'utf8');
-  entrySource = "import{getPipelineBoardScrollMemory}from'@/hooks/pipelines/use-pipeline-board-scroll';import{canManagePipeline,canEditStageOperationalRules,canViewStageAutomations}from'@/lib/access/pipeline-settings-access';\n" + entrySource;
-  entrySource = entrySource
-    .replace('stages:h.stages,filteredStages:', 'scrollMemory:h.scrollScope?getPipelineBoardScrollMemory(queryClient,h.scrollScope,h.mobile):null,stages:h.stages,filteredStages:')
-    .replace('h.shell(),h.overlay', 'h.away?null:h.shell(),h.overlay');
+  entrySource = "import{usePipelineBoardNavigation}from'@/hooks/pipelines/use-pipeline-board-scroll';import{canManagePipeline,canEditStageOperationalRules,canViewStageAutomations}from'@/lib/access/pipeline-settings-access';\n" + entrySource;
+  entrySource = entrySource.replace('h.shell(),h.overlay', 'h.away?null:h.shell(),h.overlay');
   entrySource = entrySource.replace("import React from'react';", "import React from'react';import{DragDropContext,Droppable}from'@hello-pangea/dnd';import{LeadCard}from'@/components/features/leads/LeadCard';")
     .replace('canEditPipeline:true,', 'canEditPipeline:h.stagePermissions?canManagePipeline(key=>h.stagePermissions.includes(key)):true,canOpenStageSettings:h.stagePermissions?canEditStageOperationalRules(key=>h.stagePermissions.includes(key))||canViewStageAutomations(key=>h.stagePermissions.includes(key),!!h.stageAutomationModule):undefined,')
     .replace('onOpenLead:onOpenLead', 'onOpenLead:h.overrideOpen||onOpenLead')
@@ -172,6 +173,27 @@ test('returning to the same board restores both column offsets and horizontal sc
       return board?.scrollLeft === 0 && [...board.querySelectorAll('[data-pipeline-drop-column]')].every(column => column.scrollTop === 0);
     });
     assert.deepEqual(await positions(), [0, 0, 0]);
+  } finally {
+    await page.close();
+  }
+});
+
+test('mobile stage navigation remembers the active column only for the same board scope', async () => {
+  const page = await openBoard(390, 844);
+  const navigation = page.getByRole('navigation', { name: 'Navegar entre as etapas da Pipeline' });
+  const first = page.locator('[data-pipeline-drop-column="stage0"]');
+  const second = page.locator('[data-pipeline-drop-column="stage1"]');
+  try {
+    await page.evaluate(() => { window.h.scrollScope = 'board-a'; window.h.render(); });
+    await navigation.getByRole('button', { name: 'Ver próxima coluna' }).click();
+    await second.waitFor();
+    await page.evaluate(() => { window.h.away = true; window.h.render(); });
+    await second.waitFor({ state: 'detached' });
+    await page.evaluate(() => { window.h.away = false; window.h.render(); });
+    await second.waitFor();
+    await page.evaluate(() => { window.h.scrollScope = 'board-b'; window.h.render(); });
+    await first.waitFor();
+    assert.equal(await second.count(), 0);
   } finally {
     await page.close();
   }
@@ -538,10 +560,8 @@ for (const [width, height] of [[360, 640], [390, 844]]) test(`mobile controls st
   try {
     const navigation = page.getByRole('navigation', { name: 'Navegar entre as etapas da Pipeline' });
     await navigation.getByRole('button', { name: 'Ver próxima coluna' }).click();
-    await page.waitForFunction(() => window.h.active === 1);
     await page.locator('[data-pipeline-drop-column="stage1"]').waitFor();
     await navigation.getByRole('button', { name: 'Ver coluna anterior' }).click();
-    await page.waitForFunction(() => window.h.active === 0);
     await page.locator('[data-pipeline-drop-column="stage0"]').waitFor();
     assert.deepEqual(await page.evaluate(() => [window.h.opened, window.h.chats, window.h.rootClicks, window.h.rootPointers]), [0, 0, 0, 0]);
     const metrics = await page.evaluate(() => {

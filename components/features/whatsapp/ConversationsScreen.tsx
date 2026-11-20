@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AppLayout } from "@/components/shared/layout/AppLayout";
+import { ConversationsLayout } from "@/components/features/whatsapp/conversations/ConversationsLayout";
 import { ConversationHeader } from "@/components/features/whatsapp/ConversationHeader";
 import { ConversationLeadPanel, ConversationUnregisteredPanel } from "@/components/features/whatsapp/ConversationLeadPanel";
 import { EnterAttendanceDialog } from "@/components/features/whatsapp/EnterAttendanceDialog";
@@ -46,7 +46,7 @@ import { ConversationHistorySearch } from "@/components/features/whatsapp/conver
 import { ConversationDetailsPane } from "@/components/features/whatsapp/conversations/ConversationDetailsPane";
 import { useConversationDetailsLayout } from "@/hooks/whatsapp/use-conversation-details-layout";
 import { flattenWhatsAppMessagePages } from "@/lib/whatsapp-query-cache";
-import { useWhatsAppMediaGallery } from "@/hooks/use-whatsapp-media-gallery";
+import { useWhatsAppMediaGallery } from "@/hooks/whatsapp/use-whatsapp-media-gallery";
 import { useWhatsAppUnread } from "@/hooks/use-whatsapp-unread";
 import { useAccessibleSessions } from "@/hooks/use-accessible-sessions";
 import { useWhatsAppAttendanceGate, type WhatsAppAttendanceTarget } from "@/hooks/use-whatsapp-attendance";
@@ -1670,347 +1670,211 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     </ConversationDetailsPane>
   ) : null;
 
-  // On small screens, keep the conversation first; details open on request.
-  if (isMobile) {
-    return (
-      <AppLayout title="Conversas" disableMainScroll>
-        <div ref={bindDetailsContainer} data-conversations-mobile-surface className="app-card flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-          {selectedConversation ? (
-            <div className="relative flex flex-col h-full overflow-hidden" onDrop={attachments.onDrop} onDragOver={attachments.onDragOver}>
-              <MobileConversationHeader
-                onCreateLead={canCreateLeads && selectedConversation && !selectedLeadId ? () => openCreateLeadForConversation(selectedConversation) : undefined}
-                conversation={selectedConversation}
-                selectedLeadId={selectedLeadId}
-				canOperateWhatsApp={canManageSelectedWhatsAppConversation}
-                isArchiving={archiveConversation.isPendingFor?.(selectedConversation) ?? false}
-                onLinkLead={canReassignSelectedLead ? openLeadLinkPanel : undefined}
-                onToggleLeadPanel={canShowLeadPanel ? () => setLeadPanelOpen(!showLeadPanel) : undefined}
-                showLeadPanel={showLeadPanel}
-                actionsButtonRef={conversationActionsRef}
-                searchButtonRef={conversationSearchRef}
-                onSearch={activePlatform === "whatsapp" ? () => messageNavigation.setOpen(!messageNavigation.open) : undefined}
-                searchOpen={messageNavigation.open}
-                onBack={handleBackToList}
-                onArchive={() => handleArchive(selectedConversation)}
-                onDelete={() => handleDelete(selectedConversation)}
-              />
-              {activePlatform === "whatsapp" && <ConversationHistorySearch navigation={messageNavigation} onClose={() => conversationSearchRef.current?.focus({ preventScroll: true })} />}
-              <ConversationMessages
-                layout="mobile"
-                viewerUserId={currentUserId}
-                viewerAvatarUrl={profile?.id === user?.id ? profile?.avatar_url ?? null : null}
-                viewerAvatarName={profile?.id === user?.id ? profile?.name ?? null : null}
-                activePlatform={activePlatform}
-                conversation={selectedConversation}
-                messages={visibleMessages}
-                senderAvatars={senderAvatars}
-                firstUnreadMessageId={unread.firstUnreadMessageId}
-                unreadCount={unread.unreadCount}
-                mediaGallery={mediaGallery}
-                mediaGalleryScopeKey={audioContextKey}
-                onNavigateQuoted={(message, id) => messageNavigation.navigateTo(id, { conversationId: message.conversation_id, sessionId: message.session_id })}
-                isLoading={loadingMessages}
-                isError={messagesFailed}
-                onRetryMessages={() => void refetchMessages()}
-                hasOlderMessages={hasOlderMessages}
-                isLoadingOlder={isLoadingOlder}
-                olderMessagesFailed={olderMessagesFailed}
-                onLoadOlderMessages={() => { isUserScrollingRef.current = true; void loadOlderMessages(); }}
-                messagesEndRef={messagesEndRef}
-                onScrollCapture={handleMessagesScroll}
-                onScrollToLatest={scrollMessagesToLatest}
-                atBottom={readScrollState.scope !== messageScrollContext || readScrollState.atBottom}
-				canOperateWhatsApp={canMutateSelectedWhatsAppConversation}
-                canOperateLeads={canOperateLeads}
-                selectedLeadId={selectedLeadId}
-                onRetryMedia={retryMediaDownload}
-                reactionsByMessageId={reactionsByMessageId}
-                onReply={!audioDisabled ? handleReply : undefined}
-                onRecoverText={!audioDisabled ? (message) => { if (audioContextRef.current === audioContextKey) setMessageText(message.content || ""); } : undefined}
-                onCheckSend={originalOrganization ? (message) => handleResolveAudio(String(message.client_message_id || message.metadata?.client_message_id || message.id)) : undefined}
-                onOpenLead={canOperateLeads && selectedLeadId ? () => router.push(`/crm/pipelines?lead=${selectedLeadId}`) : undefined}
-                onDiscardLocal={(message) => { if (selectedConversation && audioContextRef.current === audioContextKey) discardLocalMessage({ conversation: selectedConversation, message }); }}
-                attendanceEntries={attendanceGate.entries}
-                onReact={handleReactToMessage}
-                reactingMessageId={reactToMessage.isPending
-                  ? reactToMessage.variables?.targetMessage.id ?? null
-                  : null}
-              />
-              {ownWhatsAppStart.notice?.preserveComposer && ownWhatsAppStartNotice}
-              <ConversationComposer
-                layout="mobile"
-                startNotice={ownWhatsAppStart.notice?.preserveComposer ? undefined : ownWhatsAppStartNotice}
-                readOnly={!canComposeSelectedConversation}
-                whatsAppControls={activePlatform === "whatsapp"}
-                attachments={activePlatform === "whatsapp" ? attachments : undefined}
-                inputRef={messageInputRef}
-                fileInputRef={fileInputRef}
-                onFileSelect={handleFileSelect}
-                messageText={messageText}
-                onMessageTextChange={setMessageText}
-                onSendMessage={() => void handleSendMessage()}
-                onKeyDown={handleKeyPress}
-                placeholder={messageInputPlaceholder}
-                disabled={messageInputDisabled}
-                isSending={activePlatform === "whatsapp" ? sendTextMessage.isPending : sendMetaMessage.isPending}
-                selectedLeadId={selectedLeadId}
-                canStartAutomations={canStartSelectedConversationAutomation}
-                hasActiveAutomation={hasActiveLeadAutomation}
-                isLoadingAutomationState={activeLeadAutomations.isPending}
-                isAutomationStateUnavailable={activeLeadAutomations.isError}
-                onStartAutomation={() => setShowAutomationDialog(true)}
-                onCancelAutomation={() => {
-                  if (selectedLeadId) cancelLeadExecutions.mutate(selectedLeadId);
-                }}
-                isCancellingAutomation={cancelLeadExecutions.isPending}
-                audioContextKey={audioContextKey}
-                audioDisabled={audioDisabled}
-                onResolveAudio={handleResolveAudio}
-                quotedMessage={replyTarget ? toWhatsAppQuote(replyTarget) : null}
-                onClearQuote={() => setReplySelection(null)}
-                onSendAudio={handleSendAudio}
-              />
-              {conversationDetails}
-            </div>
-          ) : (
-            <div className="flex flex-col h-full">
-              <ConversationFilters
-                layout="mobile"
-                {...conversationToolbarProps}
-              />
-              <ConversationList
-                layout="mobile"
-                previewCardRef={activePlatform === "whatsapp" ? visibleCanonicalPreviews.previewCardRef : undefined}
-                channel={activePlatform === "whatsapp" ? "whatsapp" : "meta"}
-                conversations={filteredConversations}
-                getDraftText={activePlatform === "whatsapp" ? c => conversationDraft.getConversationDraft(c.id, getWhatsAppConversationMessageScope(c).expectedLeadId) : undefined}
-                currentUserId={currentUserId}
-                isLoading={loadingConversations}
-                isSearching={searchingConversations}
-                isError={conversationsFailed}
-                onRetry={() => void refetchConversations()}
-                sessionsDisconnected={!loadingSessions && sessions?.length === 0}
-                canManageWhatsApp={canManageWhatsApp}
-                onConnectWhatsApp={() => router.push("/settings?tab=whatsapp")}
-				canOperate={canOperateWhatsApp}
-                canManageTags={canOperateLeads}
-                canCreateLead={canCreateLeads}
-                availableTags={availableTags}
-                isTagsLoading={loadingTags || fetchingTags}
-                isTagsError={tagsFailed}
-                onRetryTags={() => void refetchTags()}
-                isArchiving={(conversation) => archiveConversation.isPendingFor?.(conversation) ?? false}
-                isTagUpdating={() => addLeadTag.isPending || removeLeadTag.isPending}
-                onSelect={setSelectedConversation}
-                onArchive={handleArchive}
-                onDelete={handleDelete}
-                onAddTag={(conversation, tagId) => conversation.lead && addLeadTag.mutate({
-                  leadId: conversation.lead.id,
-                  tagId,
-                })}
-                onRemoveTag={(conversation, tagId) => conversation.lead && removeLeadTag.mutate({
-                  leadId: conversation.lead.id,
-                  tagId,
-                })}
-                onCreateLead={openCreateLeadForConversation}
-            onViewLead={(leadId) => router.push(`/crm/pipelines?lead=${leadId}`)}
-                formatTime={formatConversationTime}
-                hasMoreConversations={activePlatform === "whatsapp" && hasMoreConversations}
-                isLoadingMoreConversations={isLoadingMoreConversations}
-                onLoadMoreConversations={() => void loadMoreConversations()}
-                returnPositionKey={mobileConversationListPositionKey}
-                returnPosition={mobileConversationListReturnPosition}
-                onReturnPositionChange={setMobileConversationListReturnPosition}
-              />
-            </div>
-          )}
-        </div>
-        {conversationOverlays}
-      </AppLayout>
-    );
-  }
+  const layout = isMobile ? "mobile" : "desktop";
+  const isWhatsApp = activePlatform === "whatsapp";
+  const whatsappInbox = isMobile || isWhatsApp;
+  const conversationInbox = (
+    <>
+      <ConversationFilters layout={layout} {...conversationToolbarProps} />
+      <ConversationList
+        layout={layout}
+        previewCardRef={isWhatsApp ? visibleCanonicalPreviews.previewCardRef : undefined}
+        getDraftText={isWhatsApp ? c => conversationDraft.getConversationDraft(c.id, getWhatsAppConversationMessageScope(c).expectedLeadId) : undefined}
+        channel={isWhatsApp ? "whatsapp" : "meta"}
+        conversations={whatsappInbox ? filteredConversations : (metaConversations || []).map(toScreenConversation)}
+        selectedConversationId={isMobile ? undefined : selectedConversationId || undefined}
+        currentUserId={currentUserId}
+        isLoading={whatsappInbox ? loadingConversations : loadingMetaConversations}
+        isSearching={searchingConversations}
+        isError={whatsappInbox && conversationsFailed}
+        onRetry={() => void refetchConversations()}
+        sessionsDisconnected={isMobile ? !loadingSessions && sessions?.length === 0 : undefined}
+        canManageWhatsApp={canManageWhatsApp}
+        onConnectWhatsApp={() => router.push("/settings?tab=whatsapp")}
+        canOperate={whatsappInbox && canOperateWhatsApp}
+        canManageTags={canOperateLeads}
+        canCreateLead={whatsappInbox && canCreateLeads}
+        availableTags={availableTags}
+        isTagsLoading={loadingTags || fetchingTags}
+        isTagsError={tagsFailed}
+        onRetryTags={() => void refetchTags()}
+        isArchiving={(conversation) => archiveConversation.isPendingFor?.(conversation) ?? false}
+        isTagUpdating={() => addLeadTag.isPending || removeLeadTag.isPending}
+        onSelect={setSelectedConversation}
+        onArchive={whatsappInbox ? handleArchive : () => {}}
+        onDelete={whatsappInbox ? handleDelete : () => {}}
+        onAddTag={(conversation, tagId) => conversation.lead && addLeadTag.mutate({
+          leadId: conversation.lead.id,
+          tagId,
+        })}
+        onRemoveTag={(conversation, tagId) => conversation.lead && removeLeadTag.mutate({
+          leadId: conversation.lead.id,
+          tagId,
+        })}
+        onCreateLead={openCreateLeadForConversation}
+        onViewLead={(leadId) => router.push(`/crm/pipelines?lead=${leadId}`)}
+        formatTime={formatConversationTime}
+        hasMoreConversations={isWhatsApp && hasMoreConversations}
+        isLoadingMoreConversations={isLoadingMoreConversations}
+        onLoadMoreConversations={() => void loadMoreConversations()}
+        returnPositionKey={isMobile ? mobileConversationListPositionKey : undefined}
+        returnPosition={isMobile ? mobileConversationListReturnPosition : undefined}
+        onReturnPositionChange={isMobile ? setMobileConversationListReturnPosition : undefined}
+      />
+    </>
+  );
 
-  // Desktop Layout
-  const desktopConversations = activePlatform === "whatsapp"
-    ? filteredConversations
-    : (metaConversations || []).map(toScreenConversation);
+  const conversationThread = selectedConversation ? (
+    <>
+      {isMobile ? (
+        <MobileConversationHeader
+          onCreateLead={canCreateLeads && selectedConversation && !selectedLeadId ? () => openCreateLeadForConversation(selectedConversation) : undefined}
+          conversation={selectedConversation}
+          selectedLeadId={selectedLeadId}
+          canOperateWhatsApp={canManageSelectedWhatsAppConversation}
+          isArchiving={archiveConversation.isPendingFor?.(selectedConversation) ?? false}
+          onLinkLead={canReassignSelectedLead ? openLeadLinkPanel : undefined}
+          onToggleLeadPanel={canShowLeadPanel ? () => setLeadPanelOpen(!showLeadPanel) : undefined}
+          showLeadPanel={showLeadPanel}
+          actionsButtonRef={conversationActionsRef}
+          searchButtonRef={conversationSearchRef}
+          onSearch={activePlatform === "whatsapp" ? () => messageNavigation.setOpen(!messageNavigation.open) : undefined}
+          searchOpen={messageNavigation.open}
+          onBack={handleBackToList}
+          onArchive={() => handleArchive(selectedConversation)}
+          onDelete={() => handleDelete(selectedConversation)}
+        />
+      ) : (
+        <ConversationHeader
+          contactName={selectedConversation.lead?.name || selectedConversation.contact_name}
+          contactPhone={selectedConversation.contact_phone}
+          contactPicture={getConversationAvatarUrl(selectedConversation)}
+          contactPictureFallback={selectedConversation.contact_picture}
+          contactPresence={selectedConversation.contact_presence}
+          contactPresenceUpdatedAt={selectedConversation.presence_updated_at}
+          isGroup={selectedConversation.is_group}
+          isArchived={!!selectedConversation.archived_at}
+          leadId={selectedLeadId}
+          leadTags={selectedConversation.lead?.tags}
+          leadAssigneeName={selectedConversation.lead?.assignee?.name}
+          leadAssigneeIsCurrentUser={!selectedConversation.lead?.assignee?.id || !currentUserId || selectedConversation.lead.assignee.id === currentUserId}
+          pipelineName={selectedConversation.lead?.pipeline?.name}
+          stageName={selectedConversation.lead?.stage?.name}
+          stageColor={selectedConversation.lead?.stage?.color}
+          conversationId={selectedConversation.id}
+          sessionId={selectedConversation.session_id}
+          remoteJid={selectedConversation.remote_jid}
+          onArchive={() => handleArchive(selectedConversation)}
+          onDelete={() => handleDelete(selectedConversation)}
+          canOperate={canManageSelectedWhatsAppConversation}
+          isArchiving={archiveConversation.isPendingFor?.(selectedConversation) ?? false}
+          onCreateLead={canCreateLeads ? () => openCreateLeadForConversation(selectedConversation) : undefined}
+          onReassignLead={canReassignSelectedLead ? openLeadLinkPanel : undefined}
+          onToggleLeadPanel={canShowLeadPanel ? () => setLeadPanelOpen(!showLeadPanel) : undefined}
+          actionsButtonRef={conversationActionsRef}
+          searchButtonRef={conversationSearchRef}
+          onSearch={activePlatform === "whatsapp" ? () => messageNavigation.setOpen(!messageNavigation.open) : undefined}
+          searchOpen={messageNavigation.open}
+          showLeadPanel={showLeadPanel}
+        />
+      )}
+      {activePlatform === "whatsapp" && <ConversationHistorySearch navigation={messageNavigation} onClose={() => conversationSearchRef.current?.focus({ preventScroll: true })} />}
+      <ConversationMessages
+        layout={layout}
+        viewerUserId={currentUserId}
+        viewerAvatarUrl={profile?.id === user?.id ? profile?.avatar_url ?? null : null}
+        viewerAvatarName={profile?.id === user?.id ? profile?.name ?? null : null}
+        activePlatform={activePlatform}
+        conversation={selectedConversation}
+        messages={visibleMessages}
+        senderAvatars={senderAvatars}
+        firstUnreadMessageId={unread.firstUnreadMessageId}
+        unreadCount={unread.unreadCount}
+        mediaGallery={mediaGallery}
+        mediaGalleryScopeKey={audioContextKey}
+        onNavigateQuoted={(message, id) => messageNavigation.navigateTo(id, { conversationId: message.conversation_id, sessionId: message.session_id })}
+        isLoading={loadingMessages}
+        isError={messagesFailed}
+        onRetryMessages={() => void refetchMessages()}
+        hasOlderMessages={hasOlderMessages}
+        isLoadingOlder={isLoadingOlder}
+        olderMessagesFailed={olderMessagesFailed}
+        onLoadOlderMessages={() => { isUserScrollingRef.current = true; void loadOlderMessages(); }}
+        messagesEndRef={messagesEndRef}
+        onScrollCapture={handleMessagesScroll}
+        onScrollToLatest={scrollMessagesToLatest}
+        atBottom={readScrollState.scope !== messageScrollContext || readScrollState.atBottom}
+        canOperateWhatsApp={canMutateSelectedWhatsAppConversation}
+        canOperateLeads={canOperateLeads}
+        selectedLeadId={selectedLeadId}
+        onRetryMedia={retryMediaDownload}
+        reactionsByMessageId={reactionsByMessageId}
+        onReply={!audioDisabled ? handleReply : undefined}
+        onRecoverText={!audioDisabled ? (message) => { if (audioContextRef.current === audioContextKey) setMessageText(message.content || ""); } : undefined}
+        onCheckSend={originalOrganization ? (message) => handleResolveAudio(String(message.client_message_id || message.metadata?.client_message_id || message.id)) : undefined}
+        onOpenLead={canOperateLeads && selectedLeadId ? () => router.push(`/crm/pipelines?lead=${selectedLeadId}`) : undefined}
+        onDiscardLocal={(message) => { if (selectedConversation && audioContextRef.current === audioContextKey) discardLocalMessage({ conversation: selectedConversation, message }); }}
+        attendanceEntries={attendanceGate.entries}
+        onReact={handleReactToMessage}
+        reactingMessageId={reactToMessage.isPending
+          ? reactToMessage.variables?.targetMessage.id ?? null
+          : null}
+      />
+      {ownWhatsAppStart.notice?.preserveComposer && ownWhatsAppStartNotice}
+      <ConversationComposer
+        layout={layout}
+        startNotice={ownWhatsAppStart.notice?.preserveComposer ? undefined : ownWhatsAppStartNotice}
+        readOnly={!canComposeSelectedConversation}
+        whatsAppControls={activePlatform === "whatsapp"}
+        attachments={activePlatform === "whatsapp" ? attachments : undefined}
+        inputRef={messageInputRef}
+        fileInputRef={fileInputRef}
+        onFileSelect={handleFileSelect}
+        messageText={messageText}
+        onMessageTextChange={setMessageText}
+        onSendMessage={() => void handleSendMessage()}
+        onKeyDown={handleKeyPress}
+        placeholder={messageInputPlaceholder}
+        disabled={messageInputDisabled}
+        isSending={activePlatform === "whatsapp" ? sendTextMessage.isPending : sendMetaMessage.isPending}
+        selectedLeadId={selectedLeadId}
+        canStartAutomations={canStartSelectedConversationAutomation}
+        hasActiveAutomation={hasActiveLeadAutomation}
+        isLoadingAutomationState={activeLeadAutomations.isPending}
+        isAutomationStateUnavailable={activeLeadAutomations.isError}
+        onStartAutomation={() => setShowAutomationDialog(true)}
+        onCancelAutomation={() => {
+          if (selectedLeadId) cancelLeadExecutions.mutate(selectedLeadId);
+        }}
+        isCancellingAutomation={cancelLeadExecutions.isPending}
+        audioContextKey={audioContextKey}
+        audioDisabled={audioDisabled}
+        onResolveAudio={handleResolveAudio}
+        quotedMessage={replyTarget ? toWhatsAppQuote(replyTarget) : null}
+        onClearQuote={() => setReplySelection(null)}
+        onSendAudio={handleSendAudio}
+      />
+    </>
+  ) : null;
 
   return (
-    <AppLayout title="Conversas" disableMainScroll>
-      <div ref={bindDetailsContainer} className="relative flex h-full min-h-0 gap-3 overflow-hidden">
-        <aside data-tour="conversations-overview" className="app-card flex w-[280px] min-w-[280px] max-w-[280px] lg:w-[365px] lg:min-w-[365px] lg:max-w-[365px] flex-col overflow-hidden">
-          <ConversationFilters
-            layout="desktop"
-            {...conversationToolbarProps}
-          />
-          <ConversationList
-            layout="desktop"
-            previewCardRef={activePlatform === "whatsapp" ? visibleCanonicalPreviews.previewCardRef : undefined}
-            getDraftText={activePlatform === "whatsapp" ? c => conversationDraft.getConversationDraft(c.id, getWhatsAppConversationMessageScope(c).expectedLeadId) : undefined}
-            channel={activePlatform === "whatsapp" ? "whatsapp" : "meta"}
-            conversations={desktopConversations}
-            selectedConversationId={selectedConversationId || undefined}
-            currentUserId={currentUserId}
-            isLoading={activePlatform === "whatsapp" ? loadingConversations : loadingMetaConversations}
-            isSearching={searchingConversations}
-            isError={activePlatform === "whatsapp" && conversationsFailed}
-            onRetry={() => void refetchConversations()}
-            canManageWhatsApp={canManageWhatsApp}
-            onConnectWhatsApp={() => router.push("/settings?tab=whatsapp")}
-            canOperate={activePlatform === "whatsapp" && canOperateWhatsApp}
-            canManageTags={canOperateLeads}
-            canCreateLead={activePlatform === "whatsapp" && canCreateLeads}
-            availableTags={availableTags}
-            isTagsLoading={loadingTags || fetchingTags}
-            isTagsError={tagsFailed}
-            onRetryTags={() => void refetchTags()}
-            isArchiving={(conversation) => archiveConversation.isPendingFor?.(conversation) ?? false}
-            isTagUpdating={() => addLeadTag.isPending || removeLeadTag.isPending}
-            onSelect={setSelectedConversation}
-            onArchive={activePlatform === "whatsapp" ? handleArchive : () => {}}
-            onDelete={activePlatform === "whatsapp" ? handleDelete : () => {}}
-            onAddTag={(conversation, tagId) => conversation.lead && addLeadTag.mutate({
-              leadId: conversation.lead.id,
-              tagId,
-            })}
-            onRemoveTag={(conversation, tagId) => conversation.lead && removeLeadTag.mutate({
-              leadId: conversation.lead.id,
-              tagId,
-            })}
-            onCreateLead={openCreateLeadForConversation}
-                onViewLead={(leadId) => router.push(`/crm/pipelines?lead=${leadId}`)}
-            formatTime={formatConversationTime}
-            hasMoreConversations={activePlatform === "whatsapp" && hasMoreConversations}
-            isLoadingMoreConversations={isLoadingMoreConversations}
-            onLoadMoreConversations={() => void loadMoreConversations()}
-          />
-        </aside>
-
-        <main data-tour="conversations-chat" className="app-card flex min-w-0 flex-1 flex-col overflow-hidden" onDrop={attachments.onDrop} onDragOver={attachments.onDragOver}>
-          {selectedConversation ? (
-            <>
-              <ConversationHeader
-                contactName={selectedConversation.lead?.name || selectedConversation.contact_name}
-                contactPhone={selectedConversation.contact_phone}
-                contactPicture={getConversationAvatarUrl(selectedConversation)}
-          contactPictureFallback={selectedConversation.contact_picture}
-                contactPresence={selectedConversation.contact_presence}
-                contactPresenceUpdatedAt={selectedConversation.presence_updated_at}
-                isGroup={selectedConversation.is_group}
-                isArchived={!!selectedConversation.archived_at}
-                leadId={selectedLeadId}
-                leadTags={selectedConversation.lead?.tags}
-                leadAssigneeName={selectedConversation.lead?.assignee?.name}
-                leadAssigneeIsCurrentUser={!selectedConversation.lead?.assignee?.id || !currentUserId || selectedConversation.lead.assignee.id === currentUserId}
-                pipelineName={selectedConversation.lead?.pipeline?.name}
-                stageName={selectedConversation.lead?.stage?.name}
-                stageColor={selectedConversation.lead?.stage?.color}
-                conversationId={selectedConversation.id}
-                sessionId={selectedConversation.session_id}
-                remoteJid={selectedConversation.remote_jid}
-                onArchive={() => handleArchive(selectedConversation)}
-                onDelete={() => handleDelete(selectedConversation)}
-                canOperate={canManageSelectedWhatsAppConversation}
-                isArchiving={archiveConversation.isPendingFor?.(selectedConversation) ?? false}
-                onCreateLead={canCreateLeads ? () => openCreateLeadForConversation(selectedConversation) : undefined}
-                onReassignLead={canReassignSelectedLead ? openLeadLinkPanel : undefined}
-                onToggleLeadPanel={canShowLeadPanel ? () => setLeadPanelOpen(!showLeadPanel) : undefined}
-                actionsButtonRef={conversationActionsRef}
-                searchButtonRef={conversationSearchRef}
-                onSearch={activePlatform === "whatsapp" ? () => messageNavigation.setOpen(!messageNavigation.open) : undefined}
-                searchOpen={messageNavigation.open}
-                showLeadPanel={showLeadPanel}
-              />
-              {activePlatform === "whatsapp" && <ConversationHistorySearch navigation={messageNavigation} onClose={() => conversationSearchRef.current?.focus({ preventScroll: true })} />}
-              <ConversationMessages
-                layout="desktop"
-                viewerUserId={currentUserId}
-                viewerAvatarUrl={profile?.id === user?.id ? profile?.avatar_url ?? null : null}
-                viewerAvatarName={profile?.id === user?.id ? profile?.name ?? null : null}
-                activePlatform={activePlatform}
-                conversation={selectedConversation}
-                messages={visibleMessages}
-                senderAvatars={senderAvatars}
-                firstUnreadMessageId={unread.firstUnreadMessageId}
-                unreadCount={unread.unreadCount}
-                mediaGallery={mediaGallery}
-                mediaGalleryScopeKey={audioContextKey}
-                onNavigateQuoted={(message, id) => messageNavigation.navigateTo(id, { conversationId: message.conversation_id, sessionId: message.session_id })}
-                isLoading={loadingMessages}
-                isError={messagesFailed}
-                onRetryMessages={() => void refetchMessages()}
-                hasOlderMessages={hasOlderMessages}
-                isLoadingOlder={isLoadingOlder}
-                olderMessagesFailed={olderMessagesFailed}
-                onLoadOlderMessages={() => { isUserScrollingRef.current = true; void loadOlderMessages(); }}
-                messagesEndRef={messagesEndRef}
-                onScrollCapture={handleMessagesScroll}
-                onScrollToLatest={scrollMessagesToLatest}
-                atBottom={readScrollState.scope !== messageScrollContext || readScrollState.atBottom}
-                canOperateWhatsApp={canMutateSelectedWhatsAppConversation}
-                canOperateLeads={canOperateLeads}
-                selectedLeadId={selectedLeadId}
-                onRetryMedia={retryMediaDownload}
-                reactionsByMessageId={reactionsByMessageId}
-                onReply={!audioDisabled ? handleReply : undefined}
-                onRecoverText={!audioDisabled ? (message) => { if (audioContextRef.current === audioContextKey) setMessageText(message.content || ""); } : undefined}
-                onCheckSend={originalOrganization ? (message) => handleResolveAudio(String(message.client_message_id || message.metadata?.client_message_id || message.id)) : undefined}
-                onOpenLead={canOperateLeads && selectedLeadId ? () => router.push(`/crm/pipelines?lead=${selectedLeadId}`) : undefined}
-                onDiscardLocal={(message) => { if (selectedConversation && audioContextRef.current === audioContextKey) discardLocalMessage({ conversation: selectedConversation, message }); }}
-                attendanceEntries={attendanceGate.entries}
-                onReact={handleReactToMessage}
-                reactingMessageId={reactToMessage.isPending
-                  ? reactToMessage.variables?.targetMessage.id ?? null
-                  : null}
-              />
-              {ownWhatsAppStart.notice?.preserveComposer && ownWhatsAppStartNotice}
-              <ConversationComposer
-                layout="desktop"
-                startNotice={ownWhatsAppStart.notice?.preserveComposer ? undefined : ownWhatsAppStartNotice}
-                readOnly={!canComposeSelectedConversation}
-                whatsAppControls={activePlatform === "whatsapp"}
-                attachments={activePlatform === "whatsapp" ? attachments : undefined}
-                inputRef={messageInputRef}
-                fileInputRef={fileInputRef}
-                onFileSelect={handleFileSelect}
-                messageText={messageText}
-                onMessageTextChange={setMessageText}
-                onSendMessage={() => void handleSendMessage()}
-                onKeyDown={handleKeyPress}
-                placeholder={messageInputPlaceholder}
-                disabled={messageInputDisabled}
-                isSending={activePlatform === "whatsapp" ? sendTextMessage.isPending : sendMetaMessage.isPending}
-                selectedLeadId={selectedLeadId}
-                canStartAutomations={canStartSelectedConversationAutomation}
-                hasActiveAutomation={hasActiveLeadAutomation}
-                isLoadingAutomationState={activeLeadAutomations.isPending}
-                isAutomationStateUnavailable={activeLeadAutomations.isError}
-                onStartAutomation={() => setShowAutomationDialog(true)}
-                onCancelAutomation={() => {
-                  if (selectedLeadId) cancelLeadExecutions.mutate(selectedLeadId);
-                }}
-                isCancellingAutomation={cancelLeadExecutions.isPending}
-                audioContextKey={audioContextKey}
-                audioDisabled={audioDisabled}
-                onResolveAudio={handleResolveAudio}
-                quotedMessage={replyTarget ? toWhatsAppQuote(replyTarget) : null}
-                onClearQuote={() => setReplySelection(null)}
-                onSendAudio={handleSendAudio}
-              />
-            </>
-          ) : (
-            <ConversationEmptyState
-              sessionsDisconnected={!loadingSessions && sessions?.length === 0}
-              canManageWhatsApp={canManageWhatsApp}
-              onConnectWhatsApp={() => router.push("/settings?tab=whatsapp")}
-              onRequestConnectionHelp={() => router.push("/suporte")}
-            />
-          )}
-        </main>
-
-        {conversationDetails}
-      </div>
-      {conversationOverlays}
-    </AppLayout>
+    <ConversationsLayout
+      mobile={isMobile}
+      containerRef={bindDetailsContainer}
+      inbox={conversationInbox}
+      thread={conversationThread}
+      emptyThread={
+        <ConversationEmptyState
+          sessionsDisconnected={!loadingSessions && sessions?.length === 0}
+          canManageWhatsApp={canManageWhatsApp}
+          onConnectWhatsApp={() => router.push("/settings?tab=whatsapp")}
+          onRequestConnectionHelp={() => router.push("/suporte")}
+        />
+      }
+      leadDetails={conversationDetails}
+      overlays={conversationOverlays}
+      onDrop={attachments.onDrop}
+      onDragOver={attachments.onDragOver}
+    />
   );
 }

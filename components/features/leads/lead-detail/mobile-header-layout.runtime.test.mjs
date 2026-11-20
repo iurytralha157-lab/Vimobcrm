@@ -18,19 +18,26 @@ const errors = [];
 
 function mobilePresentation(source) {
   const ast = ts.createSourceFile('LeadDetailDialog.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const found = [];
+  const names = ['renderStageStepper', 'renderAssigneePicker', 'renderAttachments', 'renderActionSections', 'MobileContentV2'];
+  const found = new Map();
   const visit = node => {
-    if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'MobileContentV2') found.push(node.initializer.getText(ast));
+    if (ts.isVariableDeclaration(node) && names.includes(node.name.getText(ast))) {
+      found.set(node.name.getText(ast), node.initializer.getText(ast));
+    }
     ts.forEachChild(node, visit);
   };
-  visit(ast); assert.equal(found.length, 1);
-  return found[0];
+  visit(ast);
+  assert.ok(found.has('MobileContentV2'));
+  if (!process.env.PIPELINE_MOBILE_DETAIL_SOURCE) assert.equal(found.size, names.length);
+  return names.filter(name => found.has(name)).map(name => `const ${name}=${found.get(name)};`).join('\n');
 }
 
 before(async () => {
   const production = await readFile(process.env.PIPELINE_MOBILE_DETAIL_SOURCE || join(repository, 'components/features/leads/LeadDetailDialog.tsx'), 'utf8');
   directory = await mkdtemp(join(tmpdir(), 'vimob-lead-mobile-header-'));
   const entry = join(directory, 'fixture.tsx'), loader = join(directory, 'loader.cjs');
+  const scheduleEventsStub = join(directory, 'schedule-events.tsx');
+  await writeFile(scheduleEventsStub, 'export function CompactScheduleEventsList(){throw new Error("Agenda must stay hidden in this fixture");}');
   let headerSource = join(repository, 'components/features/leads/lead-detail/PipelineMobileLeadHeader.tsx');
   if (process.env.PIPELINE_MOBILE_HEADER_SOURCE) {
     headerSource = join(directory, 'PipelineMobileLeadHeader.tsx');
@@ -41,6 +48,10 @@ before(async () => {
     import{Avatar,AvatarFallback,AvatarImage}from'@/components/ui/avatar';import{Badge}from'@/components/ui/badge';import{Button}from'@/components/ui/button';import{Input}from'@/components/ui/input';import{Textarea}from'@/components/ui/textarea';
     import{Drawer,DrawerContent,DrawerTitle,DrawerDescription}from'@/components/ui/drawer';
     import{PipelineMobileLeadHeader}from${JSON.stringify(headerSource)};
+    import{LeadDetailStageStepper}from'@/components/features/leads/lead-detail/LeadDetailStageStepper';
+    import{LeadDetailAssigneePicker}from'@/components/features/leads/lead-detail/LeadDetailAssigneePicker';
+    import{LeadDetailAttachments}from'@/components/features/leads/lead-detail/LeadDetailAttachments';
+    import{LeadDetailActions}from'@/components/features/leads/lead-detail/LeadDetailActions';
     import{CopyLeadPhoneButton}from'@/components/features/leads/CopyLeadPhoneButton';
     import{Select,SelectContent,SelectItem,SelectTrigger,SelectValue}from'@/components/ui/select';import{Popover,PopoverContent,PopoverTrigger}from'@/components/ui/popover';
     import{Command,CommandEmpty,CommandGroup,CommandInput,CommandItem,CommandList}from'@/components/ui/command';
@@ -58,13 +69,14 @@ before(async () => {
       const localLead=lead,leadName=lead.name,leadTags=lead.tags,leadTagIds=lead.tags.map(tag=>tag.id),assigneeName='Responsável sintético com nome extenso';
       const isMobile=window.innerWidth<768,activeOrganization={organizationId:'org-a'},mobileTabsId='synthetic-mobile-tabs';
       const allUsersState={isPending:false,isError:false},assigneeCatalogBlocked=false,detailReadState={status:'ready'},retryLeadRead=noop;
-      const canOperateLead=allowed,canTransferLead=allowed,canOpenLeadWhatsApp=allowed,hideWhatsAppAction=false,readAccessPending=false,isUpdatingAssignee=false,isTagMutationPending=false;
+      const canOperateLead=allowed,canProgressLead=allowed,canTransferLead=allowed,canOpenLeadWhatsApp=allowed,hideWhatsAppAction=false,readAccessPending=false,isUpdatingAssignee=false,isTagMutationPending=false;
       const [activeTab,setActiveTab]=useState('summary'),[tagPopoverOpen,setTagPopoverOpen]=useState(false),[assigneePopoverOpen,setAssigneePopoverOpen]=useState(false);
       const [feedback,setFeedback]=useState(''),[editForm,setEditForm]=useState({});
       const stages=Array.from({length:7},(_,index)=>({id:'stage-'+index,name:'Etapa '+index})),currentStageIndex=2,stageStepperStyle=getStageStepperStyle(stages.length);
       const leadSource='meta',firstResponseLabel='2 min',campaignTrackingDetails=null,leadMetaQuery={isPending:false,isError:false,refetch:noop};
       const fullLeadQuery={isFetching:false},dealStatusChange={isPending:false},stageMovePending=false,updateLead={isPending:false};
       const scheduleEvents=[],scheduleSummaryLabel='Nenhum compromisso',canViewLeadSchedule=false,canManageLeadSchedule=false;
+      const dateLocale=undefined,scheduleError=false,schedulePending=false,schedulePreview={hasNextPage:false,isFetchingNextPage:false,fetchNextPage:noop},refetchScheduleEvents=noop,handleEditScheduleEvent=noop;
       const hasPropertiesModule=false,canViewProperties=false,propertyOptions=[],attachments=[],attachmentsLoading=false,attachmentsError=null,attachmentsFetching=false,isUploading=false,fileInputRef=useRef(null);
       const attachmentUploadDraft={draft:null,clear:noop};
       const leadCadenceState=null,leadCadenceLoading=false,leadCadenceError=null,cadenceActionPending=false,completeCadenceTask={isPending:false},availableTags=[],assignableUsers=[];
@@ -73,7 +85,7 @@ before(async () => {
       const handleQuickPhone=record('phone'),handleQuickWhatsApp=record('chat'),handleQuickEmail=record('email'),handleOpenLeadEdit=record('edit'),handleSaveFeedback=record('feedback');
       const handleCloseLeadDetail=()=>{h.closed++;h.show(false)},handleAssigneePopoverChange=setAssigneePopoverOpen,handleSelectInterestProperty=noop,handleFileUpload=noop,handleOpenAttachment=noop,refetchAttachments=noop;
       const setEditingScheduleEvent=noop,setScheduleDefaultType=noop,setScheduleFormOpen=noop,renderScheduleEvents=()=>null,refetchLeadCadence=noop,handleCadenceTaskClick=noop,setTaskInspectOnly=noop,setSelectedTask=noop,setRoteiroDialogOpen=noop;
-      const MobileContentV2=${mobilePresentation(production)};
+      ${mobilePresentation(production)}
       h.rendered++;return MobileContentV2();
     }
     function Fixture(){const[lead,setLead]=useState(h.lead),[shown,setShown]=useState(true),[variant,setVariant]=useState('pipeline'),[allowed,setAllowed]=useState(true);h.change=setLead;h.show=setShown;h.variant=setVariant;h.allowed=setAllowed;
@@ -82,7 +94,10 @@ before(async () => {
   const { webpack } = require('next/dist/compiled/webpack/webpack');
   await new Promise((resolveBuild, reject) => {
     const compiler = webpack({ mode: 'development', target: 'web', devtool: false, entry, output: { path: directory, filename: 'fixture.js' },
-      resolve: { extensions: ['.tsx', '.ts', '.js'], alias: { '@': repository }, modules: [join(repository, 'node_modules'), 'node_modules'] },
+      resolve: { extensions: ['.tsx', '.ts', '.js'], alias: {
+        '@/components/features/leads/lead-detail/CompactScheduleEventsList$': scheduleEventsStub,
+        '@': repository,
+      }, modules: [join(repository, 'node_modules'), 'node_modules'] },
       module: { rules: [{ test: /\.tsx?$/, exclude: /node_modules/, use: loader }] } });
     compiler.run((error, stats) => compiler.close(() => error || stats.hasErrors() ? reject(error || Error(stats.toString({ all: false, errors: true }))) : resolveBuild()));
   });

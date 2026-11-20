@@ -157,7 +157,7 @@ export function ConversationListItem({
             {conversation.unread_count}
           </span>
         )}
-        <span className="whitespace-nowrap text-[10px] leading-none text-muted-foreground">
+        <span className="whitespace-nowrap text-[10px] leading-none text-[color:var(--conversation-meta-color,var(--muted-foreground))]">
           {formatTime(conversation.last_message_at)}
         </span>
       </div>

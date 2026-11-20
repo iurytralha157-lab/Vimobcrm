@@ -1,5 +1,4 @@
-import { useDeferredValue, useRef, useState, useLayoutEffect, type ReactNode } from "react";
-import Link from "next/link";
+import { useRef, useState, useLayoutEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { LostReasonDialog } from "@/components/features/leads/LostReasonDialog";
@@ -10,7 +9,6 @@ import { CopyLeadPhoneButton } from "@/components/features/leads/CopyLeadPhoneBu
 import { QueuePoolClaimButton } from "@/components/features/leads";
 import { ConversationLeadTagBar } from "@/components/features/whatsapp/conversations/ConversationLeadTagBar";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { WhatsAppAvatarImage as AvatarImage } from "@/components/features/whatsapp/WhatsAppAvatarImage";
@@ -28,11 +26,6 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card";
-import {
   Command,
   CommandEmpty,
   CommandGroup,
@@ -48,38 +41,28 @@ import {
   ChevronDown,
   ChevronRight,
   CircleDot,
-  ExternalLink,
-  FileEdit,
-  FileText,
-  Info,
   Loader2,
   Mail,
-  Paperclip,
   Phone,
   RefreshCw,
   User,
-  UserPlus,
   X,
 } from "lucide-react";
-import { formatPhoneForDisplay, formatWhatsAppContactLabel, normalizePhoneToE164 } from "@/lib/phone-utils";
+import { formatPhoneForDisplay, normalizePhoneToE164 } from "@/lib/phone-utils";
 import { cn } from "@/lib/utils";
 import { formatWhatsAppPersonName } from "@/lib/whatsapp-person-name";
 import { commandSearchFilter } from "@/lib/search-text";
-import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import type { WhatsAppConversationLinkPreview } from "@/lib/api/whatsapp";
-import { ConfirmConversationLeadLinkDialog } from "./ConfirmConversationLeadLinkDialog";
 import { useConversationLeadDetail } from "@/hooks/use-conversation-lead-detail";
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
 import { useTags } from "@/hooks/use-tags";
-import { useLead, useLeads, useUpdateLead } from "@/hooks/use-leads";
+import { useLead, useUpdateLead } from "@/hooks/use-leads";
 import { useAddLeadTag, useRemoveLeadTag } from "@/hooks/use-leads";
 import { useProperties, useProperty } from "@/hooks/use-properties";
 import { useUsers } from "@/hooks/use-users";
 import {
   useLeadAttachments,
   useUploadLeadAttachment,
-  type LeadAttachment,
 } from "@/hooks/use-lead-attachments";
 import {
   useScheduleEvents,
@@ -95,9 +78,13 @@ import { VimobAPIError } from "@/lib/api/vimob-client";
 import { captureLeadRequestIntent } from "@/lib/lead-request-intent";
 import { getGlobalSignOutSessionId } from "@/lib/auth/global-sign-out";
 import { canOperateLeadFromFreshRead } from "@/lib/lead-operation-capability";
-import type { ConversationLeadDetail } from "@/lib/api/conversation-lead-detail";
 import { notifyLeadRealtimeChange } from "@/contexts/LeadRealtimeBus";
 import { getConversationAssigneeLabel, getConversationPropertyLabel } from "@/components/features/whatsapp/conversation-lead-panel-model";
+import { ConversationLeadAttachments } from "@/components/features/whatsapp/conversations/ConversationLeadAttachments";
+import { ConversationLeadContactInformation } from "@/components/features/whatsapp/conversations/ConversationLeadContactInformation";
+import { panelSectionClassName, sectionTitleClassName, sectionTitleStyle } from "@/components/features/whatsapp/conversations/conversation-lead-panel-ui";
+
+export { ConversationUnregisteredPanel } from "@/components/features/whatsapp/conversations/ConversationUnregisteredPanel";
 
 interface ConversationLeadPanelProps {
   leadId: string;
@@ -116,26 +103,6 @@ const DEAL_STATUS_OPTIONS = [
   { value: "lost", label: "Perdido", color: "hsl(var(--destructive))" },
 ];
 
-const SOURCE_LABELS: Record<string, string> = {
-  facebook: "Facebook",
-  google: "Google",
-  manual: "Manual",
-  meta: "Meta",
-  outro: "outro",
-  site: "Site",
-  whatsapp: "Whatsapp",
-};
-
-const sectionTitleClassName = "leading-none";
-const sectionTitleStyle = {
-  color: "var(--app-text-secondary)",
-  fontSize: "11px",
-  fontWeight: 400,
-  letterSpacing: 0,
-};
-const panelSectionClassName =
-  "min-w-0 rounded-[8px] bg-[var(--app-surface-soft)] p-3";
-
 type LeadTagRelation = {
   tag: {
     id: string;
@@ -143,184 +110,6 @@ type LeadTagRelation = {
     color: string;
   };
 };
-
-function InfoLine({ label, value }: { label: string; value: ReactNode }) {
-  return (
-    <div className="flex min-w-0 items-start justify-between gap-3 text-xs">
-      <span className="shrink-0 text-[var(--app-text-tertiary)]">{label}</span>
-      <span className="flex min-w-0 flex-1 justify-end [overflow-wrap:anywhere] text-right font-light text-[var(--app-text-primary)]">
-        {value}
-      </span>
-    </div>
-  );
-}
-
-type ConversationLeadMeta = ConversationLeadDetail["meta"];
-
-function metaText(value: unknown) {
-  if (value === null || value === undefined) return "";
-  return String(value).trim();
-}
-
-function safeExternalURL(value: unknown) {
-  const text = metaText(value);
-  if (!text) return "";
-
-  try {
-    const url = new URL(text);
-    return url.protocol === "https:" || url.protocol === "http:"
-      ? url.toString()
-      : "";
-  } catch {
-    return "";
-  }
-}
-
-function hasLeadTrackingData(
-  leadMeta: ConversationLeadMeta | null | undefined,
-) {
-  if (!leadMeta) return false;
-  return [
-    leadMeta.campaign_name,
-    leadMeta.ad_name,
-    leadMeta.form_name,
-    leadMeta.utm_campaign,
-    leadMeta.utm_medium,
-    leadMeta.utm_source,
-    leadMeta.contact_notes,
-    leadMeta.creative_url,
-    leadMeta.creative_video_url,
-  ].some((value) => Boolean(metaText(value)));
-}
-
-function CampaignTrackingHover({
-  leadMeta,
-  fallbackLabel,
-}: {
-  leadMeta: ConversationLeadMeta | null | undefined;
-  fallbackLabel: string;
-}) {
-  if (!hasLeadTrackingData(leadMeta)) return <>{fallbackLabel}</>;
-
-  const displayName =
-    metaText(leadMeta?.campaign_name) ||
-    metaText(leadMeta?.utm_campaign) ||
-    metaText(leadMeta?.ad_name) ||
-    metaText(leadMeta?.form_name) ||
-    fallbackLabel;
-  const mainRows = [
-    ["Campanha", leadMeta?.campaign_name || leadMeta?.utm_campaign],
-    ["Conjunto", null],
-    ["Anuncio", leadMeta?.ad_name],
-    ["Formulario", leadMeta?.form_name],
-    ["Plataforma", fallbackLabel],
-    ["Origem", leadMeta?.utm_source],
-  ] as const;
-  const utmRows = [
-    ["utm_source", leadMeta?.utm_source],
-    ["utm_medium", leadMeta?.utm_medium],
-    ["utm_campaign", leadMeta?.utm_campaign],
-  ] as const;
-  const links = [
-    ["Criativo", leadMeta?.creative_url],
-    ["Video", leadMeta?.creative_video_url],
-  ] as const;
-  const DetailRow = ({ label, value }: { label: string; value: unknown }) => {
-    const text = metaText(value);
-    if (!text) return null;
-
-    return (
-      <div className="grid grid-cols-[100px_minmax(0,1fr)] gap-2 text-left text-[11px] leading-snug">
-        <span className="text-[var(--app-text-tertiary)]">{label}</span>
-        <span className="break-words text-left font-light text-[var(--app-text-primary)]">
-          {text}
-        </span>
-      </div>
-    );
-  };
-  const hasUtms = utmRows.some(([, value]) => Boolean(metaText(value)));
-  const hasLinks = links.some(([, value]) => Boolean(safeExternalURL(value)));
-
-  return (
-    <HoverCard openDelay={100} closeDelay={420}>
-      <HoverCardTrigger asChild>
-        <button
-          type="button"
-          className="group inline-flex min-w-0 max-w-[180px] items-center justify-end gap-1 overflow-hidden whitespace-nowrap text-right font-medium text-[var(--app-text-primary)] outline-none transition-colors hover:text-primary focus-visible:text-primary"
-          title={displayName}
-        >
-          <span className="min-w-0 truncate underline decoration-dotted decoration-[var(--app-text-tertiary)] underline-offset-4 group-hover:decoration-primary group-focus-visible:decoration-primary">
-            {displayName}
-          </span>
-          <Info className="h-3 w-3 shrink-0 text-[var(--app-text-tertiary)] transition-colors group-hover:text-primary group-focus-visible:text-primary" />
-        </button>
-      </HoverCardTrigger>
-      <HoverCardContent
-        side="left"
-        align="center"
-        sideOffset={4}
-        className="vimob-popover-content z-[100] w-[min(420px,calc(100vw-2rem))] rounded-[8px] border-0 p-0 text-left text-[var(--app-text-primary)] shadow-none"
-      >
-        <div className="border-b border-[var(--app-border)] px-3 py-2 text-left">
-          <p className="text-[12px] font-light text-primary">
-            Rastreamento de Campanha
-          </p>
-        </div>
-
-        <div className="max-h-[420px] space-y-3 overflow-y-auto p-3 text-left">
-          <div className="space-y-1.5">
-            {mainRows.map(([label, value]) => (
-              <DetailRow key={label} label={label} value={value} />
-            ))}
-          </div>
-
-          {hasUtms && (
-            <div className="space-y-1.5 border-t border-[var(--app-border)] pt-3 text-left">
-              <p className="text-[12px] font-light text-[var(--app-text-tertiary)]">
-                UTMs
-              </p>
-              {utmRows.map(([label, value]) => (
-                <DetailRow key={label} label={label} value={value} />
-              ))}
-            </div>
-          )}
-
-          {leadMeta?.contact_notes && (
-            <div className="border-t border-[var(--app-border)] pt-3 text-left">
-              <p className="text-[12px] font-light text-[var(--app-text-tertiary)]">
-                Observações
-              </p>
-              <p className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-snug text-[var(--app-text-secondary)]">
-                {leadMeta.contact_notes}
-              </p>
-            </div>
-          )}
-
-          {hasLinks && (
-            <div className="flex flex-wrap gap-2 border-t border-[var(--app-border)] pt-3 text-left">
-              {links.map(([label, value]) => {
-                const href = safeExternalURL(value);
-                if (!href) return null;
-                return (
-                  <a
-                    key={label}
-                    href={href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1 text-[11px] font-medium text-[var(--app-text-secondary)] transition-colors hover:text-primary"
-                  >
-                    <span>{label}</span>
-                    <ExternalLink className="h-3 w-3" />
-                  </a>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </HoverCardContent>
-    </HoverCard>
-  );
-}
 
 function getDealStatusTriggerClass(status?: string | null) {
   if (status === "won") {
@@ -332,15 +121,6 @@ function getDealStatusTriggerClass(status?: string | null) {
   }
 
   return "border-0 bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]";
-}
-
-function formatSource(source?: string | null) {
-  if (!source) return "outro";
-  return SOURCE_LABELS[source.toLowerCase()] || source;
-}
-
-function getAttachmentLabel(attachment: LeadAttachment) {
-  return attachment.file_name || "Documento";
 }
 
 export function ConversationLeadPanel(props: ConversationLeadPanelProps) {
@@ -528,28 +308,6 @@ function ConversationLeadPanelContent({
         ? "Perdido"
         : "Aberto";
   const phoneHref = normalizePhoneToE164(lead.phone);
-  const sourceLabel = formatSource(lead.source);
-  const sourceValue = hasLeadTrackingData(lead.meta) ? (
-    <CampaignTrackingHover leadMeta={lead.meta} fallbackLabel={sourceLabel} />
-  ) : (
-    sourceLabel
-  );
-  const contactRows = [
-    { label: "Nome", value: leadDisplayName },
-    {
-      label: "Telefone",
-      value: lead.phone ? formatPhoneForDisplay(lead.phone) : null,
-    },
-    { label: "E-mail", value: lead.email },
-    { label: "Origem", value: sourceValue },
-    {
-      label: "Criado em",
-      value: lead.created_at
-        ? format(new Date(lead.created_at), "dd/MM/yy HH:mm")
-        : null,
-    },
-  ].filter((row) => Boolean(row.value));
-
   const refreshLeadData = () => {
     if (!mountedRef.current) return;
     void queryClient.invalidateQueries({
@@ -961,30 +719,7 @@ function ConversationLeadPanelContent({
 
       <ScrollArea className="min-h-0 min-w-0 flex-1 [&>[data-radix-scroll-area-viewport]>div]:block! [&>[data-radix-scroll-area-viewport]>div]:min-w-0! [&>[data-radix-scroll-area-viewport]>div]:w-full">
         <div className="min-w-0 space-y-3 p-3 pb-4">
-          <section className={panelSectionClassName}>
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className={sectionTitleClassName} style={sectionTitleStyle}>
-                Dados do contato
-              </h3>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="lead-detail-subtle-action h-7 rounded-[6px] px-2 text-[10px] font-light"
-                asChild
-              >
-                <Link href={`/crm/pipelines?lead=${lead.id}`}>
-                  <FileEdit className="h-3 w-3" />
-                  Editar
-                </Link>
-              </Button>
-            </div>
-
-            <div className="space-y-2">
-              {contactRows.map((row) => (
-                <InfoLine key={row.label} label={row.label} value={row.value} />
-              ))}
-            </div>
-          </section>
+          <ConversationLeadContactInformation lead={lead} leadDisplayName={leadDisplayName} />
 
           {hasPropertiesModule && (
             <PropertyPickerDialog
@@ -1011,111 +746,18 @@ function ConversationLeadPanelContent({
             />
           )}
 
-          <section className="min-w-0 rounded-[6px] bg-[var(--app-surface-soft)] px-3">
-            <div className="flex h-8 items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-2 text-[var(--app-text-secondary)]">
-                <FileText className="h-3 w-3 shrink-0" aria-hidden="true" />
-                <h3 className={sectionTitleClassName} style={sectionTitleStyle}>
-                  Documentação
-                </h3>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="lead-detail-subtle-action h-6 rounded-[6px] px-2 text-[10px] font-light"
-                disabled={
-                  !canOperateLead || isUploading || uploadAttachment.isPending
-                }
-                onClick={() => fileInputRef.current?.click()}
-              >
-                {isUploading || uploadAttachment.isPending ? (
-                  <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />
-                ) : (
-                  <Paperclip className="h-3 w-3" />
-                )}
-                Anexar
-              </Button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                onChange={handleFileUpload}
-              />
-            </div>
-
-            {attachmentsLoading ? (
-              <div
-                className="flex items-center gap-2 pb-3 pt-2 text-xs text-[var(--app-text-tertiary)]"
-                role="status"
-              >
-                <Loader2
-                  className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
-                  aria-hidden="true"
-                />
-                Carregando documentos...
-              </div>
-            ) : attachmentsFailed ? (
-              <div
-                className="mb-3 mt-2 rounded-[6px] bg-destructive/8 p-2 text-xs"
-                role="alert"
-              >
-                <p>Não foi possível carregar os documentos.</p>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="mt-1 h-7 px-2"
-                  onClick={() => void refetchAttachments()}
-                >
-                  <RefreshCw className="mr-1.5 h-3 w-3" aria-hidden="true" />
-                  Tentar novamente
-                </Button>
-              </div>
-            ) : attachments.length > 0 ? (
-              <div className="space-y-2 pb-3 pt-2">
-                {(documentsExpandedFor === leadId ? attachments : attachments.slice(0, 4)).map((attachment) =>
-                  (() => {
-                    const attachmentURL = safeExternalURL(attachment.file_url);
-                    const attachmentLabel = getAttachmentLabel(attachment);
-                    return (
-                      <button
-                        key={attachment.id}
-                        type="button"
-                        disabled={!attachmentURL}
-                        className="flex w-full items-center gap-2 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2 py-2 text-left text-xs outline-none ring-0 hover:bg-[var(--app-surface-hover)] focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
-                        onClick={() =>
-                          window.open(
-                            attachmentURL,
-                            "_blank",
-                            "noopener,noreferrer",
-                          )
-                        }
-                        aria-label={
-                          attachmentURL
-                            ? `Abrir documento ${attachmentLabel}`
-                            : `Documento ${attachmentLabel} indisponível`
-                        }
-                      >
-                        <FileText
-                          className="h-3.5 w-3.5 shrink-0 text-primary"
-                          aria-hidden="true"
-                        />
-                        <span className="truncate">{attachmentLabel}</span>
-                      </button>
-                    );
-                  })(),
-                )}
-                {attachments.length > 4 && (
-                  <Button type="button" variant="ghost" size="sm" className="h-7 rounded-[6px] px-2 text-[11px] font-light"
-                    aria-expanded={documentsExpandedFor === leadId}
-                    onClick={() => setDocumentsExpandedFor(current => current === leadId ? null : leadId)}>
-                    {documentsExpandedFor === leadId ? "Mostrar menos documentos" : `Ver todos os ${attachments.length} documentos`}
-                  </Button>
-                )}
-              </div>
-            ) : null}
-          </section>
+          <ConversationLeadAttachments
+            attachments={attachments}
+            loading={attachmentsLoading}
+            failed={attachmentsFailed}
+            uploading={isUploading || uploadAttachment.isPending}
+            canOperateLead={canOperateLead}
+            fileInputRef={fileInputRef}
+            onFileUpload={handleFileUpload}
+            onRetry={() => void refetchAttachments()}
+            expanded={documentsExpandedFor === leadId}
+            onToggleExpanded={() => setDocumentsExpandedFor(current => current === leadId ? null : leadId)}
+          />
 
           {hasScheduleModule && canViewSchedule && (
             <section className={cn("lead-agenda-card", panelSectionClassName)}>
@@ -1206,320 +848,5 @@ function ConversationLeadPanelContent({
         loading={dealStatusChange.isPending}
       />
     </div>
-  );
-}
-
-interface ConversationUnregisteredPanelProps {
-  contactName?: string | null;
-  contactPhone?: string | null;
-  contactPicture?: string | null;
-  contactPictureFallback?: string | null;
-  isGroup?: boolean;
-  currentLeadId?: string;
-  currentLeadName?: string;
-  onCreateLead?: () => void;
-  canLinkLead?: boolean;
-  onPreviewLinkLead?: (leadId: string) => Promise<WhatsAppConversationLinkPreview>;
-  onLinkLead?: (leadId: string, preview: WhatsAppConversationLinkPreview) => Promise<void>;
-  isLinkingLead?: boolean;
-  historyDeadlineAt?: string | null;
-  onClose?: () => void;
-  className?: string;
-}
-
-export function ConversationUnregisteredPanel({
-  contactName,
-  contactPhone,
-  contactPicture,
-  contactPictureFallback,
-  isGroup,
-  currentLeadId,
-  currentLeadName,
-  onCreateLead,
-  canLinkLead = false,
-  onPreviewLinkLead,
-  onLinkLead,
-  isLinkingLead = false,
-  historyDeadlineAt,
-  onClose,
-  className,
-}: ConversationUnregisteredPanelProps) {
-  const [leadPickerOpen, setLeadPickerOpen] = useState(false);
-  const [leadSearch, setLeadSearch] = useState("");
-  const [selectedLead, setSelectedLead] = useState<{ id: string; name: string } | null>(null);
-  const [linkPreview, setLinkPreview] = useState<WhatsAppConversationLinkPreview | null>(null);
-  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
-  const [previewFailed, setPreviewFailed] = useState(false);
-  const previewRequestRef = useRef(0);
-  const deferredLeadSearch = useDeferredValue(leadSearch.trim());
-  const defaultLeadSearch = (contactPhone || "").replace(/\D/g, "");
-  const {
-    data: candidateLeads = [],
-    isLoading: candidateLeadsLoading,
-    isError: candidateLeadsFailed,
-  } = useLeads(
-    {
-      search: deferredLeadSearch || defaultLeadSearch || undefined,
-      limit: 12,
-    },
-    {
-      enabled: leadPickerOpen && canLinkLead && Boolean(onLinkLead),
-    },
-  );
-  const contactLabel = formatWhatsAppContactLabel(contactName, contactPhone);
-  const displayName = isGroup
-    ? (contactName || contactLabel || "Contato")
-    : ((contactLabel === "Contato sem identificação"
-        ? contactLabel
-        : formatWhatsAppPersonName(contactLabel)) || "Contato");
-  // Cronometro dos 7 dias: prazo contado da ultima mensagem (modelo de 12/11).
-  // Mostra a politica; a limpeza automatica fica com o worker de retencao.
-  const historyDeadline = (() => {
-    if (!historyDeadlineAt) return null;
-    const deadline = new Date(historyDeadlineAt);
-    if (Number.isNaN(deadline.getTime())) return null;
-    const ms = deadline.getTime() - Date.now();
-    const label = deadline.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })
-      + " às " + deadline.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-    if (ms <= 0) return { expired: true as const, label, remaining: "" };
-    const days = Math.floor(ms / 86400000);
-    const hours = Math.floor((ms % 86400000) / 3600000);
-    const remaining = days > 0
-      ? `${days} ${days === 1 ? "dia" : "dias"} restante${days === 1 ? "" : "s"}`
-      : `${Math.max(hours, 1)}h restantes`;
-    return { expired: false as const, label, remaining };
-  })();
-  const availableCandidateLeads = candidateLeads.filter((candidate) => candidate.id !== currentLeadId);
-
-  const loadLinkPreview = async (leadId: string) => {
-    const requestId = ++previewRequestRef.current;
-    setIsPreviewLoading(true);
-    setPreviewFailed(false);
-    setLinkPreview(null);
-    try {
-      if (!onPreviewLinkLead) throw new Error("Prévia de vínculo indisponível");
-      const preview = await onPreviewLinkLead(leadId);
-      if (requestId !== previewRequestRef.current) return;
-      if (preview.leadId !== leadId) throw new Error("Lead da prévia não corresponde ao selecionado");
-      setLinkPreview(preview);
-    } catch {
-      if (requestId === previewRequestRef.current) setPreviewFailed(true);
-    } finally {
-      if (requestId === previewRequestRef.current) setIsPreviewLoading(false);
-    }
-  };
-
-  const handleSelectLead = (leadId: string, leadName: string) => {
-    if (!onLinkLead || isLinkingLead) return;
-    setSelectedLead({ id: leadId, name: leadName });
-    setLeadPickerOpen(false);
-    void loadLinkPreview(leadId);
-  };
-
-  const handleLinkLead = async () => {
-    if (!onLinkLead || !selectedLead || !linkPreview || isLinkingLead || previewFailed) return;
-    if (linkPreview.leadId !== selectedLead.id) return;
-    try {
-      await onLinkLead(selectedLead.id, linkPreview);
-      previewRequestRef.current += 1;
-      setSelectedLead(null);
-      setLinkPreview(null);
-      setLeadPickerOpen(false);
-      setLeadSearch("");
-    } catch {
-      // The caller owns user-facing feedback and keeps confirmation open for retry.
-    }
-  };
-
-  const handleLinkDialogOpenChange = (open: boolean) => {
-    if (open || isLinkingLead) return;
-    previewRequestRef.current += 1;
-    setSelectedLead(null);
-    setLinkPreview(null);
-    setPreviewFailed(false);
-  };
-
-  return (
-    <aside
-      className={cn(
-        "lead-detail-dialog lead-detail-v2 flex h-full min-h-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]",
-        className,
-      )}
-    >
-      <div className="relative flex shrink-0 flex-col items-center border-b border-[var(--app-border)] px-4 py-5 text-center">
-        {onClose && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="absolute right-2 top-2 h-7 w-7 rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text-primary)]"
-            onClick={onClose}
-            data-conversation-panel-close
-            aria-label="Fechar painel do contato"
-          >
-            <X className="h-3.5 w-3.5" aria-hidden="true" />
-          </Button>
-        )}
-        <Avatar className="h-14 w-14 border-0">
-          <AvatarImage src={contactPicture || undefined} fallbackSrc={contactPictureFallback} alt={displayName} />
-          <AvatarFallback className="bg-[var(--app-surface-soft)] text-base font-medium text-[var(--app-text-secondary)]">
-            {isGroup ? (
-              <User className="h-5 w-5" />
-            ) : (
-              displayName[0]?.toUpperCase() || "?"
-            )}
-          </AvatarFallback>
-        </Avatar>
-        <h2 className="mt-3 max-w-full truncate" style={{ fontSize: "var(--app-font-size-card-title)", fontWeight: "var(--app-font-weight-body)" }}>
-          {displayName}
-        </h2>
-        {contactPhone && (
-          <p className="mt-1 text-xs text-[var(--app-text-tertiary)]">
-            {formatPhoneForDisplay(contactPhone)}
-          </p>
-        )}
-        <Badge className="mt-3 rounded-[5px] border-0 bg-amber-500/14 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-300">
-          {currentLeadId ? `Vinculado a ${formatWhatsAppPersonName(currentLeadName) || "um lead"}` : "Não cadastrado"}
-        </Badge>
-        {!currentLeadId && historyDeadline && (
-          <p className="mt-2 text-[11px] leading-snug text-[var(--app-text-tertiary)]">
-            {historyDeadline.expired
-              ? "Prazo do histórico sem lead vencido"
-              : `Histórico guardado até ${historyDeadline.label} · ${historyDeadline.remaining}`}
-          </p>
-        )}
-      </div>
-
-      <div className="flex flex-1 flex-col justify-center gap-4 px-4 py-5 text-center">
-        <div className="rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-4">
-          <p className="text-sm font-medium text-[var(--app-text-primary)]">
-            {currentLeadId ? "Mudar o vínculo desta conversa" : "Vincular esta conversa a um lead"}
-          </p>
-          <p className="mt-1 text-xs leading-relaxed text-[var(--app-text-tertiary)]">
-            {currentLeadId
-              ? "Escolha outro lead com o mesmo WhatsApp. O histórico já atribuído ao lead atual permanecerá nele."
-              : "Use um lead existente com o mesmo WhatsApp ou cadastre um novo para acompanhar etapa, responsável e histórico comercial."}
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          {canLinkLead && onLinkLead && (
-            <Popover open={leadPickerOpen} onOpenChange={setLeadPickerOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3"
-                  disabled={isLinkingLead}
-                  aria-label={`${currentLeadId ? "Mudar vínculo de" : "Vincular"} ${displayName} a um lead existente`}
-                >
-                  {isLinkingLead ? (
-                    <Loader2
-                      className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
-                  ) : (
-                    <User className="h-3.5 w-3.5" aria-hidden="true" />
-                  )}
-                  {currentLeadId ? "Escolher outro lead" : "Vincular existente"}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                align="end"
-                collisionPadding={12}
-                className="w-[300px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1 shadow-none"
-              >
-                <Command
-                  shouldFilter={false}
-                  className="border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2"
-                >
-                  <CommandInput
-                    value={leadSearch}
-                    onValueChange={setLeadSearch}
-                    placeholder="Buscar por nome ou WhatsApp..."
-                    aria-label="Buscar lead existente"
-                    className="h-8 py-0 text-[12px] font-light"
-                  />
-                  <p className="px-3 py-2 text-[10px] leading-relaxed text-muted-foreground">
-                    A vinculação só será concluída se o WhatsApp do lead
-                    corresponder ao desta conversa.
-                  </p>
-                  <CommandList className="max-h-[260px]">
-                    {candidateLeadsLoading ? (
-                      <div
-                        className="flex items-center justify-center gap-2 py-6 text-xs text-muted-foreground"
-                        role="status"
-                      >
-                        <Loader2
-                          className="h-4 w-4 animate-spin motion-reduce:animate-none"
-                          aria-hidden="true"
-                        />
-                        Buscando leads...
-                      </div>
-                    ) : candidateLeadsFailed ? (
-                      <div
-                        className="px-3 py-6 text-center text-xs text-destructive"
-                        role="alert"
-                      >
-                        Não foi possível buscar os leads.
-                      </div>
-                    ) : availableCandidateLeads.length === 0 ? (
-                      <CommandEmpty>Nenhum lead encontrado.</CommandEmpty>
-                    ) : (
-                      <CommandGroup heading="Leads encontrados">
-                        {availableCandidateLeads.map((candidate) => (
-                          <CommandItem
-                            key={candidate.id}
-                            value={candidate.id}
-                            disabled={isLinkingLead}
-                            onSelect={() => handleSelectLead(candidate.id, candidate.name || "Lead sem nome")}
-                            className="cursor-pointer rounded-[6px] px-3 py-2"
-                          >
-                            <div className="min-w-0 flex-1 text-left">
-                              <p className="truncate text-xs font-medium">
-                                {formatWhatsAppPersonName(candidate.name) || "Lead sem nome"}
-                              </p>
-                              <p className="truncate text-[10px] text-muted-foreground">
-                                {candidate.phone
-                                  ? formatPhoneForDisplay(candidate.phone)
-                                  : "Sem WhatsApp cadastrado"}
-                              </p>
-                            </div>
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    )}
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
-          )}
-
-          {onCreateLead && (
-            <Button
-              className="lead-detail-primary-action h-8 rounded-[6px] px-3"
-              onClick={onCreateLead}
-            >
-              <UserPlus className="h-3.5 w-3.5" />
-              Cadastrar lead
-            </Button>
-          )}
-        </div>
-      </div>
-      <ConfirmConversationLeadLinkDialog
-        open={Boolean(selectedLead)}
-        mode="existing"
-        leadName={selectedLead?.name}
-        preview={linkPreview}
-        isLoading={isPreviewLoading}
-        isConfirming={isLinkingLead}
-        hasError={previewFailed}
-        onOpenChange={handleLinkDialogOpenChange}
-        onRetry={() => {
-          if (selectedLead) void loadLinkPreview(selectedLead.id);
-        }}
-        onConfirm={() => void handleLinkLead()}
-      />
-    </aside>
   );
 }

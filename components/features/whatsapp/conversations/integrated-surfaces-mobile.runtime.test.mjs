@@ -262,3 +262,29 @@ for (const mode of ['screen', 'floating']) for (const width of [320, 390]) {
     assert.equal(await page.evaluate(() => window.harness.requests.filter(r => ['send', 'archive', 'delete', 'link'].includes(r.kind)).length), 0);
   });
 }
+
+test('only the full Conversations list strengthens preview and timestamp contrast', async t => {
+  for (const [mode, width, theme, token] of [
+    ['screen', 1440, 'light', '--app-text-secondary'],
+    ['screen', 390, 'dark', '--app-text-secondary'],
+    ['floating', 390, 'light', '--muted-foreground'],
+  ]) {
+    const page = await fixture(t, mode, width, theme);
+    if (width < 768) {
+      const back = mode === 'screen' ? 'Voltar para a lista de conversas' : 'Voltar à lista de conversas';
+      await page.getByRole('button', { name: back, exact: true }).click();
+    }
+    const row = page.locator('[data-tour="conversations-item"]').first();
+    await expect(row).toBeVisible();
+    const expected = await row.evaluate((element, variable) => {
+      const sample = document.createElement('span');
+      sample.style.color = 'var(' + variable + ')';
+      element.appendChild(sample);
+      const color = getComputedStyle(sample).color;
+      sample.remove();
+      return color;
+    }, token);
+    await expect(row.locator('[data-conversation-preview]')).toHaveCSS('color', expected);
+    await expect(row.locator('div.col-start-2 > span.whitespace-nowrap')).toHaveCSS('color', expected);
+  }
+});

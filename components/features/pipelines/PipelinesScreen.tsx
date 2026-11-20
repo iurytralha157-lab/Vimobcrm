@@ -6,12 +6,10 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
-import type { FormEvent } from 'react';
 import type { DragStart, DropResult } from '@hello-pangea/dnd';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
@@ -49,10 +47,6 @@ import {
   useStages,
   useStagesWithLeads,
   usePipelines,
-  useCreatePipeline,
-  useCreateStage,
-  useUpdateStage,
-  useDeletePipeline,
 } from '@/hooks/use-stages';
 import { stageWithLeadsQueryKey } from '@/lib/pipeline-query-key';
 import { getPipelineLeadPageCursor } from '@/lib/pipeline-pagination-state';
@@ -61,7 +55,6 @@ import { getOptimisticPipelineMoveOutcome } from '@/lib/pipeline-stage-outcome';
 import { getLeadStatusFinancialReviewMessage } from '@/lib/lead-financial-review';
 import { leadProgressCapability } from '@/lib/lead-operation-capability';
 import { createPipelineStageSnapshot } from '@/lib/pipeline-stage-snapshot';
-import { pipelineRevisionSchema, stageHexColorInputSchema } from '@/lib/validation';
 import {
   applyPendingPipelineMoves,
   clearPendingPipelineMove,
@@ -79,11 +72,10 @@ import {
 } from '@/lib/pipeline-selected-lead-access';
 import type { PipelineLead, PipelineQueryFilters, StageWithLeads } from '@/hooks/use-stages';
 import { useLoadMoreLeads } from '@/hooks/use-stages';
-import type { PipelineDeleteData } from '@/hooks/pipelines/use-pipeline-mutations';
-import { usePipelineEditorVisit, type PipelineEditorOperation } from '@/hooks/pipelines/use-pipeline-editor-visit';
+import { usePipelineCatalogEditor } from '@/hooks/pipelines/use-pipeline-catalog-editor';
 import { usePipelineCriticalLoadRetry } from '@/hooks/pipelines/use-pipeline-critical-load-retry';
 import { usePipelineRefresh } from '@/hooks/pipelines/use-pipeline-refresh';
-import { getPipelineBoardScrollMemory } from '@/hooks/pipelines/use-pipeline-board-scroll';
+import { usePipelineBoardNavigation } from '@/hooks/pipelines/use-pipeline-board-scroll';
 import { useOrganizationUsers } from '@/hooks/use-users';
 import { useTags } from '@/hooks/use-tags';
 import { useAssignLeadRoundRobin } from '@/hooks/use-assign-lead-roundrobin';
@@ -242,31 +234,12 @@ export default function Pipelines() {
     };
   }, [hasHydratedDynamicFilterSelection]);
 
-  const [editingStageId, setEditingStageId] = useState<string | null>(null);
-  const [editingStageName, setEditingStageName] = useState('');
-  // Keep the opening revision. Follow-up split: this inline editor belongs in a
-  // dedicated hooks/pipelines/use-stage-name-editor.ts, reducing this screen.
-  const editingStageBaseRef = useRef<{ id: string; name: string; updatedAt?: string | null } | null>(null);
-  const [savingStageName, setSavingStageName] = useState<{ id: string; operation: PipelineEditorOperation } | null>(null);
   const [settingsStage, setSettingsStage] = useState<StageWithLeads | null>(null);
   // Menu routing stays with stage selection until this legacy screen's UI state is extracted into pipeline-screen.
   const [settingsStageEntry, setSettingsStageEntry] = useState<{
     tab: StageSettingsTab;
     returnFocusElement: HTMLButtonElement | null;
   }>({ tab: 'general', returnFocusElement: null });
-  const [newPipelineDialogOpen, setNewPipelineDialogOpen] = useState(false);
-  const [newPipelineName, setNewPipelineName] = useState('');
-  const [newStageDialogOpen, setNewStageDialogOpen] = useState(false);
-  const [newStageName, setNewStageName] = useState('');
-  const [newStageColor, setNewStageColor] = useState<string>(PIPELINE_STAGE_COLOR_FALLBACK);
-  const newStageColorValidation = useMemo(
-    () => stageHexColorInputSchema.safeParse(newStageColor),
-    [newStageColor],
-  );
-  const [pipelineToDelete, setPipelineToDelete] = useState<PipelineDeleteData | null>(null);
-  const pipelineDeletionRef = useRef<PipelineDeleteData | null>(null);
-  const [deletePipelineBlocked, setDeletePipelineBlocked] = useState(false);
-  const [deletePipelineError, setDeletePipelineError] = useState<string | null>(null);
   const [attentionSettingsOpen, setAttentionSettingsOpen] = useState(false);
   const [stagesEditorOpen, setStagesEditorOpen] = useState(false);
   const [boardNowMs, setBoardNowMs] = useState(() => Date.now());
@@ -290,18 +263,37 @@ export default function Pipelines() {
   const moveRevisionReceiptByLeadRef = useRef(new Map<string, {
     queryKeyId: string; operation: LeadRequestOperation; receipt: PipelineMoveReceipt;
   }>());
-  const stageNameUpdateInFlightRef = useRef(new Map<string, PipelineEditorOperation>());
   const latestMoveVersionByLeadRef = useRef(new Map<string, number>());
   const nextMovePersistenceStartAtRef = useRef(0);
   const movePersistenceByLeadRef = useRef(new Map<string, Promise<void>>());
   const moveRollbackSnapshotByLeadRef = useRef(new Map<string, StageWithLeads[] | undefined>());
   const assigningLeadIdsRef = useRef(new Set<string>());
-  const createPipelineInFlightRef = useRef<PipelineEditorOperation | null>(null);
-  const createStageInFlightRef = useRef<PipelineEditorOperation | null>(null);
-  const deletePipelineInFlightRef = useRef(false);
   const [visualPendingMoves, setVisualPendingMoves] = useState(
     () => new Map<string, VisualPendingPipelineMove>(),
   );
+
+  const {
+    data: pipelines = [],
+    isLoading: pipelinesLoading,
+    isFetching: pipelinesFetching,
+    isLoadingError: pipelinesLoadingError,
+    isError: pipelinesError,
+    refetch: refetchPipelines,
+  } = usePipelines();
+  const handleSelectPipeline = useCallback((pipelineId: string | null) => {
+    setSelectedPipelineId(pipelineId);
+  }, [setSelectedPipelineId]);
+
+  const canEditPipeline = canManagePipeline(hasPermission);
+  const {
+    resetCatalogDialogs,
+    openNewPipeline,
+    openNewStage,
+    handleRequestDeletePipeline,
+    inlineRename,
+    dialogProps: catalogDialogProps,
+  } = usePipelineCatalogEditor({ selectedPipelineId, pipelines, canEditPipeline, handleSelectPipeline });
+
   const previousOrganizationIdRef = useRef(activeOrganizationId);
 
   useEffect(() => {
@@ -320,9 +312,7 @@ export default function Pipelines() {
       setLostReasonPending(false);
       setSettingsStage(null);
       setNewLeadDialogOpen(false);
-      setNewPipelineDialogOpen(false);
-      setNewStageDialogOpen(false);
-      setPipelineToDelete(null);
+      resetCatalogDialogs();
       setAttentionSettingsOpen(false);
       setStagesEditorOpen(false);
       setVisualPendingMoves(new Map());
@@ -331,31 +321,9 @@ export default function Pipelines() {
     return () => {
       cancelled = true;
     };
-  }, [activeOrganizationId]);
+  }, [activeOrganizationId, resetCatalogDialogs]);
 
-  const {
-    data: pipelines = [],
-    isLoading: pipelinesLoading,
-    isFetching: pipelinesFetching,
-    isLoadingError: pipelinesLoadingError,
-    isError: pipelinesError,
-    refetch: refetchPipelines,
-  } = usePipelines();
-  const pipelineNavigationRef = useRef({ selectedPipelineId, pipelines });
-  useLayoutEffect(() => { pipelineNavigationRef.current = { selectedPipelineId, pipelines }; }, [selectedPipelineId, pipelines]);
-  const createPipeline = useCreatePipeline();
-  const createStage = useCreateStage();
-  const updateStageName = useUpdateStage();
-  const createPipelineVisit = usePipelineEditorVisit(createPipeline.scopeKey, JSON.stringify([newPipelineDialogOpen, selectedPipelineId]), createPipeline.captureScopeGuard);
-  const createStageVisit = usePipelineEditorVisit(createStage.scopeKey, JSON.stringify([newStageDialogOpen, selectedPipelineId]), createStage.captureScopeGuard);
-  const stageNameVisit = usePipelineEditorVisit(updateStageName.scopeKey, JSON.stringify([selectedPipelineId, editingStageId]), updateStageName.captureScopeGuard);
-  const savingStageNameId = savingStageName?.operation.visit === stageNameVisit.key ? savingStageName.id : null;
-  const deletePipeline = useDeletePipeline();
   const loadMoreLeads = useLoadMoreLeads();
-
-  const handleSelectPipeline = useCallback((pipelineId: string | null) => {
-    setSelectedPipelineId(pipelineId);
-  }, [setSelectedPipelineId]);
 
   useEffect(() => {
     if (!isFiltersHydrated || pipelinesLoading || pipelinesFetching || pipelinesError) return;
@@ -810,25 +778,12 @@ export default function Pipelines() {
   const { data: allTags = [] } = useTags({ enabled: shouldLoadLeadDialogResources });
   const assignLeadRoundRobin = useAssignLeadRoundRobin();
   const assignLeadRoundRobinMutate = assignLeadRoundRobin.mutate;
-  const canEditPipeline = canManagePipeline(hasPermission);
   const canOpenStageSettings = canEditStageOperationalRules(hasPermission)
     || canViewStageAutomations(hasPermission, hasModule('automations'));
   const canManageAttention = hasPermission('attention_view') && (
     hasPermission('pipeline_manage') || hasPermission('automations_manage')
   );
   const isMobile = useIsMobile();
-  const scrollMemory = useMemo(
-    () => shouldLoadPipelineLeads ? getPipelineBoardScrollMemory(queryClient, pipelineBoardQueryKeyId, isMobile) : null,
-    [isMobile, pipelineBoardQueryKeyId, queryClient, shouldLoadPipelineLeads],
-  );
-  const [mobileStageSelection, setMobileStageSelection] = useState<{
-    memory: typeof scrollMemory;
-    stageId: string;
-  } | null>(null);
-  const activeMobileStageId = mobileStageSelection?.memory === scrollMemory
-    ? mobileStageSelection?.stageId
-    : scrollMemory?.mobileStageId;
-
   const currentPipeline = pipelines.find(p => p.id === selectedPipelineId);
   const isLoading =
     pipelinesLoading ||
@@ -1621,44 +1576,6 @@ export default function Pipelines() {
     };
   }, [canCreateLeads, searchParams, router]);
 
-  const handleStageName = async (stageId: string) => {
-    const operation = stageNameVisit.capture();
-    if (!operation.isCurrent() || stageNameUpdateInFlightRef.current.get(stageId)?.visit === operation.visit) return;
-
-    const nextStageName = editingStageName.trim();
-    if (nextStageName.length < 2 || nextStageName.length > 120) {
-      toast.error('O nome da coluna deve ter entre 2 e 120 caracteres.');
-      return;
-    }
-
-    const base = editingStageBaseRef.current;
-    if (base?.id !== stageId) return;
-    const currentStageName = base.name.trim();
-    if (currentStageName === nextStageName) {
-      if (editingStageBaseRef.current === base) editingStageBaseRef.current = null;
-      setEditingStageId(null);
-      return;
-    }
-
-    stageNameUpdateInFlightRef.current.set(stageId, operation);
-    setSavingStageName({ id: stageId, operation });
-
-    try {
-      if (!base.updatedAt) throw new Error('Reabra a edição para carregar a versão atual da coluna.');
-      await updateStageName.mutateAsync({ id: stageId, name: nextStageName, expectedUpdatedAt: base.updatedAt });
-      if (!operation.isCurrent()) return;
-      if (editingStageBaseRef.current === base) editingStageBaseRef.current = null;
-      setEditingStageId((current) => current === stageId ? null : current);
-      toast.success('Nome atualizado!');
-    } catch (error: unknown) {
-      if (!operation.isCurrent()) return;
-      toast.error('Não foi possível atualizar o nome: ' + getPipelineErrorMessage(error));
-    } finally {
-      if (stageNameUpdateInFlightRef.current.get(stageId) === operation) stageNameUpdateInFlightRef.current.delete(stageId);
-      if (operation.isCurrent()) setSavingStageName(current => current?.operation === operation ? null : current);
-    }
-  };
-
   const deferredSearch = deferredSearchQuery;
 
   const filteredStages = useMemo(
@@ -1672,35 +1589,13 @@ export default function Pipelines() {
     [deferredSearch, searchQuery, stages],
   );
 
-  const visibleStages = useMemo<StageWithLeads[]>(() => {
-    if (!isMobile) return filteredStages;
-    const activeStage = filteredStages.find((stage) => stage.id === activeMobileStageId);
-    return activeStage ? [activeStage] : filteredStages.slice(0, 1);
-  }, [isMobile, filteredStages, activeMobileStageId]);
-
-  const activeMobileStageIndex = useMemo(() => {
-    if (!isMobile || filteredStages.length === 0) return -1;
-
-    const activeStageId = activeMobileStageId || filteredStages[0].id;
-    const index = filteredStages.findIndex((stage) => stage.id === activeStageId);
-    return index >= 0 ? index : 0;
-  }, [isMobile, filteredStages, activeMobileStageId]);
-
-  const hasPreviousMobileStage = isMobile && activeMobileStageIndex > 0;
-  const hasNextMobileStage = isMobile && activeMobileStageIndex >= 0 && activeMobileStageIndex < filteredStages.length - 1;
-
-  const handleMobileStageNavigation = useCallback((direction: 'previous' | 'next') => {
-    if (!isMobile || filteredStages.length === 0 || activeMobileStageIndex < 0) return;
-
-    const nextIndex = direction === 'previous'
-      ? Math.max(0, activeMobileStageIndex - 1)
-      : Math.min(filteredStages.length - 1, activeMobileStageIndex + 1);
-
-    if (nextIndex === activeMobileStageIndex) return;
-    const stageId = filteredStages[nextIndex].id;
-    scrollMemory?.rememberMobileStage(stageId);
-    setMobileStageSelection({ memory: scrollMemory, stageId });
-  }, [activeMobileStageIndex, filteredStages, isMobile, scrollMemory]);
+  const {
+    scrollMemory,
+    visibleStages,
+    hasPreviousMobileStage,
+    hasNextMobileStage,
+    handleMobileStageNavigation,
+  } = usePipelineBoardNavigation({ filteredStages, pipelineBoardQueryKeyId, isMobile, shouldLoadPipelineLeads });
 
   const settingsStageForDialog = useMemo<PipelineStageSettingsValue | null>(() => {
     if (!settingsStage) return null;
@@ -1727,132 +1622,6 @@ export default function Pipelines() {
     () => buildStageCountMetaMap(filteredStages),
     [filteredStages],
   );
-
-  const handleCreatePipeline = async (e: FormEvent) => {
-    e.preventDefault();
-    const operation = createPipelineVisit.capture();
-    if (!newPipelineDialogOpen || !operation.isCurrent() || createPipelineInFlightRef.current?.visit === operation.visit) return;
-    const normalizedName = newPipelineName.trim();
-    if (normalizedName.length < 2) {
-      toast.error('O nome da pipeline deve ter pelo menos 2 caracteres.');
-      return;
-    }
-
-    createPipelineInFlightRef.current = operation;
-    try {
-      const pipeline = await createPipeline.mutateAsync({ name: normalizedName });
-      if (!operation.isCurrent()) return;
-      handleSelectPipeline(pipeline.id);
-      setNewPipelineDialogOpen(false);
-      setNewPipelineName('');
-      toast.success('Pipeline criada com sucesso!');
-    } catch (error: unknown) {
-      if (!operation.isCurrent()) return;
-      toast.error('Erro ao criar pipeline: ' + getPipelineErrorMessage(error));
-    } finally {
-      if (createPipelineInFlightRef.current === operation) createPipelineInFlightRef.current = null;
-    }
-  };
-
-  const handleCreateStage = async (event: FormEvent) => {
-    event.preventDefault();
-    const operation = createStageVisit.capture();
-    if (!newStageDialogOpen || !operation.isCurrent() || createStageInFlightRef.current?.visit === operation.visit) return;
-    const normalizedName = newStageName.trim();
-    if (!selectedPipelineId) return;
-    if (normalizedName.length < 2) {
-      toast.error('O nome da coluna deve ter pelo menos 2 caracteres.');
-      return;
-    }
-    if (!newStageColorValidation.success) {
-      toast.error(
-        newStageColorValidation.error.issues[0]?.message ||
-          'Informe uma cor válida.',
-      );
-      return;
-    }
-
-    createStageInFlightRef.current = operation;
-    try {
-      await createStage.mutateAsync({
-        pipelineId: selectedPipelineId,
-        name: normalizedName,
-        color: newStageColorValidation.data,
-      });
-      if (!operation.isCurrent()) return;
-      setNewStageDialogOpen(false);
-      setNewStageName('');
-      setNewStageColor(PIPELINE_STAGE_COLOR_FALLBACK);
-      toast.success('Coluna criada com sucesso!');
-    } catch (error: unknown) {
-      if (!operation.isCurrent()) return;
-      toast.error('Erro ao criar coluna: ' + getPipelineErrorMessage(error));
-    } finally {
-      if (createStageInFlightRef.current === operation) createStageInFlightRef.current = null;
-    }
-  };
-
-  const closePipelineDeletion = (target: PipelineDeleteData | null) => {
-    if (pipelineDeletionRef.current !== target) return;
-    if (target) deletePipeline.discard(target);
-    pipelineDeletionRef.current = null;
-    setPipelineToDelete(null);
-    setDeletePipelineBlocked(false);
-    setDeletePipelineError(null);
-  };
-
-  const handleRequestDeletePipeline = (pipeline: { id: string; name: string; revision?: string }) => {
-    if (!canEditPipeline || !deletePipeline.isScopeCurrent() || deletePipeline.isPending || deletePipelineInFlightRef.current) return;
-    const revision = pipelineRevisionSchema.safeParse(pipeline.revision);
-    if (!revision.success) {
-      toast.error('Não foi possível confirmar a versão desta pipeline. Atualize a lista antes de excluir.');
-      return;
-    }
-    try {
-      const captured = deletePipeline.capture({ id: pipeline.id, name: pipeline.name, expectedRevision: revision.data });
-      closePipelineDeletion(pipelineDeletionRef.current);
-      pipelineDeletionRef.current = captured;
-      setPipelineToDelete(captured);
-    } catch (error) {
-      if (deletePipeline.isScopeCurrent()) toast.error(getPipelineErrorMessage(error));
-    }
-  };
-
-  const handleDeletePipeline = async () => {
-    const target = pipelineToDelete;
-    if (!canEditPipeline || !target || pipelineDeletionRef.current !== target || !deletePipeline.isCurrent(target) || deletePipelineBlocked || deletePipeline.isPending || deletePipelineInFlightRef.current) return;
-
-    deletePipelineInFlightRef.current = true;
-    setDeletePipelineError(null);
-    try {
-      await deletePipeline.mutateAsync(target);
-      if (pipelineDeletionRef.current !== target || !deletePipeline.isCurrent(target)) return;
-      const currentNavigation = pipelineNavigationRef.current;
-      const nextPipeline = currentNavigation.pipelines.find((pipeline) => pipeline.id !== target.id) || null;
-
-      if (currentNavigation.selectedPipelineId === target.id) {
-        handleSelectPipeline(nextPipeline?.id || null);
-      }
-
-      closePipelineDeletion(target);
-      toast.success('Pipeline excluída com sucesso!');
-    } catch (error: unknown) {
-      if (pipelineDeletionRef.current !== target || !deletePipeline.isCurrent(target)) return;
-      const conflict = error instanceof VimobAPIError && error.code === 'pipeline_changed';
-      if (conflict) {
-        // Retire the original intent too: previously rendered callbacks may
-        // still hold the unblocked state after the conflict is displayed.
-        deletePipeline.discard(target);
-        setDeletePipelineBlocked(true);
-      }
-      const message = conflict ? 'A pipeline ou suas colunas mudaram. Feche esta confirmação, atualize a lista e confira antes de excluir.'
-        : 'Erro ao excluir pipeline: ' + getPipelineErrorMessage(error);
-      setDeletePipelineError(message);
-      toast.error(message);
-    } finally {
-      deletePipelineInFlightRef.current = false;
-    }
-  };
 
   const pendingMoveLeadIds = useMemo(() => new Set([...visualPendingMoves.values()]
     .filter(entry => entry.queryKeyId === pipelineBoardQueryKeyId && entry.release === null)
@@ -1938,7 +1707,7 @@ export default function Pipelines() {
           onRetryDynamicOptions={handleEnableFilterOptions}
           onSelectPipeline={handleSelectPipeline}
           onRequestDeletePipeline={handleRequestDeletePipeline}
-          onRequestNewPipeline={() => setNewPipelineDialogOpen(true)}
+          onRequestNewPipeline={openNewPipeline}
           onRequestAttentionSettings={() => setAttentionSettingsOpen(true)}
           onRequestStagesEditor={() => setStagesEditorOpen(true)}
           onRefresh={() => void handleManualRefresh()}
@@ -1974,9 +1743,7 @@ export default function Pipelines() {
           isDragDisabled={isDragDisabled}
           pendingMoveLeadIds={pendingMoveLeadIds}
           nowMs={boardNowMs}
-          editingStageId={editingStageId}
-          editingStageName={editingStageName}
-          savingStageNameId={savingStageNameId}
+          {...inlineRename}
           loadMoreIsPending={loadMoreLeads.isPending}
           loadingMoreStageId={loadMoreLeads.variables?.stageId}
           onDragStart={handleDragStart}
@@ -1984,24 +1751,12 @@ export default function Pipelines() {
           onCriticalLoadRetry={() => void handleCriticalLoadRetry()}
           onBoardRefresh={() => void handleCriticalLoadRetry()}
           onMobileStageNavigation={handleMobileStageNavigation}
-          onEditingStageNameChange={setEditingStageName}
-          onStartEditingStage={(stage) => {
-            editingStageBaseRef.current = { id: stage.id, name: stage.name, updatedAt: stage.updated_at };
-            setEditingStageId(stage.id);
-            setEditingStageName(stage.name);
-          }}
-          onCommitStageName={(stageId) => void handleStageName(stageId)}
-          onCancelEditingStage={() => {
-            editingStageBaseRef.current = null;
-            setEditingStageId(null);
-            setEditingStageName('');
-          }}
           onOpenStageSettings={(stage, tab, returnFocusElement) => { setSettingsStageEntry({ tab, returnFocusElement }); setSettingsStage(stage); }}
           onOpenLead={handleOpenLead}
           onAssignLeadNow={handleAssignLeadNow}
           onLoadMore={handleLoadMore}
-          onCreateStage={() => setNewStageDialogOpen(true)}
-          onCreatePipeline={() => setNewPipelineDialogOpen(true)}
+          onCreateStage={openNewStage}
+          onCreatePipeline={openNewPipeline}
         />
 
 
@@ -2028,26 +1783,10 @@ export default function Pipelines() {
           newLeadDialogOpen={newLeadDialogOpen}
           newLeadStageId={newLeadStageId}
           selectedPipelineId={selectedPipelineId}
-          newPipelineDialogOpen={newPipelineDialogOpen}
-          newPipelineName={newPipelineName}
-          createPipelinePending={createPipeline.isPending}
-          newStageDialogOpen={newStageDialogOpen}
-          newStageName={newStageName}
-          newStageColor={newStageColor}
-          newStageColorIsValid={newStageColorValidation.success}
-          normalizedNewStageColor={
-            newStageColorValidation.success
-              ? newStageColorValidation.data
-              : PIPELINE_STAGE_COLOR_FALLBACK
-          }
-          createStagePending={createStage.isPending}
+          {...catalogDialogProps}
           attentionSettingsOpen={attentionSettingsOpen}
           stagesEditorOpen={stagesEditorOpen}
           currentPipelineName={currentPipeline?.name || ''}
-          pipelineToDelete={pipelineToDelete}
-          deletePipelinePending={deletePipeline.isPending}
-          deletePipelineBlocked={deletePipelineBlocked}
-          deletePipelineError={deletePipelineError}
           onCloseSelectedLead={() => { setSelectedLead(null); setEditingLead(null); }}
           onEditSelectedLead={(leadToEdit) => {
             setEditingLead({
@@ -2084,19 +1823,8 @@ export default function Pipelines() {
             }
           }}
           onLostReasonConfirm={handleLostReasonConfirm}
-          onNewPipelineDialogOpenChange={setNewPipelineDialogOpen}
-          onNewPipelineNameChange={setNewPipelineName}
-          onCreatePipeline={(event) => void handleCreatePipeline(event)}
-          onNewStageDialogOpenChange={setNewStageDialogOpen}
-          onNewStageNameChange={setNewStageName}
-          onNewStageColorChange={setNewStageColor}
-          onCreateStage={(event) => void handleCreateStage(event)}
           onAttentionSettingsOpenChange={setAttentionSettingsOpen}
           onStagesEditorOpenChange={setStagesEditorOpen}
-          onPipelineToDeleteOpenChange={(open) => {
-            if (!open && !deletePipeline.isPending) closePipelineDeletion(pipelineToDelete);
-          }}
-          onDeletePipeline={() => void handleDeletePipeline()}
         />
       </div>
     </AppLayout>

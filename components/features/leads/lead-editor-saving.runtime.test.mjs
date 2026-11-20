@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import ts from 'typescript';
 import { deferred, evaluateProduction, turn } from '../../../hooks/leads/lead-request-runtime-fixture.mjs';
@@ -15,15 +16,28 @@ assert.ok(component);
 const declarations = new Map(component.body.statements.filter(ts.isVariableStatement).flatMap(statement =>
   statement.declarationList.declarations.filter(node => ts.isIdentifier(node.name)).map(node => [node.name.text, node])));
 const elements = [];
-function visit(node) { if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) elements.push(node); ts.forEachChild(node, visit); }
-visit(component);
-const attr = (node, name) => node.attributes.properties.find(property => property.name?.getText(ast) === name);
-const attrText = (node, name) => attr(node, name)?.initializer?.getText(ast) || '';
-function expression(node, name) {
-  const attribute = attr(node, name); assert.ok(attribute, `${node.tagName.getText(ast)}.${name}`);
-  return attribute.initializer.expression?.getText(ast) || attribute.initializer.getText(ast);
+const ownerByElement = new Map();
+function visit(node, owner) {
+  if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+    elements.push(node);
+    ownerByElement.set(node, owner);
+  }
+  ts.forEachChild(node, child => visit(child, owner));
 }
-const element = (tag, predicate = () => true) => { const found = elements.find(node => node.tagName.getText(ast) === tag && predicate(node)); assert.ok(found, tag); return found; };
+visit(component);
+for (const owner of ['LeadContactFields', 'LeadProfileFields', 'LeadInterestFields', 'LeadManagementFields']) {
+  if (!elements.some(node => node.tagName.getText() === owner)) continue;
+  const path = join(dirname(sourcePath), 'lead-form', `${owner}.tsx`);
+  visit(ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX), owner);
+}
+const attr = (node, name) => node.attributes.properties.find(property => property.name?.getText() === name);
+const attrText = (node, name) => attr(node, name)?.initializer?.getText() || '';
+function expression(node, name) {
+  const attribute = attr(node, name); assert.ok(attribute, `${node.tagName.getText()}.${name}`);
+  return attribute.initializer.expression?.getText() || attribute.initializer.getText();
+}
+const element = (tag, predicate = () => true) => { const found = elements.find(node => node.tagName.getText() === tag && predicate(node)); assert.ok(found, tag); return found; };
+const mountOf = node => ownerByElement.get(node) ? element(ownerByElement.get(node)) : node;
 
 // Resolve the real JSX callback or its named handler. Only external boundaries
 // and React state setters are synthetic; declarations and edit helpers are real.
@@ -63,7 +77,7 @@ function fixture(edit, { withFile = false, holdUpload = false } = {}) {
     requiresWonLeadFinancialReview: () => false, toast: Object.fromEntries(['success','warning','error'].map(name => [name, () => effects.push(name)])),
     localStorage: { setItem: () => effects.push('draft-stored') },
   };
-  function evaluate(code, extra = {}) {
+  function evaluate(code, extra = {}, mount) {
     // Callback values deliberately capture the current render. Retained callbacks
     // must still consult submissionAttemptRef before React renders busy state.
     const bindings = { ...dependencies, ...state, pendingAttachments: state.files, attachmentRecovery: state.recovery,
@@ -74,9 +88,12 @@ function fixture(edit, { withFile = false, holdUpload = false } = {}) {
       function walk(node) {
         if (ts.isIdentifier(node)) {
           const name = node.text, declaration = declarations.get(name);
-          if (!Object.hasOwn(bindings, name) && declaration && !resolving.has(name)) {
-            resolving.add(name); resolveDependencies(declaration.getText(ast));
-            bindings[name] = evaluateProduction('const ' + declaration.getText(ast), bindings, name);
+          const prop = mount && attr(mount, name)?.initializer?.expression;
+          const initializer = declaration?.initializer ?? prop;
+          if (!Object.hasOwn(bindings, name) && initializer && !resolving.has(name)) {
+            resolving.add(name);
+            resolveDependencies(initializer.getText());
+            bindings[name] = evaluateProduction(`const ${name} = ${initializer.getText()}`, bindings, name);
           }
         }
         ts.forEachChild(node, walk);
@@ -86,7 +103,10 @@ function fixture(edit, { withFile = false, holdUpload = false } = {}) {
     resolveDependencies(code); return evaluateProduction('const callback = ' + code, bindings, 'callback');
   }
   const handler = (name, extra) => { const declaration = declarations.get(name); assert.ok(declaration, name); return evaluate(declaration.initializer.getText(ast), extra); };
-  const jsx = (tag, name, predicate, extra) => evaluate(expression(element(tag, predicate), name), extra);
+  const jsx = (tag, name, predicate, extra) => {
+    const node = element(tag, predicate);
+    return evaluate(expression(node, name), extra, mountOf(node));
+  };
   return {
     state, requests, uploads, effects, dependencies, file, property, handler, jsx, evaluate,
     submit: () => handler('handleSubmit')({ preventDefault() {} }),
@@ -199,16 +219,20 @@ test('the native form content is inside a disabled fieldset while saving', () =>
   const fieldset = element('fieldset');
   const f = fixture(true); assert.equal(f.evaluate(expression(fieldset, 'disabled'), { isSubmitting: true }), true);
   assert.equal(f.evaluate(expression(fieldset, 'disabled'), { isSubmitting: false }), false);
-  for (const node of elements.filter(node => ['Input', 'Textarea', 'InternationalPhoneInput'].includes(node.tagName.getText(ast)))) {
-    let parent = node.parent, covered = false;
+  const nativeFields = elements.filter(node => ['Input', 'Textarea', 'InternationalPhoneInput'].includes(node.tagName.getText()));
+  assert.ok(nativeFields.length > 0);
+  for (const node of nativeFields) {
+    let parent = mountOf(node).parent, covered = false;
     while (parent) { if (ts.isJsxElement(parent) && parent.openingElement === fieldset) covered = true; parent = parent.parent; }
-    assert.ok(covered, node.getText(ast).slice(0, 90));
+    assert.ok(covered, node.getText().slice(0, 90));
   }
 });
 
 for (const tag of ['PropertyPickerDialog', 'TagSelector', 'LeadSourceSelect', 'Select']) test(`${tag} exposes a busy disabled state for portal controls`, () => {
   const f = fixture(false);
-  for (const node of elements.filter(node => node.tagName.getText(ast) === tag)) {
-    assert.equal(f.evaluate(expression(node, 'disabled'), { isSubmitting: true }), true);
+  const controls = elements.filter(node => node.tagName.getText() === tag);
+  assert.ok(controls.length > 0);
+  for (const node of controls) {
+    assert.equal(f.evaluate(expression(node, 'disabled'), { isSubmitting: true }, mountOf(node)), true);
   }
 });

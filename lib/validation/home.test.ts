@@ -28,6 +28,10 @@ const leadDetailOverlaysSource = readFileSync(
   "components/features/leads/lead-detail/LeadDetailOverlays.tsx",
   "utf8",
 );
+const leadDetailStepperSource = readFileSync(
+  "components/features/leads/lead-detail/LeadDetailStageStepper.tsx",
+  "utf8",
+);
 const contactsSource = readFileSync(
   "components/features/contacts/ContactsScreen.tsx",
   "utf8",
@@ -491,11 +495,10 @@ test("detalhe do lead monta somente os layouts V2 ativos em mobile e desktop", (
     leadDetailSource,
     /data-tour="lead-detail-dialog"[\s\S]*?\{DesktopContentV2\(\)\}/,
   );
-  assert.equal(
-    [...leadDetailSource.matchAll(/disabled=\{!canProgressLead\}\s+aria-label=\{.Mover para /g)].length,
-    2,
-    "stage buttons require the progress permission on both layouts",
-  );
+  assert.match(leadDetailSource, /<LeadDetailStageStepper\b[\s\S]*?disabled=\{!canProgressLead\}/);
+  assert.match(leadDetailSource, /const headerStages = renderStageStepper\(true\)/);
+  assert.match(leadDetailSource, /\{renderStageStepper\(false\)\}/);
+  assert.match(leadDetailStepperSource, /disabled=\{disabled\}\s+aria-label=\{.Mover para /);
   assert.equal(
     [...leadDetailSource.matchAll(/onValueChange=\{handleDealStatusChange\} disabled=\{!canOperateLead \|\|/g)].length,
     2,
@@ -516,7 +519,7 @@ test("detalhe do lead monta somente os layouts V2 ativos em mobile e desktop", (
     leadDetailSource,
     /data-tour="lead-detail-dialog"[\s\S]*?\{DesktopContentV2\(\)\}[\s\S]*?<\/Dialog>\s*\{!detailReadState\.hideDetails && overlays\}/,
   );
-  assert.match(leadDetailSource, /data-tour="lead-detail-stages"/);
+  assert.match(leadDetailStepperSource, /data-tour="lead-detail-stages"/);
   assert.match(leadDetailSource, /data-tour="lead-detail-history"/);
 
   assert.doesNotMatch(leadDetailSource, /const MobileContent =/);

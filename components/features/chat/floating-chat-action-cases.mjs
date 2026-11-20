@@ -182,7 +182,8 @@ export function accessibleKeyboard() {
   let sent = 0, prevented = 0;
   callback(F, 'handleKeyPress', { handleSendMessage: () => { sent++; } })({ key: 'Enter', nativeEvent: {}, preventDefault: () => { prevented++; } });
   assert.equal(sent, 1); assert.equal(prevented, 1);
-  const labels = nodes(F, n => (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) && propText(n, 'aria-label'));
+  const labels = [F, 'components/features/chat/FloatingChatHeader.tsx', 'components/features/chat/FloatingChatSurface.tsx']
+    .flatMap(path => nodes(path, n => (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) && propText(n, 'aria-label')));
   for (const label of ['Chat do WhatsApp', 'Voltar à lista de conversas', 'Fechar chat do WhatsApp', 'Anexar arquivo']) assert.ok(labels.some(n => propText(n, 'aria-label') === JSON.stringify(label)), label);
   assert.ok(nodes(F, n => (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) && propText(n, 'inputAriaLabel') === '"Digite sua mensagem"').length);
   const actionPath = 'components/features/whatsapp/ConversationAutomationAction.tsx';

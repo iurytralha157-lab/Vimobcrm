@@ -6,10 +6,10 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 
 ## Resumo
 
-- Arquivos analisados: 675
-- Arquivos com achados: 72
+- Arquivos analisados: 691
+- Arquivos com achados: 73
 - Achados: 162
-- Arquivos protegidos/mistos com achados: 68
+- Arquivos protegidos/mistos com achados: 69
 - Achados alcançáveis pelo CRM protegido: 158
 - Distribuição por superfície: protected-only 116, protected-and-public 42, public-only 2, infraestrutura 2
 - P1: 117
@@ -50,7 +50,6 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/dashboard/LeadDistributionSection.tsx` | 8 | 4 | uppercase-tracking: 2, oversized-radius: 2 |
 | `components/features/site/VisitorMap.tsx` | 8 | 4 | medium-shadow: 4 |
 | `components/features/chat/FloatingChatButton.tsx` | 8 | 2 | heavy-shadow: 2 |
-| `components/features/chat/FloatingChat.tsx` | 7 | 2 | heavy-shadow: 1, heavy-font: 1 |
 | `components/features/admin/home-publications/PublicationImageField.tsx` | 6 | 2 | hardcoded-color: 1, hardcoded-surface: 1 |
 | `components/features/dashboard/DashboardKpis.tsx` | 6 | 2 | oversized-radius: 2 |
 | `components/features/dashboard/DashboardScreen.tsx` | 6 | 2 | oversized-radius: 2 |
@@ -62,6 +61,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/integrations/MetaIntegrationSettings.tsx` | 4 | 4 | uppercase-tracking: 4 |
 | `components/features/schedule/CalendarView.tsx` | 4 | 2 | hardcoded-surface: 2 |
 | `components/features/whatsapp/MediaViewer.tsx` | 4 | 2 | hardcoded-surface: 2 |
+| `components/features/chat/FloatingConversationFilters.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/contacts/ContactCard.tsx` | 4 | 1 | hardcoded-color: 1 |
 | `components/features/contacts/contacts-screen/ContactsList.tsx` | 4 | 1 | hardcoded-color: 1 |
 | `components/features/leads/lead-detail/LeadTagPickerContent.tsx` | 4 | 1 | hardcoded-color: 1 |
@@ -76,6 +76,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/whatsapp/EnterAttendanceDialog.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/shared/layout/AccessValidationNotice.tsx` | 4 | 1 | hardcoded-color: 1 |
 | `components/features/automations/ExecutionHistory.tsx` | 3 | 1 | heavy-font: 1 |
+| `components/features/chat/FloatingChatHeader.tsx` | 3 | 1 | heavy-font: 1 |
 | `components/features/dashboard/CampaignLeadsChart.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/dashboard/DealsEvolutionChart.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/dashboard/SalesFunnelWithPipeline.tsx` | 3 | 1 | oversized-radius: 1 |
@@ -85,7 +86,6 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/properties/detail/PropertyWorkspaceSummary.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/properties/detail/tabs/KeysTab.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/properties/detail/tabs/TechnicalTab.tsx` | 3 | 1 | oversized-radius: 1 |
-| `components/features/properties/developments/PropertyDevelopmentsScreen.tsx` | 3 | 1 | oversized-radius: 1 |
 
 ### Todas as superfícies
 
@@ -105,7 +105,6 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/dashboard/LeadDistributionSection.tsx` | 8 | 4 | uppercase-tracking: 2, oversized-radius: 2 |
 | `components/features/site/VisitorMap.tsx` | 8 | 4 | medium-shadow: 4 |
 | `components/features/chat/FloatingChatButton.tsx` | 8 | 2 | heavy-shadow: 2 |
-| `components/features/chat/FloatingChat.tsx` | 7 | 2 | heavy-shadow: 1, heavy-font: 1 |
 | `components/features/admin/home-publications/PublicationImageField.tsx` | 6 | 2 | hardcoded-color: 1, hardcoded-surface: 1 |
 | `components/features/dashboard/DashboardKpis.tsx` | 6 | 2 | oversized-radius: 2 |
 | `components/features/dashboard/DashboardScreen.tsx` | 6 | 2 | oversized-radius: 2 |
@@ -117,6 +116,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/integrations/MetaIntegrationSettings.tsx` | 4 | 4 | uppercase-tracking: 4 |
 | `components/features/schedule/CalendarView.tsx` | 4 | 2 | hardcoded-surface: 2 |
 | `components/features/whatsapp/MediaViewer.tsx` | 4 | 2 | hardcoded-surface: 2 |
+| `components/features/chat/FloatingConversationFilters.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/contacts/ContactCard.tsx` | 4 | 1 | hardcoded-color: 1 |
 | `components/features/contacts/contacts-screen/ContactsList.tsx` | 4 | 1 | hardcoded-color: 1 |
 | `components/features/leads/lead-detail/LeadTagPickerContent.tsx` | 4 | 1 | hardcoded-color: 1 |
@@ -133,6 +133,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/shared/layout/AccessValidationNotice.tsx` | 4 | 1 | hardcoded-color: 1 |
 | `components/features/auth/AuthSplitLayout.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/automations/ExecutionHistory.tsx` | 3 | 1 | heavy-font: 1 |
+| `components/features/chat/FloatingChatHeader.tsx` | 3 | 1 | heavy-font: 1 |
 | `components/features/dashboard/CampaignLeadsChart.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/dashboard/DealsEvolutionChart.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/dashboard/SalesFunnelWithPipeline.tsx` | 3 | 1 | oversized-radius: 1 |
@@ -140,4 +141,3 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/presence/OnlineUsersPanel.tsx` | 3 | 1 | heavy-font: 1 |
 | `components/features/properties/detail/PropertyWorkspaceOverview.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/properties/detail/PropertyWorkspaceSummary.tsx` | 3 | 1 | oversized-radius: 1 |
-| `components/features/properties/detail/tabs/KeysTab.tsx` | 3 | 1 | oversized-radius: 1 |

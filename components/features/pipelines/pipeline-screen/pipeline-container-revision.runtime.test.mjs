@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, expect } from '@playwright/test';
 
-// Actual PipelinesScreen handlers, mutation hooks, access helper, API and Zod.
+// Actual pipeline catalog editor handlers, mutation hooks, access helper, API and Zod.
 // Synthetic auth/server only; all browser network requests are blocked.
 const require = createRequire(import.meta.url), ts = require('typescript');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -18,10 +18,10 @@ let directory, browser, page, bundle, stylesheet;
 const errors = [];
 before(async()=>{
   directory=await mkdtemp(path.join(tmpdir(),'vimob-pipeline-container-'));
-  const source=ts.createSourceFile('PipelinesScreen.tsx',await readFile(path.join(root,'components/features/pipelines/PipelinesScreen.tsx'),'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+  const catalogPath = 'hooks/pipelines/use-pipeline-catalog-editor.ts';
+  const source=ts.createSourceFile(catalogPath,await readFile(path.join(root,catalogPath),'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
   function variable(name){let found;const visit=node=>{if(ts.isVariableDeclaration(node)&&(ts.isIdentifier(node.name)?node.name.text===name:ts.isArrayBindingPattern(node.name)&&node.name.elements.some(element=>ts.isBindingElement(element)&&element.name.getText(source)===name)))found=node;ts.forEachChild(node,visit)};visit(source);assert(found,name);return`const ${found.getText(source)};`}
-  function attribute(name){let found;const visit=node=>{if(ts.isJsxAttribute(node)&&node.name.getText(source)===name)found=node.initializer.expression;ts.forEachChild(node,visit)};visit(source);assert(found,name);return found.getText(source)}
-  const declarations=['pipelineToDelete','pipelineDeletionRef','deletePipelineBlocked','deletePipelineError','deletePipelineInFlightRef','pipelineNavigationRef','closePipelineDeletion','handleRequestDeletePipeline','handleDeletePipeline'].map(variable).join('\n');
+  const declarations=['pipelineToDelete','pipelineDeletionRef','deletePipelineBlocked','deletePipelineError','deletePipelineInFlightRef','pipelineNavigationRef','closePipelineDeletion','handleRequestDeletePipeline','handleDeletePipeline','onPipelineToDeleteOpenChange'].map(variable).join('\n');
   const stub=path.join(directory,'stub.tsx'),validation=path.join(directory,'validation.ts'),entry=path.join(directory,'entry.tsx'),loader=path.join(directory,'loader.cjs');
   await writeFile(stub,`import{createContext,useContext}from'react';export const Auth=createContext(null),useAuth=()=>useContext(Auth);export{VimobAPIError}from${JSON.stringify(path.join(root,'lib/api/vimob-error.ts'))};export const vimobAPIRequest=(url,options)=>window.h.request(url,options);export const toast=Object.fromEntries(['success','error'].map(kind=>[kind,message=>window.h.toasts.push({kind,message})]));export const SharedFilters=()=>null;`);
   await writeFile(validation,`export * from ${JSON.stringify(path.join(root,'lib/validation/common.ts'))};export * from ${JSON.stringify(path.join(root,'lib/validation/pipelines.ts'))};`);
@@ -48,14 +48,13 @@ before(async()=>{
       useLayoutEffect(()=>{pipelineNavigationRef.current={selectedPipelineId,pipelines}},[selectedPipelineId,pipelines]);
       const handleSelectPipeline=id=>{h.navigation.push(id);setSelectedPipelineId(id)};
       h.navigate=handleSelectPipeline;
-      const onOpenChange=${attribute('onPipelineToDeleteOpenChange')};
       h.query=list;h.selected=selectedPipelineId;h.target=pipelineToDelete;h.blocked=deletePipelineBlocked;h.error=deletePipelineError;h.handlers={request:handleRequestDeletePipeline,confirm:handleDeletePipeline,close:()=>closePipelineDeletion(pipelineToDelete)};
       h.prepare=input=>h.prepared=deletePipeline.capture(input);h.runDelete=input=>{try{return deletePipeline.mutateAsync(input||h.prepared).then(()=>h.outcome={ok:true},error=>h.outcome={ok:false,code:error.code})}catch(error){h.outcome={ok:false,code:error.code};return Promise.resolve()}};
       h.patch=input=>{try{return update.mutateAsync(input).then(value=>h.outcome={ok:true,value},error=>h.outcome={ok:false,code:error.code})}catch(error){h.outcome={ok:false,code:error.code};return Promise.resolve()}};
       h.refresh=async patch=>{h.server={...h.server,...patch};await list.refetch()};
       return <><button onClick={()=>handleRequestDeletePipeline(pipelines[0])} disabled={!pipelines[0]}>Request delete</button><pre data-testid='list'>{JSON.stringify(pipelines)}</pre>
       <PipelineToolbar pipelines={pipelines} selectedPipelineId={selectedPipelineId} currentPipeline={pipelines.find(pipeline=>pipeline.id===selectedPipelineId)} canEditPipeline={scope.allowed} canShowPipelineSettings canManageAttention={false} canCreateLeads={false} isMobile={false} isRefreshing={false} hasCriticalLoadError={false} onSelectPipeline={handleSelectPipeline} onRequestDeletePipeline={handleRequestDeletePipeline} onRefresh={()=>list.refetch()}/>
-      <AlertDialog open={Boolean(pipelineToDelete)} onOpenChange={onOpenChange}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir pipeline?</AlertDialogTitle><AlertDialogDescription>{pipelineToDelete?.name}</AlertDialogDescription></AlertDialogHeader>{deletePipelineError&&<p role='alert'>{deletePipelineError}</p>}<AlertDialogFooter><AlertDialogCancel disabled={deletePipeline.isPending}>Cancelar</AlertDialogCancel><AlertDialogAction disabled={deletePipeline.isPending||deletePipelineBlocked} onClick={event=>{event.preventDefault();void handleDeletePipeline()}}>Excluir</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></>}
+      <AlertDialog open={Boolean(pipelineToDelete)} onOpenChange={onPipelineToDeleteOpenChange}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir pipeline?</AlertDialogTitle><AlertDialogDescription>{pipelineToDelete?.name}</AlertDialogDescription></AlertDialogHeader>{deletePipelineError&&<p role='alert'>{deletePipelineError}</p>}<AlertDialogFooter><AlertDialogCancel disabled={deletePipeline.isPending}>Cancelar</AlertDialogCancel><AlertDialogAction disabled={deletePipeline.isPending||deletePipelineBlocked} onClick={event=>{event.preventDefault();void handleDeletePipeline()}}>Excluir</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></>}
     function Fixture(){const[scope,setScope]=useState({org:'${org}',actor:'${actor}',sid:'sid-a',allowed:true}),[shown,setShown]=useState(true);h.scope=scope;h.switch=patch=>setScope(old=>({...old,...patch}));h.show=setShown;
       const auth={activeOrganization:{organizationId:scope.org},user:{id:scope.actor},session:{access_token:'header.'+btoa(JSON.stringify({sub:scope.actor,session_id:scope.sid,nonce:scope.nonce||0}))+'.synthetic'},tenantContext:{organizationId:scope.org,permissions:scope.allowed?['*']:[],enabledModules:['crm'],memberRole:'admin'}};
       return<Auth.Provider value={auth}><QueryClientProvider client={client}>{shown&&<Content scope={scope}/>}</QueryClientProvider></Auth.Provider>}

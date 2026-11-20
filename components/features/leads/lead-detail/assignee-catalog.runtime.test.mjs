@@ -26,13 +26,20 @@ before(async () => {
   };
   const mobile = declaration('headerAssignee').initializer.getText(ast);
   const desktopBody = declaration('DesktopContentV2').initializer;
-  let desktop;
-  const find = node => {
-    if (ts.isJsxElement(node) && node.openingElement.tagName.getText(ast) === 'Popover' &&
-      node.getText(ast).includes('Buscar...')) desktop = node.getText(ast);
-    ts.forEachChild(node, find);
-  };
-  find(desktopBody); assert.ok(desktop);
+  let pickerBinding = '', desktop;
+  if (mobile === 'renderAssigneePicker(true)') {
+    pickerBinding = 'const ' + declaration('renderAssigneePicker').getText(ast) + ';';
+    assert.match(desktopBody.getText(ast), /\{renderAssigneePicker\(false\)\}/);
+    desktop = 'renderAssigneePicker(false)';
+  } else {
+    assert.ok(process.env.ASSIGNEE_CATALOG_SOURCE, 'inline renderers only belong to the baseline fixture');
+    const find = node => {
+      if (ts.isJsxElement(node) && node.openingElement.tagName.getText(ast) === 'Popover' &&
+        node.getText(ast).includes('Buscar...')) desktop = node.getText(ast);
+      ts.forEachChild(node, find);
+    };
+    find(desktopBody); assert.ok(desktop);
+  }
   const bindings = ['safeAllUsers','canTransferLead','canUnassignLead','assigneeCatalogBlocked','assignableUsers','handleAssigneePopoverChange','teams','assigneeAvailabilityUnverified'].map(name => {
     try { return 'const ' + declaration(name).getText(ast) + ';'; }
     catch { assert.ok(['assigneeCatalogBlocked','assigneeAvailabilityUnverified'].includes(name)); return `const ${name}=false;`; }
@@ -42,7 +49,7 @@ before(async () => {
   await writeFile(entry, `import React,{useState}from'react';import{createRoot}from'react-dom/client';
     import{User,Loader2,ChevronDown}from'lucide-react';import{Button}from'@/components/ui/button';import{Popover,PopoverTrigger,PopoverContent}from'@/components/ui/popover';
     import{Command,CommandInput,CommandList,CommandEmpty,CommandGroup,CommandItem}from'@/components/ui/command';import{Avatar,AvatarImage,AvatarFallback}from'@/components/ui/avatar';
-    import{Dialog,DialogContent,DialogTitle,DialogDescription}from'@/components/ui/dialog';import{LeadAssigneeCatalogNotice}from'@/components/features/leads/lead-detail/LeadAssigneeCatalogNotice';import{cn}from'@/lib/utils';
+    import{Dialog,DialogContent,DialogTitle,DialogDescription}from'@/components/ui/dialog';import{LeadAssigneeCatalogNotice}from'@/components/features/leads/lead-detail/LeadAssigneeCatalogNotice';import{LeadDetailAssigneePicker}from'@/components/features/leads/lead-detail/LeadDetailAssigneePicker';import{cn}from'@/lib/utils';
     const h=window.h={selected:[],retryCount:0};function Fixture(){const[catalog,setCatalog]=useState({loading:true,error:false,retrying:false,users:[]}),[assigneePopoverOpen,setAssigneePopoverOpen]=useState(false),[allowed,setAllowed]=useState(true),[variant,setVariant]=useState('pipeline'),[teamCatalog,setTeamCatalog]=useState({isPending:false,isError:false,data:[{id:'team-a'}]}),[teamView,setTeamView]=useState(true);
       h.set=patch=>setCatalog(current=>({...current,...patch}));h.allow=setAllowed;h.variant=setVariant;h.teamView=setTeamView;h.teams=patch=>setTeamCatalog(current=>({...current,...patch}));
       const allUsers=catalog.users,allUsersState=catalog.legacy?undefined:{...catalog,retry:()=>{h.retryCount++;setCatalog(current=>({...current,retrying:true}))}};
@@ -50,13 +57,14 @@ before(async () => {
       const commandSearchFilter=(value,search)=>value.toLocaleLowerCase().includes(search.toLocaleLowerCase())?1:0;
       const handleAssignUser=id=>{h.selected.push(id);setAssigneePopoverOpen(false)};
       ${bindings}
+      ${pickerBinding}
       return <Dialog open><DialogContent><DialogTitle>Responsáveis sintéticos</DialogTitle><DialogDescription>Catálogo de teste.</DialogDescription>{innerWidth<768?${mobile}:${desktop}}</DialogContent></Dialog>;
     }createRoot(document.getElementById('root')).render(<Fixture/>);`);
   const { webpack } = require('next/dist/compiled/webpack/webpack');
   await new Promise((done,reject)=>{const compiler=webpack({mode:'development',target:'web',devtool:false,entry,output:{path:directory,filename:'fixture.js'},resolve:{extensions:['.tsx','.ts','.js'],alias:{'@':repository},modules:[join(repository,'node_modules'),'node_modules']},module:{rules:[{test:/\.tsx?$/,exclude:/node_modules/,use:loader}]}});compiler.run((error,stats)=>compiler.close(()=>error||stats.hasErrors()?reject(error||Error(stats.toString({all:false,errors:true}))):done()));});
   bundle = await readFile(join(directory,'fixture.js'),'utf8');
   const globals=(await readFile(join(repository,'app/globals.css'),'utf8')).replace('@import "tailwindcss";','@import "tailwindcss" source(none);');
-  css=(await require('postcss')([require('@tailwindcss/postcss')({base:repository})]).process(`${globals}\n@source "${repository.replaceAll('\\','/')}/components/features/leads/LeadDetailDialog.tsx";\n@source "${repository.replaceAll('\\','/')}/components/features/leads/lead-detail/LeadAssigneeCatalogNotice.tsx";\n@source "${repository.replaceAll('\\','/')}/components/ui";`,{from:join(repository,'app/globals.css')})).css;
+  css=(await require('postcss')([require('@tailwindcss/postcss')({base:repository})]).process(`${globals}\n@source "${repository.replaceAll('\\','/')}/components/features/leads/LeadDetailDialog.tsx";\n@source "${repository.replaceAll('\\','/')}/components/features/leads/lead-detail/LeadDetailAssigneePicker.tsx";\n@source "${repository.replaceAll('\\','/')}/components/features/leads/lead-detail/LeadAssigneeCatalogNotice.tsx";\n@source "${repository.replaceAll('\\','/')}/components/ui";`,{from:join(repository,'app/globals.css')})).css;
   css += detailCss.code.toString();
   browser=await chromium.launch({headless:true});
 },{timeout:120_000});

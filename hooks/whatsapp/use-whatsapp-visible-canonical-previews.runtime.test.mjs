@@ -20,7 +20,7 @@ function cjs(name, parent = repository) {
 }
 modules['@tanstack/react-query'] = `module.exports=require(${JSON.stringify(cjs('@tanstack/react-query'))});`;
 // Extract the actual list hook, not a mirrored query/caching implementation.
-const listFile = join(repository, 'hooks/use-whatsapp-conversations.ts');
+const listFile = join(repository, 'hooks/whatsapp/use-whatsapp-conversation-queries.ts');
 const listSource = ts.createSourceFile(listFile, readFileSync(listFile, 'utf8'), ts.ScriptTarget.Latest, true);
 const listNames = new Set(['useWhatsAppConversations', 'WHATSAPP_CONVERSATIONS_REFETCH_MS', 'WHATSAPP_CONVERSATIONS_PAGINATED_REFETCH_MS']);
 const listNodes = listSource.statements.filter(node => ts.isFunctionDeclaration(node)

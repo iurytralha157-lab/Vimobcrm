@@ -116,7 +116,7 @@ test('actual individual confirmation submits only the currently reviewed target'
 const initializer = declaration('../../leads/CreateLeadDialog.tsx', node => ts.isCallExpression(node) && node.expression.getText() === 'useEffect' && node.arguments[0]?.getText().includes('shouldInitializeLeadForm'));
 test('actual editor effect preserves dirty fields and files when a changed server snapshot arrives', () => {
   const initializedFormRef = { current: null }, editBaseFormRef = { current: null }, editBaseLeadRef = { current: null };
-  const forms = [], attachments = [];
+  const forms = [], attachments = [], versions = [];
   const run = (open, snapshot) => execute(`${initializer};`, {
     useEffect: callback => callback(), open, initializedFormRef, editBaseFormRef, editBaseLeadRef,
     activeOrganization: { organizationId: 'org' }, user: { id: 'user' }, leadSummary: { id: 'lead' },
@@ -125,6 +125,7 @@ test('actual editor effect preserves dirty fields and files when a changed serve
     persistedLead: snapshot, editableLead: snapshot, pipelines: [{ id: 'pipeline' }],
     shouldInitializeLeadForm, getEmptyFormData: () => ({ name: snapshot.name }),
     setAttachmentRecovery: () => {}, setDraftRestored: () => {}, setErrors: () => {},
+    setEditBaseVersion: value => versions.push(value),
     setDialogPosition: () => {}, dialogPositionRef: { current: null },
     setPendingAttachments: value => attachments.push(value), setFormData: value => forms.push(value), setActiveTab: () => {},
   }, 'undefined');
@@ -133,7 +134,9 @@ test('actual editor effect preserves dirty fields and files when a changed serve
   assert.deepEqual(forms, [{ name: 'Original' }]);
   assert.equal(attachments.length, 1);
   assert.equal(editBaseLeadRef.current.updated_at, 'v1');
+  assert.deepEqual(versions, ['v1']);
   run(false, { id: 'lead', name: 'External update', updated_at: 'v2' });
   run(true, { id: 'lead', name: 'External update', updated_at: 'v2' });
   assert.equal(forms[1].name, 'External update');
+  assert.deepEqual(versions, ['v1', 'v2']);
 });

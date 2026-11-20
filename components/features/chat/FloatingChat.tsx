@@ -4,16 +4,12 @@ import { canQuoteWhatsAppMessage, toWhatsAppQuote } from "@/components/features/
 import { ScopedMessageBox } from "@/components/features/whatsapp/ScopedMessageBox";
 import { useFloatingChat, type FloatingChatIntent } from "@/contexts/FloatingChatContext";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge, badgeVariants } from "@/components/ui/badge";
-import { WhatsAppAvatarImage as AvatarImage } from "@/components/features/whatsapp/WhatsAppAvatarImage";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { FilterAwareMobileChatSurface } from "@/components/features/chat/FilterAwareMobileChatSurface";
+import { FloatingChatHeader } from "@/components/features/chat/FloatingChatHeader";
+import { FloatingChatSurface } from "@/components/features/chat/FloatingChatSurface";
+import { FloatingConversationFilters } from "@/components/features/chat/FloatingConversationFilters";
+import { FloatingMessagesViewport } from "@/components/features/chat/FloatingMessagesViewport";
 import { useFilterPanelLayout } from "@/contexts/FilterPanelLayoutContext";
 import {
   AlertDialog,
@@ -25,16 +21,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { MessageCircle, X, ArrowLeft, Search, Loader2, Phone, Users, Paperclip, ExternalLink, ArrowRight, SlidersHorizontal } from "lucide-react";
-import { ScrollToLatestButton } from "@/components/features/whatsapp/ScrollToLatestButton";
+import { MessageCircle, Loader2, Phone, Paperclip } from "lucide-react";
 import { CONVERSATION_LIST_UI, LoadOlderMessagesButton } from "@/components/features/whatsapp";
 import { cn } from "@/lib/utils";
-import { formatWhatsAppPersonName } from "@/lib/whatsapp-person-name";
 import { useWhatsAppConversations, useWhatsAppUnreadCount, useSendWhatsAppMessage, useResolveWhatsAppSendIntent, useDiscardFailedLocalWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppInboxRealtime, useWhatsAppLeadRealtime, useArchiveConversation, useDeleteConversation, useLinkConversationToLead, WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
 import { useWhatsAppMessagesPaginated } from "@/hooks/use-whatsapp-messages-paginated";
 import { useWhatsAppThreadScroll } from "@/hooks/use-whatsapp-thread-scroll";
 import { useWhatsAppUnread } from "@/hooks/use-whatsapp-unread";
-import { useWhatsAppMediaGallery } from "@/hooks/use-whatsapp-media-gallery";
+import { useWhatsAppMediaGallery } from "@/hooks/whatsapp/use-whatsapp-media-gallery";
 import { useWhatsAppConversationDraft } from "@/hooks/use-whatsapp-conversation-draft";
 import { useWhatsAppMessageNavigation } from "@/hooks/use-whatsapp-message-navigation";
 import { ConversationHistorySearch } from "@/components/features/whatsapp/conversations/ConversationHistorySearch";
@@ -79,15 +73,8 @@ import {
 import { usePathname, useRouter } from 'next/navigation';
 import {
   formatWhatsAppContactLabel,
-  formatWhatsAppContactPhoneForDisplay,
   normalizePhoneToE164,
 } from "@/lib/phone-utils";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger
-} from "@/components/ui/tooltip";
 import { conversationLeadDetailAPI } from "@/lib/api/conversation-lead-detail";
 import { VimobAPIError } from "@/lib/api/vimob-error";
 import { useAuth } from "@/contexts/AuthContext";
@@ -115,7 +102,6 @@ import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { useTags } from "@/hooks/use-tags";
 import { useAddLeadTag, useRemoveLeadTag } from "@/hooks/use-leads";
-import { getTagColorStyleWithWhiteText } from "@/lib/tag-color";
 import {
   blobToBase64,
   compressOutboundImageFile,
@@ -142,197 +128,9 @@ function writeFloatingChatPreference(key: string, value: boolean) {
   }
 }
 
-function FloatingChatExtraTags({
-  tags,
-  chipClassName,
-}: {
-  tags: NonNullable<NonNullable<WhatsAppConversation["lead"]>["tags"]>;
-  chipClassName: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  return (
-    <Tooltip open={open} onOpenChange={setOpen}>
-      <TooltipTrigger asChild>
-        <button
-          ref={triggerRef}
-          type="button"
-          aria-label={`Ver mais ${tags.length} tags`}
-          aria-expanded={open}
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={(event) => {
-            // Radix dismisses on click by default; keep touch and keyboard toggles explicit.
-            event.preventDefault();
-            event.currentTarget.focus({ preventScroll: true });
-            setOpen(!open);
-          }}
-          className={cn(badgeVariants(), chipClassName, "shrink-0 cursor-help bg-primary px-1.5")}
-        >
-          +{tags.length}
-        </button>
-      </TooltipTrigger>
-      <TooltipContent
-        side="bottom"
-        className="max-w-[200px]"
-        onPointerDownOutside={(event) => {
-          if (event.detail.originalEvent.target instanceof Node
-            && triggerRef.current?.contains(event.detail.originalEvent.target)) event.preventDefault();
-        }}
-      >
-        <div className="flex flex-wrap gap-1">
-          {tags.map((lt) => (
-            <Badge
-              key={lt.tag.id}
-              variant="secondary"
-              className={chipClassName}
-              style={getTagColorStyleWithWhiteText(lt.tag.color)}
-            >
-              {lt.tag.name}
-            </Badge>
-          ))}
-        </div>
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-type FloatingConversationFiltersProps = {
-  sharedFilterCount: number;
-  sessions: WhatsAppSession[];
-  selectedSessionId: string;
-  onSessionChange: (sessionId: string) => void;
-  searchTerm: string;
-  onSearchChange: (value: string) => void;
-  hideGroups: boolean;
-  onHideGroupsChange: (value: boolean) => void;
-  showArchived: boolean;
-  onShowArchivedChange: (value: boolean) => void;
-  onClearFilters: () => void;
-};
-
 type FloatingTimelineItem =
   | { kind: "message"; id: string; timestamp: string; message: WhatsAppMessage }
   | { kind: "attendance"; id: string; timestamp: string; entry: WhatsAppAttendanceEntry };
-
-function FloatingConversationFilters({
-  sharedFilterCount,
-  sessions,
-  selectedSessionId,
-  onSessionChange,
-  searchTerm,
-  onSearchChange,
-  hideGroups,
-  onHideGroupsChange,
-  showArchived,
-  onShowArchivedChange,
-  onClearFilters,
-}: FloatingConversationFiltersProps) {
-  const activeFilterCount = [
-    selectedSessionId !== "all",
-    hideGroups,
-    showArchived,
-    Boolean(searchTerm.trim()),
-  ].filter(Boolean).length + sharedFilterCount;
-
-  return (
-    <div className="shrink-0 border-b border-black/[0.035] bg-[var(--app-surface-solid)] px-2.5 py-2 dark:border-white/[0.035]">
-      <div className="flex items-center gap-2">
-        <div className="relative min-w-0 flex-1">
-          <Search aria-hidden="true" className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            aria-label="Buscar conversas"
-            maxLength={180}
-            placeholder="Buscar conversas..."
-            value={searchTerm}
-            onChange={e => onSearchChange(e.target.value)}
-            className={CONVERSATION_LIST_UI.search}
-            autoComplete="off"
-          />
-        </div>
-
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              aria-label="Filtrar conversas"
-              className={cn(
-                "h-8 shrink-0 gap-1.5 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2 text-[11px] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] [&_svg]:size-3.5",
-                activeFilterCount > 0 && "bg-[var(--app-surface-hover)] text-primary",
-              )}
-            >
-              <SlidersHorizontal aria-hidden="true" />
-              <span>Filtros</span>
-              {activeFilterCount > 0 && (
-                <span className="flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[9px] leading-none text-primary-foreground">
-                  {activeFilterCount}
-                </span>
-              )}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent
-            align="end"
-            sideOffset={8}
-            className="z-[70] w-[240px] rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-2.5 text-[var(--app-text-primary)] shadow-[0_8px_24px_rgba(0,0,0,0.08)]"
-          >
-            <div className="space-y-2">
-              {sharedFilterCount > 0 && <p className="text-[11px] text-muted-foreground">{sharedFilterCount} filtro(s) geral(is) do CRM aplicado(s). Ajuste-os na Dashboard, Pipeline, Contatos ou WhatsApp.</p>}
-              {sessions.length > 1 && (
-                <div className="space-y-1.5">
-                  <span className="text-[10px] font-medium text-muted-foreground">Conta</span>
-                  <Select value={selectedSessionId} onValueChange={onSessionChange}>
-                    <SelectTrigger className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[11px] font-light shadow-none focus:ring-0">
-                      <SelectValue placeholder="Selecione a conta" />
-                    </SelectTrigger>
-                    <SelectContent className="z-[80] bg-popover">
-                      <SelectItem value="all">Todas as contas</SelectItem>
-                      {sessions.map((session) => (
-                        <SelectItem key={session.id} value={session.id}>
-                          {session.display_name || session.instance_name || session.phone_number}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-
-              <div className="grid gap-2">
-                <label className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
-                  <span>Ocultar grupos</span>
-                  <Checkbox
-                    className="h-3.5 w-3.5 rounded-[4px] border-primary/70 [&_svg]:h-3 [&_svg]:w-3"
-                    checked={hideGroups}
-                    onCheckedChange={(checked) => onHideGroupsChange(checked === true)}
-                  />
-                </label>
-                <label className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[11px]">
-                  <span>Mostrar arquivadas</span>
-                  <Checkbox
-                    className="h-3.5 w-3.5 rounded-[4px] border-primary/70 [&_svg]:h-3 [&_svg]:w-3"
-                    checked={showArchived}
-                    onCheckedChange={(checked) => onShowArchivedChange(checked === true)}
-                  />
-                </label>
-              </div>
-
-              {activeFilterCount > 0 && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className={cn("h-8 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2 text-[length:var(--app-font-size-caption)] font-light shadow-none hover:bg-[var(--app-surface-hover)]", CONVERSATION_LIST_UI.clear)}
-                  onClick={onClearFilters}
-                >
-                  Limpar filtros
-                </Button>
-              )}
-            </div>
-          </PopoverContent>
-        </Popover>
-      </div>
-    </div>
-  );
-}
 
 function eligibleLeadStartSession(session: WhatsAppSession, userId: string | null | undefined, leadId: string | null | undefined, originalOrganization: boolean) {
   if (!userId) return false;
@@ -1853,216 +1651,6 @@ export function FloatingChat() {
   // visualizar o historico de mensagens de leads (somente leitura).
   if (!chatVisible) return null;
 
-  // Shared content components
-  const FloatingChatHeader = ({
-    mobile = false
-  }: {
-    mobile?: boolean;
-  } = {}) => {
-    // Header padrao quando nao ha conversa ativa (lista de conversas)
-    if (!activeConversation) {
-      return (
-        <div className={cn(
-          "relative flex shrink-0 items-center justify-between bg-vimob-accent-strong text-white",
-          mobile
-            ? "px-4 py-3"
-            : "z-10 h-12 px-3.5 shadow-[0_2px_8px_rgba(0,0,0,0.08)]"
-        )} style={{ zIndex: isStartingConversation ? 60 : undefined }}>
-          <div className="flex items-center gap-2">
-            <MessageCircle className="h-4 w-4" />
-            <span className="text-[length:var(--app-font-size-caption)] font-semibold">WhatsApp</span>
-            {unreadCount > 0 && (
-              <Badge variant="secondary" className="flex h-5 min-w-5 items-center justify-center px-1.5 text-[10px]">
-                {unreadCount > 99 ? "99+" : unreadCount}
-              </Badge>
-            )}
-          </div>
-          <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Fechar chat do WhatsApp"
-              className={cn(
-                "rounded-[6px] bg-black/15 text-white hover:bg-black/25 hover:text-white [&_svg]:size-3.5",
-                mobile
-                  ? "h-11 w-11"
-                  : "h-8 w-8"
-              )}
-              onClick={closeChat}
-            >
-              <X />
-            </Button>
-          </div>
-        </div>
-      );
-    }
-
-    // Header compacto e organizado para o FloatingChat
-    const displayName = formatWhatsAppPersonName(activeConversation.lead?.name) || formatWhatsAppContactLabel(
-      activeConversation.is_group ? activeConversation.contact_name : formatWhatsAppPersonName(activeConversation.contact_name),
-      activeConversation.contact_phone,
-      activeConversation.remote_jid,
-    );
-
-    const phone = formatWhatsAppContactPhoneForDisplay(
-      activeConversation.contact_phone,
-      activeConversation.remote_jid,
-    );
-    const leadId = activeConversation.lead?.id;
-    const tags = activeConversation.lead?.tags || [];
-    const pipelineName = activeConversation.lead?.pipeline?.name;
-    const stageName = activeConversation.lead?.stage?.name;
-    const stageColor = activeConversation.lead?.stage?.color;
-    const visibleTags = tags.slice(0, 1);
-    const remainingTags = tags.slice(1);
-    const contextChipClassName = "min-h-[18px] max-w-full min-w-0 whitespace-normal [overflow-wrap:anywhere] rounded-[4px] border-0 px-1.5 py-0.5 text-[9px] font-medium leading-[12px] text-white shadow-none";
-
-    return (
-      <TooltipProvider>
-        <div className="relative shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)]" style={{ zIndex: isStartingConversation ? 60 : undefined }}>
-          {/* Linha 1: Navegacao e info principal */}
-          <div className="flex items-center gap-2 px-3 py-2">
-            {/* Botao Voltar */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Voltar à lista de conversas"
-                  disabled={isStartingConversation}
-                  className={cn(
-                    "shrink-0 rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text-primary)]",
-                    mobile ? "h-11 w-11" : "h-9 w-9",
-                  )}
-                  onClick={() => clearActiveConversation()}
-                >
-                  <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Voltar</TooltipContent>
-            </Tooltip>
-
-            {/* Avatar */}
-            <Avatar className="h-8 w-8 shrink-0 border border-primary/20">
-              <AvatarImage src={getConversationAvatarUrl(activeConversation)} fallbackSrc={activeConversation.contact_picture} alt={displayName} />
-              <AvatarFallback className="bg-primary/50 text-[12px] font-light text-primary-foreground">
-                {activeConversation.is_group ? (
-                  <Users className="h-4 w-4" />
-                ) : (
-                  displayName?.[0]?.toUpperCase() || "?"
-                )}
-              </AvatarFallback>
-            </Avatar>
-
-            {/* Nome */}
-            <div className="flex-1 min-w-0">
-              <p className="font-light text-[13px] leading-4 truncate">{displayName}</p>
-              {activeConversation.lead?.name && phone && (
-                <p className="text-[10px] font-light text-muted-foreground truncate">{phone}</p>
-              )}
-            </div>
-
-            {/* Acoes */}
-            <div className="flex min-w-fit shrink-0 items-center justify-end gap-1 pr-0.5">
-              <Button ref={conversationSearchRef} type="button" variant="ghost" size="icon" aria-label="Buscar nesta conversa" disabled={isStartingConversation} className={mobile ? "h-11 w-11" : "h-9 w-9"} onClick={() => messageNavigation.setOpen(!messageNavigation.open)}>
-                <Search className="h-4 w-4" aria-hidden="true" />
-              </Button>
-              {leadId && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label="Ver lead no funil"
-                      disabled={isStartingConversation}
-                      className={cn(
-                        "rounded-[6px] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-soft)] hover:text-[var(--app-text-primary)]",
-                        mobile ? "h-11 w-11" : "h-9 w-9",
-                      )}
-                      onClick={() => handleViewLead(leadId)}
-                    >
-                      <ExternalLink className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">Ver Lead</TooltipContent>
-                </Tooltip>
-              )}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label="Fechar chat do WhatsApp"
-                    className={cn(
-                      "rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-muted)] hover:text-[var(--app-text-primary)]",
-                      mobile ? "h-11 w-11" : "h-9 w-9",
-                    )}
-                    onClick={closeChat}
-                  >
-                    <X className="h-4 w-4" aria-hidden="true" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Fechar</TooltipContent>
-              </Tooltip>
-            </div>
-          </div>
-
-          {/* Linha 2: Tags e Pipeline (se houver) */}
-          {(visibleTags.length > 0 || pipelineName) && (
-            <div data-floating-chat-context className="flex w-full min-w-0 flex-wrap items-start gap-1.5 px-3 pb-2.5 pt-0.5">
-              {/* Tags */}
-              {visibleTags.map((lt) => (
-                <Badge
-                  key={lt.tag.id}
-                  variant="secondary"
-                  className={cn(contextChipClassName, "shrink-0")}
-                  style={getTagColorStyleWithWhiteText(lt.tag.color)}
-                  title={lt.tag.name}
-                >
-                  {lt.tag.name}
-                </Badge>
-              ))}
-              {remainingTags.length > 0 && (
-                <FloatingChatExtraTags
-                  key={JSON.stringify([startupScope, activeConversation.id, mobile])}
-                  tags={remainingTags}
-                  chipClassName={contextChipClassName}
-                />
-              )}
-
-              {/* Separador */}
-              {visibleTags.length > 0 && pipelineName && <span className="shrink-0 text-[9px] text-muted-foreground/70">•</span>}
-
-              {/* Pipeline > Stage */}
-              {pipelineName && (
-                <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 text-muted-foreground">
-                  <Badge className={cn(contextChipClassName, "shrink-0 bg-primary/10 text-primary")} title={pipelineName}>
-                    {pipelineName}
-                  </Badge>
-                  {stageName && (
-                    <>
-                      <ArrowRight className="h-2.5 w-2.5 shrink-0 text-muted-foreground/70" />
-                      <Badge
-                        className={cn(contextChipClassName, "shrink-0")}
-                        style={getTagColorStyleWithWhiteText(stageColor)}
-                        title={stageName}
-                      >
-                        {stageName}
-                      </Badge>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </TooltipProvider>
-    );
-  };
-
   const DisconnectedState = () => <div className="flex-1 flex flex-col items-center justify-center p-6 text-center bg-[var(--app-surface-solid)]">
       <Phone className="h-12 w-12 text-muted-foreground mb-4" />
       {pendingPhone && <p className="mb-2 max-w-full truncate text-[12px] font-light">{pendingLeadName || pendingPhone}</p>}
@@ -2536,68 +2124,19 @@ export function FloatingChat() {
     />
   );
 
-  // Mobile version - fullscreen fixed container (stable bottom input)
-  if (isMobile) {
-    return (
-      <>
-        {SessionSelectorDialog()}
-        {phoneChangeDialog}
-        {deleteConversationDialog}
-        {enterAttendanceDialog}
-        {leadLinkConfirmationDialog}
-        {activeLeadId && canStartActiveConversationAutomation && (
-          <StartAutomationDialog
-            open={showAutomationDialog}
-            onOpenChange={setShowAutomationDialog}
-            leadId={activeLeadId}
-            conversationId={activeConversation?.id}
-            contactName={activeContactName}
-          />
-        )}
-        <FilterAwareMobileChatSurface minimized={presentationMinimized}
-          onOpenAutoFocus={event => { event.preventDefault(); focusChatSurface(); }}
-          onEscapeKeyDown={event => { handleChatEscape(event); event.preventDefault(); }}>
-    <div
-          id="floating-whatsapp-chat"
-          ref={chatSurfaceRef}
-          onFocusCapture={rememberChatFocus}
-          onDragOver={attachments.onDragOver}
-          onDrop={attachments.onDrop}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Chat do WhatsApp"
-          tabIndex={-1}
-          className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-[var(--app-surface-solid)] pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] focus:outline-none"
-        >
-          {FloatingChatHeader({ mobile: true })}
-
-          {isStartingConversation && (
-            <div className="absolute inset-0 bg-background/50 flex flex-col items-center justify-center z-50">
-              <Loader2 className="h-8 w-8 animate-spin motion-reduce:animate-none text-primary mb-2" />
-              <p className="text-xs text-muted-foreground animate-pulse motion-reduce:animate-none">Iniciando conversa...</p>
-            </div>
-          )}
-
-          <div className="flex-1 flex flex-col overflow-hidden min-h-0 w-full max-w-full">
-            {activeConversation ? (
-              <>
-                {messagesViewJsx}
-                {renderMessageInput(true)}
-              </>
-            ) : pendingConnection || (!loadingSessions && !loadingConversations && !sessionsFailed && !conversationsFailed && !hasWhatsAppAccess && !conversations?.length) ? (
-              DisconnectedState()
-            ) : (
-              <>
-                {conversationFilters}
-                {ConversationList()}
-              </>
-            )}
-          </div>
-        </div>
-        </FilterAwareMobileChatSurface>
-      </>
-    );
-  }
+  const body = activeConversation ? (
+    <>
+      {messagesViewJsx}
+      {renderMessageInput(isMobile)}
+    </>
+  ) : pendingConnection || (!loadingSessions && !loadingConversations && !sessionsFailed && !conversationsFailed && !hasWhatsAppAccess && !conversations?.length) ? (
+    DisconnectedState()
+  ) : (
+    <>
+      {conversationFilters}
+      {ConversationList()}
+    </>
+  );
 
   return (
     <>
@@ -2615,77 +2154,33 @@ export function FloatingChat() {
           contactName={activeContactName}
         />
       )}
-      <div
-        id="floating-whatsapp-chat"
-        ref={chatSurfaceRef}
+      <FloatingChatSurface
+        mobile={isMobile}
+        minimized={presentationMinimized}
+        surfaceRef={chatSurfaceRef}
         onFocusCapture={rememberChatFocus}
-        hidden={presentationMinimized}
-        inert={presentationMinimized}
-        aria-hidden={presentationMinimized || undefined}
-        data-filter-panel-chat-minimized={presentationMinimized ? '' : undefined}
         onDragOver={attachments.onDragOver}
         onDrop={attachments.onDrop}
-        role="dialog"
-        aria-label="Chat do WhatsApp"
-        tabIndex={-1}
-        className={cn(
-          "fixed inset-y-0 right-0 z-50 flex w-[420px] max-w-full flex-col overflow-hidden",
-          "rounded-l-[8px] bg-[var(--app-surface-solid)] shadow-[0_12px_32px_rgba(0,0,0,0.10)]",
-          "pb-[env(safe-area-inset-bottom)] pr-[env(safe-area-inset-right)] pt-[env(safe-area-inset-top)] focus:outline-none",
-        )}
-        style={{ display: presentationMinimized ? 'none' : undefined }}
+        onOpenAutoFocus={event => { event.preventDefault(); focusChatSurface(); }}
+        onEscapeKeyDown={event => { handleChatEscape(event); event.preventDefault(); }}
+        isStartingConversation={isStartingConversation}
+        header={
+          <FloatingChatHeader
+            mobile={isMobile}
+            activeConversation={activeConversation}
+            clearActiveConversation={clearActiveConversation}
+            closeChat={closeChat}
+            conversationSearchRef={conversationSearchRef}
+            handleViewLead={handleViewLead}
+            isStartingConversation={isStartingConversation}
+            onToggleSearch={() => messageNavigation.setOpen(!messageNavigation.open)}
+            startupScope={startupScope}
+            unreadCount={unreadCount}
+          />
+        }
       >
-        {/* Header */}
-        {FloatingChatHeader()}
-
-        {isStartingConversation && (
-          <div className="absolute inset-0 bg-background/50 flex flex-col items-center justify-center z-50">
-            <Loader2 className="h-8 w-8 animate-spin motion-reduce:animate-none text-primary mb-2" />
-            <p className="text-xs text-muted-foreground animate-pulse motion-reduce:animate-none">Iniciando conversa...</p>
-          </div>
-        )}
-
-        {activeConversation ? (
-          <>
-            {messagesViewJsx}
-            {renderMessageInput(false)}
-          </>
-        ) : pendingConnection || (!loadingSessions && !loadingConversations && !sessionsFailed && !conversationsFailed && !hasWhatsAppAccess && !conversations?.length) ? (
-          DisconnectedState()
-        ) : (
-          <>
-            {conversationFilters}
-            {ConversationList()}
-          </>
-        )}
-      </div>
+        {body}
+      </FloatingChatSurface>
     </>
-  );
-}
-
-function FloatingMessagesViewport({
-  children,
-  scrollAreaRef,
-  onScroll,
-  showScrollToLatest,
-  onScrollToLatest,
-  unreadCount = 0,
-}: {
-  children: React.ReactNode;
-  scrollAreaRef: React.RefObject<HTMLDivElement | null>;
-  onScroll: React.UIEventHandler<HTMLDivElement>;
-  showScrollToLatest: boolean;
-  onScrollToLatest: () => void;
-  unreadCount?: number;
-}) {
-  return (
-    <div className="relative flex-1 overflow-hidden min-h-0 flex flex-col bg-[var(--app-surface-solid)]">
-      <ScrollArea ref={scrollAreaRef} className="flex-1 [&_[data-radix-scroll-area-viewport]>div]:block! [&_[data-radix-scroll-area-viewport]>div]:min-w-0! [&_[data-radix-scroll-area-viewport]>div]:w-full" onScrollCapture={onScroll}>
-        {children}
-      </ScrollArea>
-      {showScrollToLatest && (
-        <ScrollToLatestButton onClick={onScrollToLatest} unreadCount={unreadCount} />
-      )}
-    </div>
   );
 }

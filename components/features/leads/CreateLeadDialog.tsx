@@ -1,11 +1,9 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useId, useMemo, useRef, type ReactNode } from 'react';
-import { maskCNPJ, maskCPF, maskRG } from '@/lib/masks';
 import { isValidE164Phone } from '@/lib/phone-utils';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { leadAttachmentsAPI } from '@/lib/api/lead-attachments';
-import { formatPropertyCurrency } from '@/lib/property-display-utils';
-import { buildLeadEditFields, changedLeadFields, getLeadDraftKey, normalizeLeadInterestPropertyIds, shouldInitializeLeadForm, uploadLeadFiles } from '@/lib/lead-edit-session';
+import { buildLeadEditFields, changedLeadFields, getLeadDraftKey, shouldInitializeLeadForm, uploadLeadFiles } from '@/lib/lead-edit-session';
 import { LeadAttachmentRecovery } from '@/components/features/leads/LeadAttachmentRecovery';
 import { captureLeadRequestIntent } from '@/lib/lead-request-intent';
 import { getGlobalSignOutSessionId } from '@/lib/auth/global-sign-out';
@@ -13,22 +11,14 @@ import { contactImportScopeKey, createLeadImportScope } from '@/lib/lead-import-
 import { isDefinitiveLeadReadDenial } from '@/lib/lead-read-access';
 import { requiresWonLeadFinancialReview, WON_LEAD_FINANCIAL_REVIEW_MESSAGE } from '@/components/features/leads/lead-detail/financial-review';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { InternationalPhoneInput } from '@/components/shared/forms/InternationalPhoneInput';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FormWizardLayout } from '@/components/shared/forms/FormWizardLayout';
 import { FORM_WIZARD_DIALOG_CLASS_NAME, FORM_WIZARD_PRIMARY_BUTTON_CLASS_NAME, FORM_WIZARD_SECONDARY_BUTTON_CLASS_NAME } from '@/config/form-wizard';
 import { LeadDraftPreview } from '@/components/features/leads/LeadDraftPreview';
-import { TagSelector } from '@/components/ui/tag-selector';
-import { Loader2, User, Briefcase, Building2, DollarSign, Trophy, XCircle, CircleDot, FileText, X, Home, Paperclip, Trash2, Plus } from 'lucide-react';
-import { PropertyPickerDialog, type PropertyPickerProperty } from '@/components/features/properties/PropertyPickerDialog';
+import { Briefcase, Building2, FileText, Home, Loader2, User, X } from 'lucide-react';
+import type { PropertyPickerProperty } from '@/components/features/properties/PropertyPickerDialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
@@ -37,13 +27,13 @@ import { usePipelines, useStages } from '@/hooks/use-stages';
 import { useSelectedProperties } from '@/hooks/properties/use-selected-properties';
 import { useCreateLead, useLead, useLeadSensitiveProfile, useUpdateLead, type Lead } from '@/hooks/use-leads';
 import { useTeams } from '@/hooks/use-teams';
-import { getPipelineStageColorStyle } from '@/config/pipeline-stage-colors';
-import { LeadSourceSelect } from '@/components/features/leads/LeadSourceSelect';
+import { LeadContactFields } from '@/components/features/leads/lead-form/LeadContactFields';
+import { LeadProfileFields } from '@/components/features/leads/lead-form/LeadProfileFields';
+import { LeadInterestFields } from '@/components/features/leads/lead-form/LeadInterestFields';
+import { LeadManagementFields, dealStatusOptions } from '@/components/features/leads/lead-form/LeadManagementFields';
+import { buildLeadFormData, formatCurrencyInput, isFormEmpty, parseCurrencyInput, type EditableLead, type LeadFormErrors } from '@/components/features/leads/lead-form/lead-form-data';
 
-type EditableLead = Omit<Partial<Lead>, 'tags' | 'stage' | 'assignee'> & {
-  id: string;
-  tags?: Array<{ id?: string; name?: string | null; color?: string | null }>;
-};
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 function removeLeadDraft(key: string | null) {
   if (!key) return;
@@ -72,39 +62,8 @@ interface CreateLeadDialogProps {
   accessPending?: boolean;
 }
 
-type LeadFormErrors = Partial<Record<
-  'name' | 'contact' | 'phone' | 'email' | 'cpf' | 'cnpj' | 'birth_date' | 'assigned_user_id' | 'team_id' | 'pipeline_id' | 'stage_id' | 'lost_reason',
-  string
->>;
-
 const MAX_PENDING_ATTACHMENTS = 10;
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
-
-function formatCurrencyInput(value: string | number) {
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) return '';
-    return formatPropertyCurrency(value);
-  }
-  const digits = value.replace(/\D/g, '').slice(0, 15);
-  if (!digits) return '';
-  return formatPropertyCurrency(Number(digits) / 100);
-}
-
-function parseCurrencyInput(value: string) {
-  const digits = value.replace(/\D/g, '');
-  return digits ? Number(digits) / 100 : undefined;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function metadataText(metadata: Record<string, unknown>, key: string) {
-  const value = metadata[key];
-  return typeof value === 'string' ? value : '';
-}
 
 function omitBasicErrors(errors: LeadFormErrors) {
   const next = { ...errors };
@@ -114,12 +73,6 @@ function omitBasicErrors(errors: LeadFormErrors) {
   delete next.email;
   return next;
 }
-
-const dealStatusOptions = [
-  { value: 'open', label: 'Aberto', icon: CircleDot, color: 'text-blue-500' },
-  { value: 'won', label: 'Ganho', icon: Trophy, color: 'text-green-500' },
-  { value: 'lost', label: 'Perdido', icon: XCircle, color: 'text-red-500' },
-];
 
 export function CreateLeadDialog({
   open,
@@ -183,66 +136,20 @@ export function CreateLeadDialog({
 
   const draftKey = !isEditMode ? getLeadDraftKey(user?.id, activeOrganization.organizationId, defaultPipelineId, defaultStageId) : null;
 
-  const getEmptyFormData = useCallback(() => {
-    const metadata = asRecord(editableLead?.metadata);
-    const nestedProfile = asRecord(metadata.profile);
-    const profileMetadata = Object.keys(nestedProfile).length > 0 ? nestedProfile : metadata;
-    const primaryPropertyId = editableLead?.interest_property_id || editableLead?.property_id || '';
-    const metadataPropertyIds = Array.isArray(metadata.interestPropertyIds)
-      ? metadata.interestPropertyIds.filter((value): value is string => typeof value === 'string')
-      : [];
-    const interestPropertyIds = normalizeLeadInterestPropertyIds(primaryPropertyId, metadataPropertyIds);
-
-    return ({
-    name: editableLead?.name || '',
-    phone: editableLead?.phone || '',
-    email: editableLead?.email || '',
-    message: editableLead?.message || '',
-    feedback: editableLead?.feedback || '',
-    source: editableLead?.source || '',
-    person_type: (metadataText(profileMetadata, 'personType') === 'company' ? 'company' : 'individual') as 'individual' | 'company',
-    gender: (['male', 'female', 'other'].includes(metadataText(profileMetadata, 'gender')) ? metadataText(profileMetadata, 'gender') : '') as '' | 'male' | 'female' | 'other',
-    social_name: metadataText(profileMetadata, 'socialName'),
-    cpf: maskCPF(sensitiveProfile?.cpf || metadataText(profileMetadata, 'cpf')),
-    rg: maskRG(sensitiveProfile?.rg || metadataText(profileMetadata, 'rg')),
-    birth_date: metadataText(profileMetadata, 'birthDate'),
-    cnpj: maskCNPJ(metadataText(profileMetadata, 'cnpj')),
-    corporate_name: metadataText(profileMetadata, 'corporateName'),
-    trade_name: metadataText(profileMetadata, 'tradeName'),
-    state_registration: metadataText(profileMetadata, 'stateRegistration'),
-    is_portability: false,
-    mother_name: '',
-    uf: '',
-    cidade: '',
-    bairro: '',
-    endereco: '',
-    numero: '',
-    cep: '',
-    plan_id: '',
-    due_day: '',
-    payment_method: '',
-    cargo: editableLead?.cargo || '',
-    empresa: editableLead?.empresa || '',
-    profissao: editableLead?.profissao || '',
-    renda_familiar: editableLead?.renda_familiar || '',
-    valor_interesse: editableLead?.valor_interesse == null ? '' : formatCurrencyInput(editableLead.valor_interesse),
-    assigned_user_id: editableLead?.assigned_user_id || profile?.id || '',
-    team_id: editableLead?.team_id || '',
-    pipeline_id: editableLead?.pipeline_id || defaultPipelineId || '',
-    stage_id: editableLead?.stage_id || defaultStageId || '',
-    property_id: primaryPropertyId,
-    interest_property_ids: interestPropertyIds,
-    deal_status: editableLead?.deal_status || 'open',
-    lost_reason: editableLead?.lost_reason || '',
-    tag_ids: (editableLead?.tags || []).flatMap((tag) => tag.id ? [tag.id] : []),
-    conversation_id: '',
-  });
-  }, [editableLead, profile?.id, defaultPipelineId, defaultStageId, sensitiveProfile?.cpf, sensitiveProfile?.rg]);
+  const getEmptyFormData = useCallback(() => buildLeadFormData({
+    editableLead,
+    currentUserProfileId: profile?.id,
+    defaultPipelineId,
+    defaultStageId,
+    cpf: sensitiveProfile?.cpf,
+    rg: sensitiveProfile?.rg,
+  }), [editableLead, profile?.id, defaultPipelineId, defaultStageId, sensitiveProfile?.cpf, sensitiveProfile?.rg]);
 
   const [formData, setFormData] = useState(getEmptyFormData);
   const initializedFormRef = useRef<string | null>(null);
   const editBaseFormRef = useRef(formData);
   const editBaseLeadRef = useRef<Lead | null>(null);
+  const [editBaseVersion, setEditBaseVersion] = useState<Lead['updated_at']>();
   const [reloadEditOpen, setReloadEditOpen] = useState(false);
   const [attachmentRecovery, setAttachmentRecovery] = useState<{ leadId: string; files: File[]; canUpload: boolean; onFinish: () => void } | null>(null);
   const { properties: selectedProperties, isLoading: propertiesLoading } = useSelectedProperties(
@@ -280,45 +187,6 @@ export function CreateLeadDialog({
   // Get stages for selected pipeline
   const { data: stages = [] } = useStages(formData.pipeline_id || undefined);
 
-  const isFormEmpty = useCallback((data: typeof formData) => {
-    return !data.name.trim()
-      && !data.phone
-      && !data.email.trim()
-      && !data.message.trim()
-      && !data.feedback.trim()
-      && !data.source
-      && data.person_type === 'individual'
-      && !data.gender
-      && !data.social_name
-      && !data.cpf
-      && !data.rg
-      && !data.birth_date
-      && !data.cnpj
-      && !data.corporate_name
-      && !data.trade_name
-      && !data.state_registration
-      && !data.mother_name
-      && !data.uf
-      && !data.cidade
-      && !data.bairro
-      && !data.endereco
-      && !data.numero
-      && !data.cep
-      && !data.plan_id
-      && !data.due_day
-      && !data.payment_method
-      && !data.cargo
-      && !data.empresa
-      && !data.profissao
-      && !data.renda_familiar
-      && !data.valor_interesse
-      && !data.lost_reason
-      && !data.property_id
-      && data.interest_property_ids.length === 0
-      && data.tag_ids.length === 0
-      && !data.is_portability;
-  }, []);
-
   // Save draft to localStorage with debounce
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -339,7 +207,7 @@ export function CreateLeadDialog({
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [formData, activeTab, open, draftKey, isFormEmpty]);
+  }, [formData, activeTab, open, draftKey]);
 
   // Restore draft or reset form when dialog opens
   /* eslint-disable react-hooks/set-state-in-effect -- Syncs the controlled dialog opening with local draft form state. */
@@ -361,6 +229,7 @@ export function CreateLeadDialog({
         const initial = getEmptyFormData();
         editBaseFormRef.current = initial;
         editBaseLeadRef.current = persistedLead ?? null;
+        setEditBaseVersion(persistedLead?.updated_at);
         setPendingAttachments([]);
         setFormData(initial);
         setActiveTab('basic');
@@ -407,7 +276,7 @@ export function CreateLeadDialog({
         stage_id: defaultStageId || '',
       });
     }
-  }, [open, pipelines, defaultStageId, defaultPipelineId, draftKey, getEmptyFormData, isFormEmpty, contactPhone, contactName, conversationId, isEditMode, isLoadingEditLead, editableLead, persistedLead, activeOrganization.organizationId, user?.id, leadSummary?.id]);
+  }, [open, pipelines, defaultStageId, defaultPipelineId, draftKey, getEmptyFormData, contactPhone, contactName, conversationId, isEditMode, isLoadingEditLead, editableLead, persistedLead, activeOrganization.organizationId, user?.id, leadSummary?.id]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const discardDraft = useCallback(() => {
@@ -423,7 +292,7 @@ export function CreateLeadDialog({
       pipeline_id: defaultPipelineId || defaultPipeline?.id || '',
       stage_id: defaultStageId || '',
     });
-  }, [draftKey, pipelines, defaultPipelineId, defaultStageId, getEmptyFormData, isSubmitting]);
+  }, [draftKey, pipelines, defaultPipelineId, defaultStageId, getEmptyFormData, isSubmitting, setPendingAttachments, setErrors]);
 
   const handleOpenChange = useCallback((nextOpen: boolean) => {
     if (!nextOpen && (submissionAttemptRef.current || isSubmitting)) return;
@@ -435,14 +304,14 @@ export function CreateLeadDialog({
     }
 
     onOpenChange(nextOpen);
-  }, [activeTab, draftKey, formData, isFormEmpty, onOpenChange, isSubmitting, attachmentRecovery]);
+  }, [activeTab, draftKey, formData, onOpenChange, isSubmitting, attachmentRecovery]);
 
   // Prevent accidental close on backdrop click when form has data
   const handleInteractOutside = useCallback((e: Event) => {
     if (dragStateRef.current || Date.now() < suppressOutsideCloseUntilRef.current || !isFormEmpty(formData) || pendingAttachments.length > 0) {
       e.preventDefault();
     }
-  }, [formData, isFormEmpty, pendingAttachments.length]);
+  }, [formData, pendingAttachments.length]);
 
   const handleDragStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -753,13 +622,68 @@ export function CreateLeadDialog({
       return next;
     });
   };
-  const fieldIds = {
-    name: `${fieldIdPrefix}-lead-name`,
-    contact: `${fieldIdPrefix}-lead-contact`,
-    phone: `${fieldIdPrefix}-lead-phone`,
-    email: `${fieldIdPrefix}-lead-email`,
+
+  const handleRemoveProperty = (property: PropertyPickerProperty) => {
+    if (submissionAttemptRef.current || isSubmitting) return;
+    setFormData((previous) => {
+      if (submissionAttemptRef.current || isSubmitting) return previous;
+      const nextIds = previous.interest_property_ids.filter((id) => id !== property.id);
+      const nextPrimary = properties.find((candidate) => candidate.id === nextIds[0]);
+      return {
+        ...previous,
+        interest_property_ids: nextIds,
+        property_id: nextIds[0] || '',
+        valor_interesse: previous.property_id === property.id
+          ? (nextPrimary?.preco != null ? formatCurrencyInput(nextPrimary.preco) : '')
+          : previous.valor_interesse,
+      };
+    });
   };
-  const describedBy = (...ids: Array<string | false | null | undefined>) => ids.filter(Boolean).join(' ') || undefined;
+
+  const handleSelectProperty = (property: PropertyPickerProperty) => {
+    if (submissionAttemptRef.current || isSubmitting) return;
+    setPickedProperties(previous => submissionAttemptRef.current || isSubmitting ? previous : ({
+      organizationId: activeOrganization.organizationId,
+      items: [
+        ...(previous.organizationId === activeOrganization.organizationId ? previous.items.filter(item => item.id !== property.id) : []),
+        property,
+      ],
+    }));
+    setFormData((previous) => {
+      if (submissionAttemptRef.current || isSubmitting) return previous;
+      if (previous.interest_property_ids.includes(property.id)) return previous;
+      const nextIds = [...previous.interest_property_ids, property.id];
+      const becomesPrimary = !previous.property_id;
+      return {
+        ...previous,
+        interest_property_ids: nextIds,
+        property_id: previous.property_id || property.id,
+        valor_interesse: becomesPrimary
+          ? (property.preco != null ? formatCurrencyInput(property.preco) : '')
+          : previous.valor_interesse,
+      };
+    });
+  };
+
+  const handleRemoveAttachment = (file: File) => {
+    if (submissionAttemptRef.current || isSubmitting) return;
+    setPendingAttachments((current) => submissionAttemptRef.current || isSubmitting ? current : current.filter((item) => item !== file));
+  };
+
+  const handleScopeChange = (value: string) => {
+    if (submissionAttemptRef.current || isSubmitting) return;
+    const nextTeamId = value === 'personal' ? '' : value;
+    const nextTeam = teams.find((team) => team.id === nextTeamId);
+    const memberIds = new Set((nextTeam?.members || []).map((member) => member.user_id));
+    const currentAssigneeIsValid = !nextTeamId || memberIds.has(formData.assigned_user_id);
+    const fallbackAssignee = allAssignableUsers.find((user) => memberIds.has(user.id))?.id || '';
+    setFormData((previous) => submissionAttemptRef.current || isSubmitting ? previous : ({
+      ...previous,
+      team_id: nextTeamId,
+      assigned_user_id: currentAssigneeIsValid ? previous.assigned_user_id : fallbackAssignee,
+    }));
+  };
+
   const leadDialogSurfaceClass = cn(
     isEditMode
       ? cn(FORM_WIZARD_DIALOG_CLASS_NAME, "!max-w-[1440px] !w-[calc(100vw-24px)]")
@@ -1050,7 +974,7 @@ export function CreateLeadDialog({
           </div>
         )}
 
-        {isEditMode && editBaseLeadRef.current && persistedLead?.updated_at !== editBaseLeadRef.current.updated_at && !attachmentRecovery && <div role="status" className="mx-6 mt-2 flex flex-wrap items-center justify-between gap-2 rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-2 text-sm">
+        {isEditMode && editBaseVersion !== undefined && persistedLead?.updated_at !== editBaseVersion && !attachmentRecovery && <div role="status" className="mx-6 mt-2 flex flex-wrap items-center justify-between gap-2 rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-2 text-sm">
           <span>O contato recebeu uma atualização. Sua edição foi preservada.</span>
           <Button type="button" variant="outline" disabled={isSubmitting} onClick={() => {
             if (!submissionAttemptRef.current && !isSubmitting) setReloadEditOpen(true);
@@ -1091,484 +1015,58 @@ export function CreateLeadDialog({
 
                 {/* Basic Info Tab */}
                 <TabsContent {...editPanelLink('basic')} data-tour="lead-form-basic" value="basic" className="space-y-4 mt-0">
-                    <div className="space-y-4">
-                      {/* Real Estate: Basic Info - Clean Layout */}
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <div className="space-y-1.5">
-                          <Label htmlFor={fieldIds.name} className="text-sm font-medium">
-                            {formData.person_type === 'company' ? 'Nome do contato / responsável *' : 'Nome completo *'}
-                          </Label>
-                          <Input
-                            id={fieldIds.name}
-                            value={formData.name}
-                            onChange={(e) => updateField('name', e.target.value)}
-                            placeholder={formData.person_type === 'company' ? 'Pessoa responsável pelo contato' : 'Nome do lead'}
-                            required
-                            aria-invalid={Boolean(errors.name)}
-                            aria-describedby={errors.name ? `${fieldIds.name}-error` : undefined}
-                          />
-                          {errors.name ? (
-                            <p id={`${fieldIds.name}-error`} className="text-xs font-medium text-destructive" role="alert">
-                              {errors.name}
-                            </p>
-                          ) : null}
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor={fieldIds.phone} className="text-sm font-medium">Telefone</Label>
-                          <InternationalPhoneInput
-                            id={fieldIds.phone}
-                            disabled={isSubmitting}
-                            value={formData.phone}
-                            onChange={(value) => updateField('phone', value)}
-                            placeholder="(00) 00000-0000"
-                            aria-invalid={Boolean(errors.phone || errors.contact)}
-                            aria-describedby={describedBy(
-                              errors.phone && `${fieldIds.phone}-error`,
-                              errors.contact && `${fieldIds.contact}-error`,
-                            )}
-                          />
-                          {errors.phone ? (
-                            <p id={`${fieldIds.phone}-error`} className="text-xs font-medium text-destructive" role="alert">
-                              {errors.phone}
-                            </p>
-                          ) : null}
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <div className="space-y-1.5">
-                          <Label className="text-sm font-medium">Origem</Label>
-                          <LeadSourceSelect
-                            key={`${editableLead?.id || 'new'}-${open ? 'open' : 'closed'}`}
-                            value={formData.source}
-                            disabled={isSubmitting}
-                            onValueChange={(value) => updateField('source', value)}
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor={fieldIds.email} className="text-sm font-medium">Email</Label>
-                          <Input
-                            id={fieldIds.email}
-                            type="email"
-                            value={formData.email}
-                            onChange={(e) => updateField('email', e.target.value)}
-                            placeholder="email@exemplo.com"
-                            pattern="^[^\s@]+@[^\s@]+\.[^\s@]{2,}$"
-                            aria-invalid={Boolean(errors.email || errors.contact)}
-                            aria-describedby={describedBy(
-                              errors.email && `${fieldIds.email}-error`,
-                              errors.contact && `${fieldIds.contact}-error`,
-                            )}
-                            title="Informe um email válido (ex: nome@dominio.com)"
-                          />
-                          {errors.email ? (
-                            <p id={`${fieldIds.email}-error`} className="text-xs font-medium text-destructive" role="alert">
-                              {errors.email}
-                            </p>
-                          ) : null}
-                        </div>
-                      </div>
-                      {errors.contact ? (
-                        <p id={`${fieldIds.contact}-error`} className="-mt-2 text-xs font-medium text-destructive" role="alert">
-                          {errors.contact}
-                        </p>
-                      ) : null}
-
-                      <div className="space-y-1.5">
-                        <Label className="text-sm font-medium">Observações / feedback inicial</Label>
-                        <Textarea
-                          value={formData.feedback}
-                          onChange={(e) => updateField('feedback', e.target.value)}
-                          placeholder="Contexto do atendimento, necessidades ou próximos passos..."
-                          rows={4}
-                        />
-                        <p className="text-xs text-[var(--app-text-tertiary)]">Este texto entra no histórico como o primeiro feedback do lead.</p>
-                      </div>
-                    </div>
+                  <LeadContactFields
+                    formData={formData}
+                    errors={errors}
+                    fieldIdPrefix={fieldIdPrefix}
+                    sourceKey={`${editableLead?.id || 'new'}-${open ? 'open' : 'closed'}`}
+                    isSubmitting={isSubmitting}
+                    updateField={updateField}
+                  />
                 </TabsContent>
 
                 {/* Profile/Contract Tab */}
                 <TabsContent {...editPanelLink('profile')} data-tour="lead-form-profile" value="profile" className="mt-0 space-y-5">
-                  <div className="space-y-2">
-                    <Label>Tipo de pessoa</Label>
-                    <div className="grid grid-cols-2 gap-2 rounded-[8px] bg-[var(--app-surface-soft)] p-1">
-                      {([
-                        ['individual', 'Pessoa física'],
-                        ['company', 'Pessoa jurídica'],
-                      ] as const).map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          onClick={() => updateField('person_type', value)}
-                          className={cn(
-                            'h-9 rounded-[6px] text-[12px] font-light transition-colors',
-                            formData.person_type === value
-                              ? 'bg-primary text-primary-foreground shadow-none'
-                              : 'text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]',
-                          )}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {formData.person_type === 'individual' ? (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label>Gênero</Label>
-                        <Select disabled={isSubmitting} value={formData.gender || '__none__'} onValueChange={(value) => updateField('gender', value === '__none__' ? '' : value as typeof formData.gender)}>
-                          <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">Não informado</SelectItem>
-                            <SelectItem value="male">Masculino</SelectItem>
-                            <SelectItem value="female">Feminino</SelectItem>
-                            <SelectItem value="other">Outro</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Nome social</Label>
-                        <Input value={formData.social_name} onChange={(e) => updateField('social_name', e.target.value)} placeholder="Como prefere ser chamado(a)" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Data de nascimento</Label>
-                        <Input type="date" value={formData.birth_date} max={new Date().toISOString().slice(0, 10)} onChange={(e) => updateField('birth_date', e.target.value)} aria-invalid={Boolean(errors.birth_date)} />
-                        {errors.birth_date && <p className="text-xs font-medium text-destructive">{errors.birth_date}</p>}
-                      </div>
-                      <div className="space-y-2">
-                        <Label>CPF</Label>
-                        <Input value={formData.cpf} onChange={(e) => updateField('cpf', maskCPF(e.target.value))} placeholder="000.000.000-00" inputMode="numeric" aria-invalid={Boolean(errors.cpf)} />
-                        {errors.cpf && <p className="text-xs font-medium text-destructive">{errors.cpf}</p>}
-                      </div>
-                      <div className="space-y-2">
-                        <Label>RG</Label>
-                        <Input value={formData.rg} onChange={(e) => updateField('rg', maskRG(e.target.value))} placeholder="00.000.000-0" inputMode="numeric" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Profissão</Label>
-                        <Input value={formData.profissao} onChange={(e) => updateField('profissao', e.target.value)} placeholder="Área de atuação" />
-                      </div>
-                      <div className="space-y-2 sm:col-span-2">
-                        <Label className="flex items-center gap-2"><DollarSign className="h-3.5 w-3.5" />Renda</Label>
-                        <Input value={formData.renda_familiar} onChange={(e) => updateField('renda_familiar', formatCurrencyInput(e.target.value))} placeholder="R$ 0,00" inputMode="decimal" />
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-2 sm:col-span-2">
-                        <Label>Razão social</Label>
-                        <Input value={formData.corporate_name} onChange={(e) => updateField('corporate_name', e.target.value)} placeholder="Razão social da empresa" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Nome fantasia</Label>
-                        <Input value={formData.trade_name} onChange={(e) => updateField('trade_name', e.target.value)} placeholder="Nome comercial" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>CNPJ</Label>
-                        <Input value={formData.cnpj} onChange={(e) => updateField('cnpj', maskCNPJ(e.target.value))} placeholder="00.000.000/0000-00" inputMode="numeric" aria-invalid={Boolean(errors.cnpj)} />
-                        {errors.cnpj && <p className="text-xs font-medium text-destructive">{errors.cnpj}</p>}
-                      </div>
-                      <div className="space-y-2 sm:col-span-2">
-                        <Label>Inscrição estadual</Label>
-                        <Input value={formData.state_registration} onChange={(e) => updateField('state_registration', e.target.value)} placeholder="Opcional" />
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="grid gap-4 border-t border-[var(--app-border)] pt-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label className="flex items-center gap-2"><Briefcase className="h-3.5 w-3.5" />Cargo</Label>
-                      <Input value={formData.cargo} onChange={(e) => updateField('cargo', e.target.value)} placeholder="Ex: Gerente, Diretor..." />
-                    </div>
-                    <div className="space-y-2">
-                      <Label className="flex items-center gap-2"><Building2 className="h-3.5 w-3.5" />Empresa</Label>
-                      <Input value={formData.empresa} onChange={(e) => updateField('empresa', e.target.value)} placeholder="Nome da empresa" />
-                    </div>
-                  </div>
+                  <LeadProfileFields formData={formData} errors={errors} isSubmitting={isSubmitting} updateField={updateField} />
                 </TabsContent>
 
                 <TabsContent {...editPanelLink('interest')} data-tour="lead-form-interest" value="interest" className="mt-0 space-y-5">
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-2"><DollarSign className="h-3.5 w-3.5" />Valor de interesse</Label>
-                    <Input value={formData.valor_interesse} onChange={(e) => updateField('valor_interesse', formatCurrencyInput(e.target.value))} placeholder="R$ 0,00" inputMode="decimal" />
-                    <p className="text-xs text-[var(--app-text-tertiary)]">Digite somente os números; a moeda é formatada automaticamente.</p>
-                  </div>
-
-                  {hasPropertiesModule && <div className="space-y-3">
-                    <Label className="flex items-center gap-2"><Home className="h-3.5 w-3.5" />Imóveis de interesse</Label>
-                    {selectedInterestProperties.map((property, index) => (
-                      <div key={property.id} className="flex items-center gap-3 rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-2.5">
-                        <Building2 className="h-4 w-4 shrink-0 text-primary" />
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-[var(--app-text-primary)]">{[property.code, property.title].filter(Boolean).join(' - ')}</p>
-                          <p className="truncate text-xs text-[var(--app-text-tertiary)]">{[property.bairro, property.cidade].filter(Boolean).join(' · ')}{index === 0 ? ' · Principal' : ''}</p>
-                        </div>
-                        <button
-                          type="button"
-                          aria-label={`Remover ${property.title || property.code || 'imóvel'}`}
-                          onClick={() => {
-                            if (submissionAttemptRef.current || isSubmitting) return;
-                            setFormData((previous) => {
-                              if (submissionAttemptRef.current || isSubmitting) return previous;
-                              const nextIds = previous.interest_property_ids.filter((id) => id !== property.id);
-                              const nextPrimary = properties.find((candidate) => candidate.id === nextIds[0]);
-                              return {
-                                ...previous,
-                                interest_property_ids: nextIds,
-                                property_id: nextIds[0] || '',
-                                valor_interesse: previous.property_id === property.id
-                                  ? (nextPrimary?.preco != null ? formatCurrencyInput(nextPrimary.preco) : '')
-                                  : previous.valor_interesse,
-                              };
-                            });
-                          }}
-                          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[var(--app-text-tertiary)] hover:bg-destructive/10 hover:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))}
-                    <PropertyPickerDialog
-                      properties={properties.map((p) => ({
-                        id: p.id, code: p.code, title: p.title, bairro: p.bairro, cidade: p.cidade,
-                        preco: p.preco, imagem_principal: p.imagem_principal, tipo_de_imovel: p.tipo_de_imovel,
-                        tipo_de_negocio: p.tipo_de_negocio, commission_percentage: p.commission_percentage, status: p.status,
-                      }))}
-                      selectedPropertyId={null}
-                      disabled={isSubmitting || !canViewProperties}
-                      isLoading={propertiesLoading}
-                      onSelect={(property) => {
-                        if (submissionAttemptRef.current || isSubmitting) return;
-                        setPickedProperties(previous => submissionAttemptRef.current || isSubmitting ? previous : ({ organizationId: activeOrganization.organizationId, items: [...(previous.organizationId === activeOrganization.organizationId ? previous.items.filter(item => item.id !== property.id) : []), property] }));
-                        setFormData((previous) => {
-                          if (submissionAttemptRef.current || isSubmitting) return previous;
-                          if (previous.interest_property_ids.includes(property.id)) return previous;
-                          const nextIds = [...previous.interest_property_ids, property.id];
-                          const becomesPrimary = !previous.property_id;
-                          return {
-                            ...previous,
-                            interest_property_ids: nextIds,
-                            property_id: previous.property_id || property.id,
-                            valor_interesse: becomesPrimary
-                              ? (property.preco != null ? formatCurrencyInput(property.preco) : '')
-                              : previous.valor_interesse,
-                          };
-                        });
-                      }}
-                      trigger={(
-                        <button type="button" disabled={isSubmitting || !canViewProperties} className="flex h-10 w-full items-center justify-center gap-2 rounded-[6px] border border-dashed border-primary/40 bg-primary/10 px-3 text-[12px] font-light text-primary hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-50">
-                          <Plus className="h-3.5 w-3.5" />{selectedInterestProperties.length > 0 ? 'Adicionar outro imóvel' : 'Adicionar imóvel'}
-                        </button>
-                      )}
-                    />
-                    {!canViewProperties && <p className="text-xs text-[var(--app-text-tertiary)]">Seu perfil não possui acesso aos imóveis.</p>}
-                  </div>}
-
-                  {!isEditMode && <div className="space-y-3 border-t border-[var(--app-border)] pt-4">
-                    <div>
-                      <Label className="flex items-center gap-2"><Paperclip className="h-3.5 w-3.5" />Documentos</Label>
-                      <p className="mt-1 text-xs text-[var(--app-text-tertiary)]">Até 10 arquivos de 25 MB. O envio acontece depois que o lead é criado.</p>
-                    </div>
-                    <Input
-                      id={`${fieldIdPrefix}-lead-attachments`}
-                      type="file"
-                      multiple
-                      disabled={isSubmitting || !canUploadAttachments}
-                      accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp"
-                      className="sr-only"
-                      onChange={(event) => {
-                        handleAttachmentSelection(event.target.files);
-                        event.currentTarget.value = '';
-                      }}
-                    />
-                    {!canUploadAttachments && <p className="text-xs text-[var(--app-text-tertiary)]">Seu perfil pode criar o contato, mas não possui permissão para anexar documentos.</p>}
-                    {canUploadAttachments && <label htmlFor={`${fieldIdPrefix}-lead-attachments`} className="flex h-10 cursor-pointer items-center justify-center gap-2 rounded-[6px] border border-dashed border-primary/40 bg-primary/10 text-[12px] font-light text-primary hover:bg-primary/15">
-                      <Plus className="h-3.5 w-3.5" />Adicionar documentos
-                    </label>}
-                    {pendingAttachments.map((file) => (
-                      <div key={`${file.name}:${file.size}:${file.lastModified}`} className="flex items-center gap-3 rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-2">
-                        <FileText className="h-4 w-4 shrink-0 text-primary" />
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-xs font-medium text-[var(--app-text-primary)]">{file.name}</p>
-                          <p className="text-[11px] text-[var(--app-text-tertiary)]">{(file.size / 1024 / 1024).toFixed(1)} MB</p>
-                        </div>
-                        <button type="button" aria-label={`Remover ${file.name}`} onClick={() => {
-                          if (submissionAttemptRef.current || isSubmitting) return;
-                          setPendingAttachments((current) => submissionAttemptRef.current || isSubmitting ? current : current.filter((item) => item !== file));
-                        }} className="grid h-8 w-8 place-items-center rounded-lg text-[var(--app-text-tertiary)] hover:bg-destructive/10 hover:text-destructive">
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>}
+                  <LeadInterestFields
+                    interestValue={formData.valor_interesse}
+                    updateField={updateField}
+                    isSubmitting={isSubmitting}
+                    hasPropertiesModule={hasPropertiesModule}
+                    canViewProperties={canViewProperties}
+                    propertiesLoading={propertiesLoading}
+                    selectedInterestProperties={selectedInterestProperties}
+                    properties={properties}
+                    onSelectProperty={handleSelectProperty}
+                    onRemoveProperty={handleRemoveProperty}
+                    isEditMode={isEditMode}
+                    fieldIdPrefix={fieldIdPrefix}
+                    canUploadAttachments={canUploadAttachments}
+                    pendingAttachments={pendingAttachments}
+                    onSelectAttachments={handleAttachmentSelection}
+                    onRemoveAttachment={handleRemoveAttachment}
+                  />
                 </TabsContent>
 
                 {/* Management Tab */}
                 {!isEditMode && <TabsContent {...editPanelLink('management')} data-tour="lead-form-management" value="management" className="space-y-4 mt-0">
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    {canSelectTeam && (
-                      <div className="space-y-2">
-                        <Label className="flex items-center gap-2">
-                          <Building2 className="h-3.5 w-3.5" />
-                          Escopo do lead
-                        </Label>
-                        <Select
-                          disabled={isSubmitting}
-                          value={formData.team_id || 'personal'}
-                          onValueChange={(value) => {
-                            if (submissionAttemptRef.current || isSubmitting) return;
-                            const nextTeamId = value === 'personal' ? '' : value;
-                            const nextTeam = teams.find((team) => team.id === nextTeamId);
-                            const memberIds = new Set((nextTeam?.members || []).map((member) => member.user_id));
-                            const currentAssigneeIsValid = !nextTeamId || memberIds.has(formData.assigned_user_id);
-                            const fallbackAssignee = allAssignableUsers.find((user) => memberIds.has(user.id))?.id || '';
-                            setFormData((previous) => submissionAttemptRef.current || isSubmitting ? previous : ({
-                              ...previous,
-                              team_id: nextTeamId,
-                              assigned_user_id: currentAssigneeIsValid ? previous.assigned_user_id : fallbackAssignee,
-                            }));
-                          }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione o escopo" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="personal">Pessoal</SelectItem>
-                            {teams.filter((team) => team.is_active !== false).map((team) => (
-                              <SelectItem key={team.id} value={team.id}>{team.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
-                    <div className="space-y-2">
-                      <Label className="flex items-center gap-2">
-                        <User className="h-3.5 w-3.5" />
-                        Responsável
-                      </Label>
-                      <Select
-                        disabled={isSubmitting}
-                        value={formData.assigned_user_id}
-                        onValueChange={(v) => updateField('assigned_user_id', v)}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Selecione o responsável" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {users.map(user => (
-                            <SelectItem key={user.id} value={user.id}>
-                              {user.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Status do Negócio</Label>
-                      <Select
-                        disabled={isSubmitting}
-                        value={formData.deal_status}
-                        onValueChange={(v) => updateField('deal_status', v)}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {dealStatusOptions.map(opt => (
-                            <SelectItem key={opt.value} value={opt.value} disabled={opt.value === 'won' && !canUploadAttachments}>
-                              <div className="flex items-center gap-2">
-                                <opt.icon className={`h-3.5 w-3.5 ${opt.color}`} />
-                                {opt.label}
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {formData.deal_status === 'lost' && (
-                        <div className="mt-3 space-y-1.5">
-                          <Label htmlFor={`${fieldIdPrefix}-lost-reason`}>Motivo da perda *</Label>
-                          <Input
-                            id={`${fieldIdPrefix}-lost-reason`}
-                            value={formData.lost_reason}
-                            onChange={(event) => updateField('lost_reason', event.target.value)}
-                            placeholder="Ex.: sem retorno, valor ou desistência"
-                            maxLength={300}
-                            aria-invalid={Boolean(errors.lost_reason)}
-                          />
-                          {errors.lost_reason && (
-                            <p className="text-xs font-medium text-destructive" role="alert">{errors.lost_reason}</p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Pipeline</Label>
-                      <Select
-                        disabled={isSubmitting}
-                        value={formData.pipeline_id}
-                        onValueChange={(v) => {
-                          updateField('pipeline_id', v);
-                          updateField('stage_id', '');
-                        }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Selecione a pipeline" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {pipelines.map(p => (
-                            <SelectItem key={p.id} value={p.id}>
-                              {p.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Estágio</Label>
-                      <Select
-                        value={formData.stage_id}
-                        onValueChange={(v) => updateField('stage_id', v)}
-                        disabled={isSubmitting || !formData.pipeline_id}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Selecione o estágio" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {stages.map(s => (
-                            <SelectItem key={s.id} value={s.id}>
-                              <div className="flex items-center gap-2">
-                                <div
-                                  className="h-2.5 w-2.5 rounded-full"
-                                   style={getPipelineStageColorStyle(s.color)}
-                                />
-                                {s.name}
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Tags</Label>
-                      <TagSelector
-                        disabled={isSubmitting}
-                        selectedTagIds={formData.tag_ids}
-                        onSelectTag={(tagId) => {
-                          if (!formData.tag_ids.includes(tagId)) {
-                            updateField('tag_ids', [...formData.tag_ids, tagId]);
-                          }
-                        }}
-                        onRemoveTag={(tagId) => {
-                          updateField('tag_ids', formData.tag_ids.filter(id => id !== tagId));
-                        }}
-                        placeholder="Adicionar tags..."
-                        triggerClassName="h-10 w-full justify-start rounded-md border-0 bg-[var(--app-surface-soft)] px-3 text-sm font-normal"
-                      />
-                    </div>
-                  </div>
+                  <LeadManagementFields
+                    formData={formData}
+                    errors={errors}
+                    isSubmitting={isSubmitting}
+                    canSelectTeam={canSelectTeam}
+                    canUploadAttachments={canUploadAttachments}
+                    fieldIdPrefix={fieldIdPrefix}
+                    teams={teams}
+                    users={users}
+                    pipelines={pipelines}
+                    stages={stages}
+                    onScopeChange={handleScopeChange}
+                    updateField={updateField}
+                  />
                 </TabsContent>}
               </Tabs>
               </fieldset>
@@ -1582,6 +1080,7 @@ export function CreateLeadDialog({
               const initial = getEmptyFormData();
               editBaseFormRef.current = initial;
               editBaseLeadRef.current = persistedLead;
+              setEditBaseVersion(persistedLead.updated_at);
               setFormData(initial);
               setPendingAttachments([]);
               setErrors({});

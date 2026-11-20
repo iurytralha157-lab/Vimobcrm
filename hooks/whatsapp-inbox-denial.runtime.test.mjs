@@ -22,7 +22,7 @@ function production(path) {
 }
 const dependencies = { ...production('lib/whatsapp-query-cache.ts'), ...production('lib/whatsapp-inbox-access.ts'),
   ...production('lib/filters/whatsapp-filter-options.ts') };
-const sourcePath = resolve(repository, 'hooks/use-whatsapp-conversations.ts');
+const sourcePath = resolve(repository, 'hooks/whatsapp/use-whatsapp-conversation-queries.ts');
 const source = ts.createSourceFile(sourcePath, readFileSync(sourcePath, 'utf8'), ts.ScriptTarget.Latest, true);
 const names = new Set(['useWhatsAppConversations', 'useWhatsAppUnreadCount', 'useWhatsAppConversationFilterOptions',
   'WHATSAPP_CONVERSATIONS_REFETCH_MS', 'WHATSAPP_CONVERSATIONS_PAGINATED_REFETCH_MS']);

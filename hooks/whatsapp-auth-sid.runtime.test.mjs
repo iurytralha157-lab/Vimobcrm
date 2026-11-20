@@ -35,7 +35,7 @@ before(async () => {
     import {QueryClient,QueryClientProvider,useQuery} from '@tanstack/react-query';
     import {useWhatsAppQueryScope} from '@/hooks/use-whatsapp-query-scope';
     import {useWhatsAppMessageMediaURL} from '@/hooks/use-whatsapp-message-media-url';
-    import {useWhatsAppMediaGallery} from '@/hooks/use-whatsapp-media-gallery';
+    import {useWhatsAppMediaGallery} from '@/hooks/whatsapp/use-whatsapp-media-gallery';
     import {useWhatsAppConversationDraft} from '@/hooks/use-whatsapp-conversation-draft';
     import {whatsappQueryKeys} from '@/lib/whatsapp-query-cache';
     const root=createRoot(document.getElementById('root'));

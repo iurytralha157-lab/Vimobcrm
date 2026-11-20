@@ -16,6 +16,9 @@ function readRepoFile(relativePath: string) {
 const floatingChatSource = readRepoFile(
   "components/features/chat/FloatingChat.tsx",
 );
+const floatingConversationFiltersSource = readRepoFile(
+  "components/features/chat/FloatingConversationFilters.tsx",
+);
 const floatingChatButtonSource = readRepoFile(
   "components/features/chat/FloatingChatButton.tsx",
 );
@@ -42,6 +45,9 @@ const onlineUsersPanelSource = readRepoFile(
 );
 const whatsappConversationsHookSource = readRepoFile(
   "hooks/use-whatsapp-conversations.ts",
+);
+const whatsappConversationQueriesSource = readRepoFile(
+  "hooks/whatsapp/use-whatsapp-conversation-queries.ts",
 );
 const whatsappApiSource = readRepoFile(
   "lib/api/whatsapp.ts",
@@ -71,7 +77,7 @@ test("balão usa o mesmo escopo Todos da página e sincroniza somente quando vis
   assert.match(floatingChatSource, /const shouldSyncFloatingChat = chatVisible/);
   assert.match(floatingChatSource, /enabled: shouldSyncFloatingChat/);
   assert.match(
-    floatingChatSource,
+    floatingConversationFiltersSource,
     /<SelectItem value="all">Todas as contas<\/SelectItem>/,
   );
   assert.doesNotMatch(
@@ -166,8 +172,8 @@ test("launcher aparece sem atraso fixo e consulta somente o contador leve", () =
   );
   assert.match(floatingChatButtonSource, /modulesLoading[\s\S]{0,160}permissionsLoading[\s\S]{0,160}canViewWhatsApp/);
 
-  assert.match(whatsappConversationsHookSource, /whatsappQueryKeys\.unreadCount/);
-  assert.match(whatsappConversationsHookSource, /whatsappAPI\.getUnreadCount\(/);
+  assert.match(whatsappConversationQueriesSource, /whatsappQueryKeys\.unreadCount/);
+  assert.match(whatsappConversationQueriesSource, /whatsappAPI\.getUnreadCount\(/);
   assert.match(whatsappApiSource, /\/v1\/whatsapp\/conversations\/unread-count/);
   assert.doesNotMatch(
     sourceBetween(whatsappApiSource, "async getUnreadCount", "async startConversation"),
@@ -252,8 +258,8 @@ test("lista restaura o mesmo contato e as páginas já mantidas no cache ao volt
 
   assert.match(conversationListSource, /captureConversationListReturnPosition\(/);
   assert.match(conversationListSource, /restoreConversationListReturnPosition\(/);
-  assert.match(conversationsScreenSource, /returnPositionKey=\{mobileConversationListPositionKey\}/);
-  assert.match(conversationsScreenSource, /returnPosition=\{mobileConversationListReturnPosition\}/);
+  assert.match(conversationsScreenSource, /returnPositionKey=\{isMobile \? mobileConversationListPositionKey : undefined\}/);
+  assert.match(conversationsScreenSource, /returnPosition=\{isMobile \? mobileConversationListReturnPosition : undefined\}/);
 });
 
 test("Voltar e Fechar têm fundo cinza permanente na conversa aberta", greyNavigation);

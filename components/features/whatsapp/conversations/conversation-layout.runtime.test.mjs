@@ -40,7 +40,10 @@ let css;
 const screenshots = process.env.WHATSAPP_LAYOUT_SCREENSHOT_DIR;
 before(async () => {
   const sourceCSS = (await readFile(join(repository, 'app/globals.css'), 'utf8')).replace('@import "tailwindcss";', '@import "tailwindcss" source(none);');
-  css = (await require('postcss')([require('@tailwindcss/postcss')({ base: repository })]).process(`${sourceCSS}\n@source "${join(repository, 'components/features/whatsapp').replaceAll('\\', '/')}";\n@source "${join(repository, 'components/ui').replaceAll('\\', '/')}";`, { from: join(repository, 'app/layout-fixture.css') })).css;
+  const sources = ['components/features/whatsapp', 'components/features/chat', 'components/ui']
+    .map(path => `@source "${join(repository, path).replaceAll('\\', '/')}";`);
+  css = (await require('postcss')([require('@tailwindcss/postcss')({ base: repository })])
+    .process([sourceCSS, ...sources].join('\n'), { from: join(repository, 'app/layout-fixture.css') })).css;
   if (screenshots) await mkdir(screenshots, { recursive: true });
 }, { timeout: 300000 });
 after(async () => {
@@ -312,7 +315,7 @@ test('lead data and assignee picker use lighter compact typography while the reg
   assert.equal(await page.evaluate(() => window.harness.requests.filter(r => ['feedback', 'archive', 'delete', 'link', 'send'].includes(r.kind)).length), 0);
 });
 
-test('toolbar search precedes the pane and gray close controls preserve their actions', async t => {
+test('toolbar search precedes the pane and close controls preserve their styles and actions', async t => {
   const docked = await fixture(t);
   const labels = page => page.locator('header [aria-label="Ações da conversa"]').evaluate(group => [...group.querySelectorAll('a,button')].map(node => node.getAttribute('aria-label')));
   assert.deepEqual(await labels(docked), ['Ver lead', 'Mais ações da conversa', 'Pesquisar nesta conversa', 'Recolher dados do contato']);
@@ -320,11 +323,13 @@ test('toolbar search precedes the pane and gray close controls preserve their ac
   await expect(docked.getByRole('textbox', { name: 'Buscar mensagem nesta conversa' })).toBeVisible();
   await docked.getByRole('button', { name: 'Fechar pesquisa', exact: true }).click();
 
-  async function grayClose(page, button) {
-    const styles = (node, hover) => {
+  async function assertCloseStyle(page, button, onOrangeHeader = false) {
+    const styles = (node, { hover, onOrangeHeader }) => {
       const style = getComputedStyle(node), reference = document.createElement('span');
-      reference.style.backgroundColor = hover ? 'var(--app-surface-muted)' : 'var(--app-surface-soft)';
-      reference.style.color = hover ? 'var(--app-text-primary)' : 'var(--app-text-secondary)';
+      reference.style.backgroundColor = onOrangeHeader
+        ? `rgb(0 0 0 / ${hover ? '25%' : '15%'})`
+        : (hover ? 'var(--app-surface-muted)' : 'var(--app-surface-soft)');
+      reference.style.color = onOrangeHeader ? 'white' : (hover ? 'var(--app-text-primary)' : 'var(--app-text-secondary)');
       node.append(reference); const expected = getComputedStyle(reference);
       const result = { background: style.backgroundColor, color: style.color, expectedBackground: expected.backgroundColor, expectedColor: expected.color, radius: style.borderRadius };
       reference.remove(); return result;
@@ -335,15 +340,15 @@ test('toolbar search precedes the pane and gray close controls preserve their ac
       await page.mouse.move(0, 0);
       await page.evaluate(theme => { document.documentElement.className = theme; }, theme);
       let measured;
-      await expect.poll(async () => { measured = await button.evaluate(styles, false); return matches(measured); })
+      await expect.poll(async () => { measured = await button.evaluate(styles, { hover: false, onOrangeHeader }); return matches(measured); })
         .toEqual({ background: true, foreground: true, radius: '6px' }).catch(error => { throw new Error(`${theme}: ${JSON.stringify(measured)}`, { cause: error }); });
       await button.hover();
-      await expect.poll(async () => { measured = await button.evaluate(styles, true); return matches(measured); })
+      await expect.poll(async () => { measured = await button.evaluate(styles, { hover: true, onOrangeHeader }); return matches(measured); })
         .toEqual({ background: true, foreground: true, radius: '6px' }).catch(error => { throw new Error(`hover ${theme}: ${JSON.stringify(measured)}`, { cause: error }); });
     }
   }
   const closePane = docked.getByRole('button', { name: 'Fechar painel do lead', exact: true });
-  await grayClose(docked, closePane); await closePane.click();
+  await assertCloseStyle(docked, closePane); await closePane.click();
   await expect(docked.getByRole('complementary', { name: 'Dados do contato' })).toHaveCount(0);
   assert.deepEqual(await labels(docked), ['Ver lead', 'Mais ações da conversa', 'Pesquisar nesta conversa', 'Mostrar dados do contato']);
 
@@ -351,7 +356,7 @@ test('toolbar search precedes the pane and gray close controls preserve their ac
   await mobile.getByRole('button', { name: 'Mostrar dados do contato', exact: true }).click();
   const dialog = mobile.getByRole('dialog', { name: 'Dados do contato' }); await expect(dialog).toBeVisible();
   const mobileClose = dialog.getByRole('button', { name: 'Fechar dados do contato', exact: true });
-  await grayClose(mobile, mobileClose); await mobileClose.click();
+  await assertCloseStyle(mobile, mobileClose); await mobileClose.click();
   await expect(dialog).toHaveCount(0);
   await expect(mobile.getByRole('button', { name: 'Mostrar dados do contato', exact: true })).toBeFocused();
   await mobile.getByRole('button', { name: 'Mostrar dados do contato', exact: true }).click();
@@ -359,7 +364,7 @@ test('toolbar search precedes the pane and gray close controls preserve their ac
   await expect(mobile.getByRole('button', { name: 'Mostrar dados do contato', exact: true })).toBeFocused();
 
   const unregistered = await fixture(t, { mode: 'unregistered-panel' });
-  await grayClose(unregistered, unregistered.getByRole('button', { name: 'Fechar painel do contato', exact: true }));
+  await assertCloseStyle(unregistered, unregistered.getByRole('button', { name: 'Fechar painel do contato', exact: true }));
 
   for (const mobile of [false, true]) {
     const page = await harness(t, 'floating');
@@ -381,7 +386,7 @@ test('toolbar search precedes the pane and gray close controls preserve their ac
         const state = await page.evaluate(() => ({ state: window.harness.ctx.state, mode: window.harness.mode, mobile: window.harness.mobile, permissions: window.harness.permissions, text: document.body.innerHTML.slice(0, 400) }));
         throw new Error(`floating ${mobile}/${active}: ${JSON.stringify(state)} console=${JSON.stringify(consoleErrors)}`, { cause: error });
       });
-      await grayClose(page, close); await close.click();
+      await assertCloseStyle(page, close, !active); await close.click();
       await expect(close).toHaveCount(0); await page.waitForFunction(() => window.harness.ctx.state.isOpen === false);
     }
     assert.equal(await page.evaluate(() => window.harness.requests.filter(r => ['archive', 'delete', 'link', 'send'].includes(r.kind)).length), 0);

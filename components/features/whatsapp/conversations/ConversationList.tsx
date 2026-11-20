@@ -125,7 +125,7 @@ export function ConversationList({
   };
 
   return (
-    <ScrollArea ref={scrollAreaRef} data-tour="conversations-list" className="flex-1">
+    <ScrollArea ref={scrollAreaRef} data-tour="conversations-list" className="flex-1 [--conversation-meta-color:var(--app-text-secondary)]">
       <div className="divide-y divide-[var(--app-border)]">
         {isSearching && conversations.length > 0 && (
           <div role="status" className="flex items-center gap-2 bg-[var(--app-surface-soft)] px-3 py-2 text-[11px] font-light text-muted-foreground">

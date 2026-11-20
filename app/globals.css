@@ -357,7 +357,6 @@ body:has([data-team-presence-panel][aria-hidden="false"]) [data-pwa-prompt] {
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
   --color-vimob-accent: var(--vimob-accent);
-  --color-vimob-accent-strong: color-mix(in srgb, var(--vimob-accent) 75%, #000);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }

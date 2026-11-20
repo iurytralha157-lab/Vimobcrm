@@ -6,6 +6,10 @@ const createLeadDialogSource = readFileSync(
   new URL('./CreateLeadDialog.tsx', import.meta.url),
   'utf8',
 )
+const leadContactFieldsSource = readFileSync(
+  new URL('./lead-form/LeadContactFields.tsx', import.meta.url),
+  'utf8',
+)
 const leadSourceSelectSource = readFileSync(
   new URL('./LeadSourceSelect.tsx', import.meta.url),
   'utf8',
@@ -20,10 +24,11 @@ const leadSourcesAPISource = readFileSync(
 )
 
 test('novo lead usa um seletor de origem criavel compartilhado por todos os atalhos', () => {
-  assert.match(createLeadDialogSource, /<LeadSourceSelect/)
-  assert.match(createLeadDialogSource, /onValueChange=\{\(value\) => updateField\('source', value\)\}/)
-  assert.doesNotMatch(createLeadDialogSource, /<SelectItem value="meta_ads">Meta Ads<\/SelectItem>/)
-  assert.doesNotMatch(createLeadDialogSource, /<SelectItem value="outro">Outro<\/SelectItem>/)
+  assert.match(createLeadDialogSource, /<LeadContactFields[\s\S]*?updateField=\{updateField\}/)
+  assert.match(leadContactFieldsSource, /<LeadSourceSelect/)
+  assert.match(leadContactFieldsSource, /onValueChange=\{\(value\) => updateField\('source', value\)\}/)
+  assert.doesNotMatch(leadContactFieldsSource, /<SelectItem value="meta_ads">Meta Ads<\/SelectItem>/)
+  assert.doesNotMatch(leadContactFieldsSource, /<SelectItem value="outro">Outro<\/SelectItem>/)
 })
 
 test('origem usa o mesmo popup de busca + criar do DDI e das tags, com origens organizadas por organizacao', () => {
@@ -54,5 +59,9 @@ test('salvar ou editar uma origem torna as opcoes dinamicas obsoletas imediatame
   assert.match(leadsHookSource, /function invalidateLeadSourceOptions/)
   assert.match(leadsHookSource, /queryKey: \['shared-filter-lead-meta-filters'\]/)
   assert.match(leadsHookSource, /queryKey: \['lead-meta-filters'\]/)
-  assert.match(leadsHookSource, /if \(variables\.source !== undefined\) invalidateLeadSourceOptions/)
+  assert.match(leadsHookSource, /useCreateLead\(\)[\s\S]*?onSuccess:[\s\S]*?invalidateLeadSourceOptions\(queryClient\)/)
+  assert.match(leadsHookSource, /const updateCache = useLeadUpdateCache\(queryClient, organizationId, user\?\.id\)/)
+  assert.match(leadsHookSource, /onSuccess: updateCache\.onSuccess/)
+  const updateCacheSource = readFileSync(new URL('../../../hooks/leads/use-lead-update-cache.ts', import.meta.url), 'utf8')
+  assert.match(updateCacheSource, /if \(variables\.source !== undefined\) \{[^}]*\{ queryKey: \['shared-filter-lead-meta-filters'\] \}[^}]*\{ queryKey: \['lead-meta-filters'\] \}/)
 })

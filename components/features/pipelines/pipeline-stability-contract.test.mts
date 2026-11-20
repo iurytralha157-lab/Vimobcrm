@@ -188,12 +188,53 @@ test('escopo de equipe e filtros persistidos preservam disponibilidade e hierarq
   assert.doesNotMatch(screenSource, /isDynamicFilterScopeReady/);
   assert.match(screenSource, /const handleEnableFilterOptions = useCallback/);
   assert.match(sharedFiltersComponentSource, /Algumas opções não foram atualizadas\./);
-  assert.match(sharedFiltersComponentSource, /onClick=\{onRetryDynamicOptions\}/);
   assert.match(sharedFiltersComponentSource, /loading=\{isLoadingTags\}/);
   assert.match(sharedFiltersComponentSource, /selectedTagIds=\{tagIds\}/);
   assert.match(sharedFiltersComponentSource, /ariaLabel="Filtrar por campanha"/);
   assert.match(searchableFilterSelectSource, /placeholder="Buscar opções\.\.\."/);
   assert.match(searchableFilterSelectSource, /searchTextIncludes\(\[option\.label, option\.value/);
+});
+
+test('Tentar novamente delega a ação e só repete leituras dos catálogos bloqueados no escopo', () => {
+  const source = ts.createSourceFile('SharedFilters.tsx', sharedFiltersComponentSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const retryButtons: ts.JsxOpeningElement[] = [];
+  const attribute = (element: ts.JsxOpeningElement, name: string) =>
+    element.attributes.properties.find((property): property is ts.JsxAttribute =>
+      ts.isJsxAttribute(property) && property.name.getText(source) === name);
+  const visit = (node: ts.Node) => {
+    if (ts.isJsxOpeningElement(node) && node.tagName.getText(source) === 'Button' &&
+      attribute(node, 'onClick')?.initializer?.getText(source).includes('onRetryDynamicOptions')) retryButtons.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  assert.equal(retryButtons.length, 1);
+  const [button] = retryButtons;
+  assert.equal(attribute(button, 'type')?.initializer?.getText(source), '"button"');
+  assert.equal(attribute(button, 'disabled')?.initializer?.getText(source), '{isRetryingDynamicOptions}');
+  const initializer = attribute(button, 'onClick')?.initializer;
+  assert.ok(initializer && ts.isJsxExpression(initializer) && initializer.expression);
+
+  const createClick = new Function(
+    'onRetryDynamicOptions', 'cacheTrustScope', 'teamsAccessBlocked', 'usersAccessBlocked', 'refetchTeams', 'refetchUsers',
+    `return (${initializer.expression.getText(source)});`,
+  );
+  for (const [cacheTrustScope, teamsBlocked, usersBlocked, expected] of [
+    [false, true, true, ['retry']],
+    [true, true, false, ['retry', 'teams']],
+    [true, false, true, ['retry', 'users']],
+    [true, true, true, ['retry', 'teams', 'users']],
+  ] as const) {
+    const calls: string[] = [];
+    const recordRefetch = (scope: string) => (options: { cancelRefetch: boolean }) => {
+      assert.deepEqual(options, { cancelRefetch: false });
+      calls.push(scope);
+    };
+    const click = createClick(
+      () => calls.push('retry'), cacheTrustScope, teamsBlocked, usersBlocked, recordRefetch('teams'), recordRefetch('users'),
+    );
+    click({ preventDefault: assert.fail, stopPropagation: assert.fail });
+    assert.deepEqual(calls, expected);
+  }
 });
 
 test('erro inicial bloqueia dados incompletos e falha de atualização preserva o cache', () => {

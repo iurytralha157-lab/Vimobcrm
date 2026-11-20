@@ -41,7 +41,7 @@ before(async () => {
     import {ScrollToLatestButton} from ${JSON.stringify(join(repository, 'components/features/whatsapp/ScrollToLatestButton.tsx'))};
     import {MessageAudioPlayer} from ${JSON.stringify(join(repository, 'components/features/whatsapp/message-bubble/MessageAudioPlayer.tsx'))};
     import {MediaViewer} from ${JSON.stringify(join(repository, 'components/features/whatsapp/MediaViewer.tsx'))};
-    import {useWhatsAppMediaGallery} from ${JSON.stringify(join(repository, 'hooks/use-whatsapp-media-gallery.ts'))};
+    import {useWhatsAppMediaGallery} from ${JSON.stringify(join(repository, 'hooks/whatsapp/use-whatsapp-media-gallery.ts'))};
     const root=createRoot(document.getElementById('root'));const states=new WeakMap();
     window.h={mode:'bubble',scope:{organizationId:'org-a',userId:'user-a',accessScope:'allowed'},props:{},copies:[],replies:[],reactions:[],jumps:[],played:[],paused:[],keys:[],mediaRequests:[],manualRequests:[],attachmentCalls:[],attachmentRequests:[],galleryItems:[],galleryResults:[],render(mode=this.mode,props=this.props){this.mode=mode;this.props=props;if(props.queryScope)this.scope=props.queryScope;flushSync(()=>root.render(React.createElement(Host)))},unmount(){flushSync(()=>root.render(null))}};
     Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>h.copies.push(text)}});

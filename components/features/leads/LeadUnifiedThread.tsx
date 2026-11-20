@@ -8,7 +8,7 @@ import { MessageErrorBoundary } from '@/components/features/whatsapp/MessageErro
 import { DateSeparator, LoadOlderMessagesButton, ScrollToLatestButton } from '@/components/features/whatsapp';
 import { useWhatsAppThreadScroll } from '@/hooks/use-whatsapp-thread-scroll';
 import { useWhatsAppMessageNavigation } from '@/hooks/use-whatsapp-message-navigation';
-import { useWhatsAppMediaGallery } from '@/hooks/use-whatsapp-media-gallery';
+import { useWhatsAppMediaGallery } from '@/hooks/whatsapp/use-whatsapp-media-gallery';
 import { cn } from '@/lib/utils';
 import { getSafeHttpUrl } from '@/lib/safe-http-url';
 import { isWhatsAppAccessUnavailable } from '@/lib/whatsapp-access-revocation';

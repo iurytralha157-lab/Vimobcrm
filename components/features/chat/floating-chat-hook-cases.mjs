@@ -103,7 +103,7 @@ export async function viewportAndCleanup() {
   const bindings = jsx(F, 'FloatingMessagesViewport')[0];
   let scrolled = 0;
   prop(bindings, 'onScroll', { threadScroll: { onScroll: () => { scrolled++; } } })(); assert.equal(scrolled, 1);
-  const component = value(F, 'FloatingMessagesViewport', { ScrollArea: 'scroll', ScrollToLatestButton: 'latest' });
+  const component = value('components/features/chat/FloatingMessagesViewport.tsx', 'FloatingMessagesViewport', { ScrollArea: 'scroll', ScrollToLatestButton: 'latest' });
   const rendered = component({ children: 'messages', scrollAreaRef: scrollRef, onScroll: 'scroll-handler', showScrollToLatest: true, onScrollToLatest: 'latest-handler', unreadCount: 3 });
   const [area, latest] = rendered.props.children;
   assert.equal(area.props.ref, scrollRef); assert.equal(area.props.onScrollCapture, 'scroll-handler');

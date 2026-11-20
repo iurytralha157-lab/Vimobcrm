@@ -8,16 +8,16 @@ import ts from 'typescript';
 const sources = {
   settings: 'components/features/pipelines/StageSettingsDialog.tsx',
   editor: 'components/features/pipelines/StagesEditorDialog.tsx',
-  screen: 'components/features/pipelines/PipelinesScreen.tsx',
+  catalog: 'hooks/pipelines/use-pipeline-catalog-editor.ts',
 };
 const cases = [
   ['settings', 'handleSaveGeneral', 'saveInFlightRef'],
   ['settings', 'handleArchive', 'saveInFlightRef'],
   ['editor', 'handleSave', 'saveInFlightRef'],
   ['editor', 'handleRestoreStage', 'restoreInFlight'],
-  ['screen', 'handleCreatePipeline', 'createPipelineInFlightRef'],
-  ['screen', 'handleCreateStage', 'createStageInFlightRef'],
-  ['screen', 'handleStageName', 'stageNameUpdateInFlightRef'],
+  ['catalog', 'handleCreatePipeline', 'createPipelineInFlightRef'],
+  ['catalog', 'handleCreateStage', 'createStageInFlightRef'],
+  ['catalog', 'handleStageName', 'stageNameUpdateInFlightRef'],
 ];
 
 function declaration(path, name) {

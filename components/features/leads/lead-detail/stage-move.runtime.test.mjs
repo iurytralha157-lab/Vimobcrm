@@ -11,6 +11,7 @@ import { mergeLeadServerResponse } from '../../../../lib/merge-lead-server-respo
 import { mergeLeadDetailMutation } from './hydrate-lead-detail.ts';
 import { VimobAPIError } from '../../../../lib/api/vimob-error.ts';
 import { getLeadStatusFinancialReviewMessage } from '../../../../lib/lead-financial-review.ts';
+import { leadProgressCapability } from '../../../../lib/lead-operation-capability.ts';
 import { leadFieldOptimismRuntime } from '../../../../hooks/leads/lead-field-optimism-runtime-fixture.mjs';
 
 // Execute the real popup handlers; the synthetic API enforces the server CAS.
@@ -29,10 +30,10 @@ function fixture({ lost = false, fromStatus = 'open', savedStatus = fromStatus, 
   const dependencies = {
     moveContract: { getCurrent: () => ({ contract: 'revision-v1' }), ensureCompatible: async () => ({ contract: 'revision-v1' }) },
     statusConfirmation: { clear: () => true, restart: () => true, isCurrent: () => true },
-    canOperateLead: true, lead, stages, stageAutomations: [], queryClient, captureDetailOperation, requestScope,
+    canOperateLead: true, canProgressLead: true, lead, stages, stageAutomations: [], queryClient, captureDetailOperation, requestScope,
     activeOrganization: runtime.auth.activeOrganization, user: runtime.auth.user, session: runtime.auth.session,
     stageMovePendingRef: { current: false }, statusSubmittingRef: { current: false }, stageMovePending: false,
-    capturePipelineMoveRevision, captureLeadRequestIntent, getGlobalSignOutSessionId, getPipelineStageOutcome,
+    capturePipelineMoveRevision, captureLeadRequestIntent, getGlobalSignOutSessionId, getPipelineStageOutcome, leadProgressCapability,
     mergeLeadDetailMutation, mergeLeadServerResponse, VimobAPIError, getLeadStatusFinancialReviewMessage, getErrorMessage: error => error.message,
     fieldOptimism: fields.render(),
     setStageMovePending() {}, setLocalLead: value => { localLead = typeof value === 'function' ? value(localLead) : value; },

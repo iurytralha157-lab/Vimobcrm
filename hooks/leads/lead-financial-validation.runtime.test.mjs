@@ -141,7 +141,7 @@ test('valid property rejection restores owned fields, and a late closed ACK skip
 });
 
 test('actual money mask and edit diff preserve zero, blank, typed prices and ordinary contact edits', () => {
-  const path = 'components/features/leads/CreateLeadDialog.tsx';
+  const path = 'components/features/leads/lead-form/lead-form-data.ts';
   const formatSource = productionDeclaration(path, node => ts.isFunctionDeclaration(node) && node.name?.text === 'formatCurrencyInput');
   const parseSource = productionDeclaration(path, node => ts.isFunctionDeclaration(node) && node.name?.text === 'parseCurrencyInput');
   const helpers = evaluateProduction(formatSource + '\n' + parseSource, { formatPropertyCurrency: value => `R$ ${value.toFixed(2).replace('.', ',')}` }, '({formatCurrencyInput,parseCurrencyInput})');

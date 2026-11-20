@@ -12,7 +12,7 @@ function readRepoFile(relativePath: string) {
 
 test("deep link por conversa resolve o vínculo fora da lista paginada", () => {
   const screen = readRepoFile("components/features/whatsapp/ConversationsScreen.tsx");
-  const hooks = readRepoFile("hooks/use-whatsapp-conversations.ts");
+  const hooks = readRepoFile("hooks/whatsapp/use-whatsapp-conversation-queries.ts");
   const api = readRepoFile("lib/api/whatsapp.ts");
 
   assert.match(screen, /useWhatsAppConversationSnapshot\(/);

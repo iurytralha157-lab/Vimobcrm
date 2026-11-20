@@ -39,6 +39,7 @@ for (const relative of ['components/features/whatsapp/ConversationsScreen.tsx', 
     let reply = { message: { id: 'quote-a' } };
     const send = { isPending: false, mutateAsync: async params => { sends.push(params); beforeResolve(dependencies); if (result instanceof Error) throw result; return result; } };
     const dependencies = { selectedConversation: conversation, activeConversation: conversation, sendMediaMessage: send, sendMessage: send,
+      activePlatform: 'whatsapp', canMutateSelectedWhatsAppConversation: true,
       audioGenerationRef: { current: 1 }, audioContextRef: { current: 'context-a' }, audioContextKey: 'context-a', canMutateActiveConversation: true,
       whatsappMessageInputState: { disabled: false, sendSessionId: 'session-a' }, isReadOnlyMode: false, MAX_OUTBOUND_MESSAGE_MEDIA_BYTES: 5*1024*1024,
       fileInputRef: { current: input }, attendanceGate: { ensureJoined: async () => { preparation.joined++; return true; } }, compressOutboundImageFile: async f => { preparation.compressed++; return f; },

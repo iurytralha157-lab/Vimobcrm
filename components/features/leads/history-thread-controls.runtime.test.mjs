@@ -33,7 +33,7 @@ before(async () => {
   await mock('@/hooks/use-accessible-sessions', 'export const useAccessibleSessions=()=>({data:[],isLoading:false});');
   await mock('@/hooks/use-whatsapp-conversation-draft', `${h} export const useWhatsAppConversationDraft=()=>{h().writeHookMounts++;return h().draft};`);
   await mock('@/hooks/use-whatsapp-thread-scroll', 'export const useWhatsAppThreadScroll=()=>({onScroll:()=>{},showScrollToLatest:false,loadOlderPreservingPosition:fn=>fn()});');
-  await mock('@/hooks/use-whatsapp-media-gallery', 'export const useWhatsAppMediaGallery=()=>({});');
+  await mock('@/hooks/whatsapp/use-whatsapp-media-gallery', 'export const useWhatsAppMediaGallery=()=>({});');
   await mock('@/hooks/use-whatsapp-attachments', `${h} export const useWhatsAppAttachments=()=>{h().writeHookMounts++;return{}};`);
   await mock('@/hooks/integrations/whatsapp/use-own-whatsapp-session-selection', 'export const useOwnWhatsAppSessionSelection=()=>({ownConnectedSessions:[],selectedOwnSessionId:null});');
   await mock('@/hooks/use-whatsapp-attendance', `${h} export const useWhatsAppAttendanceGate=()=>{h().writeHookMounts++;return{dialogProps:{open:false}}};`);

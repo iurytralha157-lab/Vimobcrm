@@ -159,7 +159,7 @@ export function FloatingChatButton() {
         onClick={handleClick}
         size="icon"
         style={{ borderRadius: '9999px' }}
-        className={`relative h-14 w-14 select-none rounded-full bg-vimob-accent-strong text-white ring-1 ring-vimob-accent shadow-[0_8px_24px_rgba(0,0,0,0.22)] transition-[background-color,box-shadow,transform] duration-150 motion-reduce:transition-none motion-reduce:duration-0 motion-reduce:active:scale-100 hover:bg-vimob-accent-strong/90 hover:shadow-[0_10px_28px_rgba(0,0,0,0.26)] active:scale-[0.98] [&_svg]:size-7 ${panelPresent ? 'cursor-pointer' : isDragging ? 'cursor-grabbing opacity-80' : 'cursor-grab'}`}
+        className={`relative h-14 w-14 select-none rounded-full bg-primary text-white ring-1 ring-vimob-accent shadow-[0_8px_24px_rgba(0,0,0,0.22)] transition-[background-color,box-shadow,transform] duration-150 motion-reduce:transition-none motion-reduce:duration-0 motion-reduce:active:scale-100 hover:bg-primary/90 hover:shadow-[0_10px_28px_rgba(0,0,0,0.26)] active:scale-[0.98] [&_svg]:size-7 ${panelPresent ? 'cursor-pointer' : isDragging ? 'cursor-grabbing opacity-80' : 'cursor-grab'}`}
       >
         <MessageCircle aria-hidden="true" />
         {unreadCount > 0 && (

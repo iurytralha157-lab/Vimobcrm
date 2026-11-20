@@ -1,5 +1,6 @@
-import type { QueryClient } from '@tanstack/react-query';
-import { useLayoutEffect, useRef, type UIEvent } from 'react';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from 'react';
+import type { StageWithLeads } from '@/hooks/use-stages';
 
 export type PipelineBoardScrollMemory = {
   readonly left: number;
@@ -37,6 +38,65 @@ export function getPipelineBoardScrollMemory(client: QueryClient, boardKey: stri
     boards.set(key, memory);
   }
   return memory;
+}
+
+type PipelineBoardNavigationOptions = {
+  filteredStages: StageWithLeads[];
+  pipelineBoardQueryKeyId: string;
+  isMobile: boolean;
+  shouldLoadPipelineLeads: boolean;
+};
+
+export function usePipelineBoardNavigation({
+  filteredStages,
+  pipelineBoardQueryKeyId,
+  isMobile,
+  shouldLoadPipelineLeads,
+}: PipelineBoardNavigationOptions) {
+  const queryClient = useQueryClient();
+  const scrollMemory = useMemo(
+    () => shouldLoadPipelineLeads ? getPipelineBoardScrollMemory(queryClient, pipelineBoardQueryKeyId, isMobile) : null,
+    [isMobile, pipelineBoardQueryKeyId, queryClient, shouldLoadPipelineLeads],
+  );
+  const [mobileStageSelection, setMobileStageSelection] = useState<{
+    memory: typeof scrollMemory;
+    stageId: string;
+  } | null>(null);
+  const activeMobileStageId = mobileStageSelection?.memory === scrollMemory
+    ? mobileStageSelection?.stageId
+    : scrollMemory?.mobileStageId;
+
+  const visibleStages = useMemo<StageWithLeads[]>(() => {
+    if (!isMobile) return filteredStages;
+    const activeStage = filteredStages.find((stage) => stage.id === activeMobileStageId);
+    return activeStage ? [activeStage] : filteredStages.slice(0, 1);
+  }, [isMobile, filteredStages, activeMobileStageId]);
+
+  const activeMobileStageIndex = useMemo(() => {
+    if (!isMobile || filteredStages.length === 0) return -1;
+
+    const activeStageId = activeMobileStageId || filteredStages[0].id;
+    const index = filteredStages.findIndex((stage) => stage.id === activeStageId);
+    return index >= 0 ? index : 0;
+  }, [isMobile, filteredStages, activeMobileStageId]);
+
+  const hasPreviousMobileStage = isMobile && activeMobileStageIndex > 0;
+  const hasNextMobileStage = isMobile && activeMobileStageIndex >= 0 && activeMobileStageIndex < filteredStages.length - 1;
+
+  const handleMobileStageNavigation = useCallback((direction: 'previous' | 'next') => {
+    if (!isMobile || filteredStages.length === 0 || activeMobileStageIndex < 0) return;
+
+    const nextIndex = direction === 'previous'
+      ? Math.max(0, activeMobileStageIndex - 1)
+      : Math.min(filteredStages.length - 1, activeMobileStageIndex + 1);
+
+    if (nextIndex === activeMobileStageIndex) return;
+    const stageId = filteredStages[nextIndex].id;
+    scrollMemory?.rememberMobileStage(stageId);
+    setMobileStageSelection({ memory: scrollMemory, stageId });
+  }, [activeMobileStageIndex, filteredStages, isMobile, scrollMemory]);
+
+  return { scrollMemory, visibleStages, hasPreviousMobileStage, hasNextMobileStage, handleMobileStageNavigation };
 }
 
 type RestoredOffset = { applied: number; pending: boolean };
