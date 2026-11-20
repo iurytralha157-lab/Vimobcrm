@@ -7,7 +7,7 @@ import (
 )
 
 func TestLeadCreationAuthorizesWhatsAppConversationBeforeBinding(t *testing.T) {
-	raw, err := os.ReadFile("repository.go")
+	raw, err := os.ReadFile("whatsapp_conversation_binding.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestLeadCreationAuthorizesWhatsAppConversationBeforeBinding(t *testing.T) {
 }
 
 func TestWhatsAppBindingAccessIsFailClosed(t *testing.T) {
-	raw, err := os.ReadFile("repository.go")
+	raw, err := os.ReadFile("whatsapp_conversation_binding.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestWhatsAppConversationIdentityCandidates(t *testing.T) {
 }
 
 func TestExplicitConversationBindingUsesVersionedRPC(t *testing.T) {
-	raw, err := os.ReadFile("repository.go")
+	raw, err := os.ReadFile("whatsapp_conversation_binding.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestExplicitConversationBindingUsesVersionedRPC(t *testing.T) {
 	if start < 0 {
 		t.Fatal("could not isolate WhatsApp binding activation helper")
 	}
-	end := strings.Index(source[start:], "func isLeadPhoneUniqueViolation")
+	end := strings.Index(source[start:], "func confirmWhatsAppUnlinkedHistoryBinding")
 	if end < 0 {
 		t.Fatal("could not isolate WhatsApp binding activation helper")
 	}

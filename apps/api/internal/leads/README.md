@@ -56,13 +56,23 @@ transação de movimentação usada pela Pipeline e pelas automações.
 Os handlers, assinaturas, transações, locks, regras de autorização e efeitos
 continuam os mesmos.
 
+## Reservas e vínculos de conversas do WhatsApp
+
+Os snapshots e locks de reserva ficam em `property_reservation_lock.go`, e a
+reserva e liberação do imóvel ficam em `property_reservation_transition.go`.
+`property_reservation_notifications.go` reúne a notificação aos leads
+interessados e usa o evento de reserva existente em
+`property_reservation_outbox.go`.
+
+`whatsapp_conversation_binding.go` reúne a autorização e o vínculo de uma
+conversa na criação e na reentrada do lead. O lock de sessão para vínculo
+somente de mensagens futuras continua em `whatsapp_future_binding.go`.
+
 ## Continuação da divisão
 
 `repository.go` continua sendo um legado acima do limite de 800 linhas. A
 extração de leitura e conversão reduziu o arquivo sem alterar declarações, SQL
 ou assinaturas. As etapas 3B.2 e 3B.3 separam os métodos descritos acima.
-Os próximos recortes incluem reservas e vínculos WhatsApp, reutilizando
-módulos como `property_reservation_outbox.go` e `whatsapp_future_binding.go`.
 
 Cada recorte deve preservar seus limites de transação, locks, autorização,
 idempotência e efeitos. Testes que leem o fonte de `repository.go` precisam
@@ -95,3 +105,7 @@ schema, contrato HTTP, configuração ou sequência de deploy.
 Para reverter a etapa 3B.3, devolva os métodos extraídos ao `repository.go`,
 remova as cópias em `lead_update.go`, `lead_assignment.go` e
 `move_stage_transaction.go` e restaure as referências nos testes de contrato.
+
+Para reverter a extração de reservas e vínculos, devolva as declarações dos
+quatro arquivos novos ao `repository.go` e restaure os três testes que leem
+`whatsapp_conversation_binding.go` para lerem o arquivo anterior.
