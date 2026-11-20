@@ -10,6 +10,28 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
+func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Context, leadID string, input moveStageInput) (moveStageResult, error) {
+	leadID, ok := normalizeUUID(leadID)
+	if !ok {
+		return moveStageResult{}, ErrLeadNotFound
+	}
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return moveStageResult{}, err
+	}
+	defer tx.Rollback(ctx)
+	transition, err := repo.moveStageTx(ctx, tx, tenantContext, leadID, input, nil)
+	if err != nil {
+		return moveStageResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return moveStageResult{}, err
+	}
+	repo.dispatchDealStatusSideEffects(tenantContext, transition.Before, transition.StatusInput)
+	repo.hydrateMutationLeadAvatar(tenantContext.OrganizationID, &transition.Result.Lead)
+	return transition.Result, nil
+}
+
 type moveStageTransition struct {
 	Result      moveStageResult
 	Before      leadSnapshot

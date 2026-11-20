@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -120,19 +119,7 @@ func TestLeadUpdateDestinationBusyHTTPDoesNotExposeLockDetails(t *testing.T) {
 }
 
 func TestLeadUpdateDestinationGuardsBracketMutationWithoutChangingCAS(t *testing.T) {
-	source, err := os.ReadFile("repository.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	start := strings.Index(string(source), "func (repo Repository) Update(")
-	if start < 0 {
-		t.Fatal("Update body missing")
-	}
-	end := strings.Index(string(source)[start:], "func hasLeadColumnAssignment(")
-	if end < 0 {
-		t.Fatal("Update body missing")
-	}
-	body := string(source)[start : start+end]
+	body, _ := readRepositoryMethod(t, "lead_update.go", "Update")
 	previous := -1
 	for _, marker := range []string{"validateLeadUpdateRevision(current, input)", "validateLeadUpdateDestination(current, input)", "repo.applyDestinationDealStatus(", "prepareManualQueueTransfer(", "repo.applyDestinationAssignments(", "repo.enqueueDealWonNotifications(", "validatePersistedLeadUpdateDestination(ctx, tx,", "repo.getLeadForMutation(", "tx.Commit(ctx)"} {
 		index := strings.Index(body, marker)

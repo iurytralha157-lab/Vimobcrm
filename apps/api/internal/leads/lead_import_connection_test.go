@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -54,20 +55,8 @@ func TestKeyedImportPreflightUsesClaimedTransactionWithoutPool(t *testing.T) {
 }
 
 func TestEveryCreatePreflightQueryUsesTheSelectedReader(t *testing.T) {
-	parsed, err := parser.ParseFile(token.NewFileSet(), "repository.go", nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, createBody := readRepositoryMethod(t, "lead_creation.go", "Create")
 	wanted := map[string]bool{"resolveDestination": false, "validateAssignedUser": false, "validateLeadTeam": false, "validateRequestedRoundRobin": false, "resolveLeadIntakeDestination": false, "legacyLeadPhoneUniquenessActive": false, "findExistingLeadByPhoneLegacy": false, "findExistingLeadByPhone": false}
-	var createBody *ast.BlockStmt
-	for _, decl := range parsed.Decls {
-		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "Create" && fn.Recv != nil {
-			createBody = fn.Body
-		}
-	}
-	if createBody == nil {
-		t.Fatal("Create body missing")
-	}
 	ast.Inspect(createBody, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
 		if !ok {
@@ -102,4 +91,27 @@ func TestEveryCreatePreflightQueryUsesTheSelectedReader(t *testing.T) {
 			t.Errorf("preflight regression must cover %s", name)
 		}
 	}
+}
+
+func readRepositoryMethod(t *testing.T, path string, name string) (string, *ast.BlockStmt) {
+	t.Helper()
+	source, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := token.NewFileSet()
+	parsed, err := parser.ParseFile(files, path, source, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	for _, declaration := range parsed.Decls {
+		method, ok := declaration.(*ast.FuncDecl)
+		if ok && method.Name.Name == name && method.Recv != nil && method.Body != nil {
+			start := files.Position(method.Pos()).Offset
+			end := files.Position(method.End()).Offset
+			return string(source[start:end]), method.Body
+		}
+	}
+	t.Fatalf("method %s not found in %s", name, path)
+	return "", nil
 }

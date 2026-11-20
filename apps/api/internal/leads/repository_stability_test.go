@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -290,19 +289,15 @@ func TestAssignmentValidatorsUseProvidedQueryer(t *testing.T) {
 }
 
 func TestTransactionalAssignmentValidationUsesCurrentTransaction(t *testing.T) {
-	raw, err := os.ReadFile("repository.go")
-	if err != nil {
-		t.Fatalf("read repository.go: %v", err)
-	}
-	source := string(raw)
-	required := []string{
-		"repo.validateAssignedUser(ctx, tx, tenantContext.OrganizationID, input.AssignedUserID.Value)",
-		"repo.validateLeadTeam(ctx, tx, tenantContext, input.TeamID.Value)",
-		"repo.validateAssignedUser(ctx, tx, tenantContext.OrganizationID, input.AssignedUserID)",
-	}
-	for _, call := range required {
-		if !strings.Contains(source, call) {
-			t.Fatalf("transactional validation call %q is missing", call)
+	update, _ := readRepositoryMethod(t, "lead_update.go", "Update")
+	assign, _ := readRepositoryMethod(t, "lead_assignment.go", "Assign")
+	for _, check := range []struct{ source, call string }{
+		{update, "repo.validateAssignedUser(ctx, tx, tenantContext.OrganizationID, input.AssignedUserID.Value)"},
+		{update, "repo.validateLeadTeam(ctx, tx, tenantContext, input.TeamID.Value)"},
+		{assign, "repo.validateAssignedUser(ctx, tx, tenantContext.OrganizationID, input.AssignedUserID)"},
+	} {
+		if !strings.Contains(check.source, check.call) {
+			t.Fatalf("transactional validation call %q is missing", check.call)
 		}
 	}
 }

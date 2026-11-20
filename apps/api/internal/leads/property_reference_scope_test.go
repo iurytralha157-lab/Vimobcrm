@@ -3,7 +3,6 @@ package leads
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
@@ -210,17 +209,7 @@ func TestReopeningLeadLeavesUnchangedHiddenPropertyAlone(t *testing.T) {
 }
 
 func TestUpdateAuthorizesPropertyBeforeReadingCommercialValues(t *testing.T) {
-	raw, err := os.ReadFile("repository.go")
-	if err != nil {
-		t.Fatalf("read repository source: %v", err)
-	}
-	source := string(raw)
-	start := strings.Index(source, "func (repo Repository) Update(")
-	end := strings.Index(source, "func (repo Repository) dispatchDealStatusSideEffects")
-	if start < 0 || end <= start {
-		t.Fatal("could not isolate lead Update")
-	}
-	update := source[start:end]
+	update, _ := readRepositoryMethod(t, "lead_update.go", "Update")
 	validation := strings.Index(update, "repo.validateUpdatePropertyReferences(ctx, tx, tenantContext, current, input)")
 	commercialRead := strings.Index(update, "repo.applySelectedPropertyCommercialValues(ctx, tx, tenantContext, current, &input)")
 	reservation := strings.Index(update, "repo.lockWonLeadPropertyForUpdate")

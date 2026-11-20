@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
@@ -336,36 +335,21 @@ func TestManualAutomaticIntakeScopesQueueIdentityAndReentryBehavior(t *testing.T
 }
 
 func TestManualAutomaticQueueIsConfirmedInsideIdentityTransaction(t *testing.T) {
-	raw, err := os.ReadFile("repository.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(raw)
-	createStart := strings.Index(source, "func (repo Repository) Create(")
-	createEnd := strings.Index(source[createStart:], "func (repo Repository) Update(")
-	if createStart < 0 || createEnd < 0 {
-		t.Fatal("Create source boundary was not found")
-	}
-	createFlow := source[createStart : createStart+createEnd]
+	createFlow, _ := readRepositoryMethod(t, "lead_creation.go", "Create")
 	if resolve, lookup := strings.Index(createFlow, "repo.resolveLeadIntakeDestination"), strings.Index(createFlow, "repo.findExistingLeadByPhone"); resolve < 0 || lookup < 0 || resolve >= lookup {
 		t.Fatal("manual automatic queue candidate must be resolved before outer phone lookup")
 	}
 
-	for _, functionName := range []string{"createNewLead", "registerReentry"} {
-		start := strings.Index(source, "func (repo Repository) "+functionName+"(")
-		if start < 0 {
-			t.Fatalf("%s source was not found", functionName)
-		}
-		end := strings.Index(source[start+1:], "\nfunc (repo Repository)")
-		if end < 0 {
-			t.Fatalf("%s source boundary was not found", functionName)
-		}
-		flow := source[start : start+1+end]
+	for _, method := range []struct{ path, name string }{
+		{path: "lead_creation.go", name: "createNewLead"},
+		{path: "lead_reentry.go", name: "registerReentry"},
+	} {
+		flow, _ := readRepositoryMethod(t, method.path, method.name)
 		resolve := strings.Index(flow, "repo.resolveLeadIntakeDestination")
 		driftCheck := strings.Index(flow, "sameLeadIntakeDestination")
 		phoneLock := strings.Index(flow, "lockLeadIntakeIdentity")
 		if resolve < 0 || driftCheck < 0 || phoneLock < 0 || resolve >= driftCheck || driftCheck >= phoneLock {
-			t.Fatalf("%s must freeze and confirm queue routing before phone identity", functionName)
+			t.Fatalf("%s must freeze and confirm queue routing before phone identity", method.name)
 		}
 	}
 }

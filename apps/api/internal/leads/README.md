@@ -13,6 +13,10 @@ e `NewHandler`; os handlers recebem o contexto de tenant resolvido pelo servidor
 | `repository.go` | Construção de `Repository`, contratos internos compartilhados e os fluxos de mutação ainda não separados. |
 | `repository_read.go` | `List`, `Get`, `GetSensitiveProfile` e projeção SQL canônica dos campos do lead. |
 | `repository_scan.go` | Leitura das colunas para `Lead`, metadados de perfil e conversores de valores nulos, escalares e JSON. |
+| `lead_creation.go` | `Repository.Create` e `createNewLead`: entrada do fluxo de criação e persistência de um lead novo. |
+| `lead_reentry.go` | `registerReentry`: persistência da reentrada de um lead existente. |
+| `lead_update.go` | `Repository.Update`: edição de leads, com os guards e os efeitos da transação de atualização. |
+| `lead_assignment.go` | `Repository.Assign` e `transferLeadAssignee`: troca manual de responsável e persistência compartilhada da atribuição. |
 | `types.go`, `*_types.go` | Contratos do domínio já consumidos pelos handlers e pela composição. |
 | `lead_history_*`, `pipeline_board*`, `queue_pool_*` | Projeções e operações especializadas já separadas por fluxo. |
 | `move_stage_*`, `redistribution_*`, `notification_*` | Transições, distribuição e entrega durável dos efeitos existentes. |
@@ -34,15 +38,31 @@ Ao adicionar ou remover um campo, valide a projeção e o scanner juntos. Os
 conversores em `repository_scan.go` também são usados por mutações e outros
 arquivos deste pacote; eles não fazem consultas nem escolhem autorização.
 
+## Criação e reentrada — etapa 3B.2
+
+`Repository.Create` e `createNewLead` ficam em `lead_creation.go`;
+`registerReentry` fica em `lead_reentry.go`. Os métodos continuam no mesmo
+pacote e usam o mesmo `Repository`, contratos e helpers existentes. A divisão
+preserva SQL, limites de transação, locks, autorização, idempotência e ordem
+dos efeitos; não transfere regras para outro domínio nem altera o envio de
+notificações.
+
+## Edição, movimentação e atribuição — etapa 3B.3
+
+`Repository.Update` e o controle da ordem do card ficam em `lead_update.go`.
+`Repository.MoveStage` fica em `move_stage_transaction.go`, junto da
+transação de movimentação usada pela Pipeline e pelas automações.
+`Repository.Assign` e `transferLeadAssignee` ficam em `lead_assignment.go`.
+Os handlers, assinaturas, transações, locks, regras de autorização e efeitos
+continuam os mesmos.
+
 ## Continuação da divisão
 
 `repository.go` continua sendo um legado acima do limite de 800 linhas. A
 extração de leitura e conversão reduziu o arquivo sem alterar declarações, SQL
-ou assinaturas. Os próximos recortes devem separar criação/reentrada,
-atualização, atribuição, reservas e vínculos WhatsApp por responsabilidade,
-reutilizando os módulos existentes, como `lead_update_destination.go`,
-`move_stage_transaction.go`, `property_reservation_outbox.go` e
-`whatsapp_future_binding.go`.
+ou assinaturas. As etapas 3B.2 e 3B.3 separam os métodos descritos acima.
+Os próximos recortes incluem reservas e vínculos WhatsApp, reutilizando
+módulos como `property_reservation_outbox.go` e `whatsapp_future_binding.go`.
 
 Cada recorte deve preservar seus limites de transação, locks, autorização,
 idempotência e efeitos. Testes que leem o fonte de `repository.go` precisam
@@ -62,8 +82,16 @@ As integrações com PostgreSQL exigem os respectivos harnesses e opt-ins de
 testes locais. Sem esses ambientes, informe os testes pulados; sucesso dos
 testes unitários não representa validação do banco ou de produção.
 
-A reversão da extração deve tratar `repository.go`, `repository_read.go` e
-`repository_scan.go` como um único conjunto: devolver as declarações ao arquivo
-anterior e remover suas cópias dos dois arquivos novos. Uma reversão parcial
-produz funções ausentes ou duplicadas. Esta separação não requer mudança de
+A reversão da extração de leitura deve tratar `repository.go`,
+`repository_read.go` e `repository_scan.go` como um único conjunto: devolver as
+declarações ao arquivo anterior e remover suas cópias dos dois arquivos novos.
+Uma reversão parcial produz funções ausentes ou duplicadas.
+
+Na etapa 3B.2, o conjunto de reversão é `repository.go`, `lead_creation.go` e
+`lead_reentry.go`: devolver os três métodos ao arquivo anterior e remover suas
+cópias dos arquivos extraídos. Esta separação não requer mudança de
 schema, contrato HTTP, configuração ou sequência de deploy.
+
+Para reverter a etapa 3B.3, devolva os métodos extraídos ao `repository.go`,
+remova as cópias em `lead_update.go`, `lead_assignment.go` e
+`move_stage_transaction.go` e restaure as referências nos testes de contrato.

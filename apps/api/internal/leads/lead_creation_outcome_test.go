@@ -259,13 +259,7 @@ func TestNewCreationStageStatusGuardIsScopedBackendOnlyAndKeepsLegacyAndAssignee
 			t.Fatalf("readiness does not confirm canonical financial trigger: %s", required)
 		}
 	}
-	repository, err := os.ReadFile("repository.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	start := strings.Index(string(repository), "func (repo Repository) createNewLead(")
-	end := strings.Index(string(repository)[start:], "func (repo Repository) registerReentry(")
-	body := string(repository)[start : start+end]
+	body, _ := readRepositoryMethod(t, "lead_creation.go", "createNewLead")
 	if strings.Index(body, "prepareLeadCreationOutcome(") > strings.Index(body, "insert into public.leads") || strings.Index(body, "finishLeadCreationOutcome(") > strings.Index(body, "commitLeadImportCreation(") {
 		t.Fatal("readiness/finalization escaped the creation transaction")
 	}
@@ -360,13 +354,8 @@ func TestWonImportReentryWithoutOperateKeepsItsSeparatePermissionAndCommercialSt
 	if _, err := prepareLeadCreationOutcome(context.Background(), tx, actor, input); !errors.Is(err, tenant.ErrOrganizationAccessDenied) || tx.reads != 0 {
 		t.Fatal("new import win reused the reentry permission bypass")
 	}
-	source, err := os.ReadFile("repository.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	start := strings.Index(string(source), "func (repo Repository) registerReentry(")
-	end := strings.Index(string(source)[start:], "func (repo Repository) resolveDestination(")
-	if strings.Contains(string(source)[start:start+end], "prepareLeadCreationOutcome(") {
+	body, _ := readRepositoryMethod(t, "lead_reentry.go", "registerReentry")
+	if strings.Contains(body, "prepareLeadCreationOutcome(") {
 		t.Fatal("new-creation gate leaked into reentry")
 	}
 }

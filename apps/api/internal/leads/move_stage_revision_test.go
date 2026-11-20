@@ -263,21 +263,7 @@ func TestMoveStageRevisionGatePrecedesEverySideEffect(t *testing.T) {
 	if strings.Contains(move, "tx.Commit(") {
 		t.Fatal("transaction kernel must not commit before caller's ledger")
 	}
-	wrapper, err := os.ReadFile("repository.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	wrapperSource := string(wrapper)
-	wrapperStart := strings.Index(wrapperSource, "func (repo Repository) MoveStage(")
-	if wrapperStart < 0 {
-		t.Fatal("manual wrapper missing")
-	}
-	wrapperSource = wrapperSource[wrapperStart:]
-	wrapperEnd := strings.Index(wrapperSource, "func (repo Repository) Assign(")
-	if wrapperEnd < 0 {
-		t.Fatal("manual wrapper boundary missing")
-	}
-	wrapperSource = wrapperSource[:wrapperEnd]
+	wrapperSource, _ := readRepositoryMethod(t, "move_stage_transaction.go", "MoveStage")
 	kernel, commit := strings.Index(wrapperSource, "repo.moveStageTx("), strings.Index(wrapperSource, "tx.Commit(ctx)")
 	if kernel < 0 || commit <= kernel {
 		t.Fatal("manual commit must follow the guarded transaction kernel")

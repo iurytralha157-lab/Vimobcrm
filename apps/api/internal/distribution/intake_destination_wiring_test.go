@@ -65,20 +65,23 @@ func TestEveryNewProviderIntakeValidatesEffectiveDestinationBeforeCommit(t *test
 }
 
 func TestCreateAndReentryGuardDestinationBeforeIdentityAndAfterDistribution(t *testing.T) {
-	for _, name := range []string{"createNewLead", "registerReentry"} {
-		function := intakeWiringFunction(t, "../leads/repository.go", name)
+	for _, method := range []struct{ file, name string }{
+		{file: "lead_creation.go", name: "createNewLead"},
+		{file: "lead_reentry.go", name: "registerReentry"},
+	} {
+		function := intakeWiringFunction(t, filepath.Join("..", "leads", method.file), method.name)
 		guards, resolve, identity := intakeWiringCalls(function, "LockIntakePipelineDestination"), intakeWiringCalls(function, "resolveLeadIntakeDestination"), intakeWiringCalls(function, "lockLeadIntakeIdentity")
 		if len(guards) != 1 || len(resolve) != 1 || len(identity) != 1 || guards[0] >= resolve[0] || guards[0] >= identity[0] {
-			t.Fatalf("%s trusts preflight outside its transaction", name)
+			t.Fatalf("%s trusts preflight outside its transaction", method.name)
 		}
 		commits := intakeWiringCalls(function, "commitLeadImportCreation")
 		finalName := "ValidatePersistedIntakeDestination"
-		if name == "createNewLead" {
+		if method.name == "createNewLead" {
 			finalName = "finishLeadCreationOutcome"
 		}
 		final := intakeWiringCalls(function, finalName)
 		if len(final) != 1 || len(commits) != 1 || final[0] >= commits[0] {
-			t.Fatalf("%s can commit an invalid effective destination", name)
+			t.Fatalf("%s can commit an invalid effective destination", method.name)
 		}
 	}
 	finish := intakeWiringFunction(t, "../leads/lead_creation_outcome.go", "finishLeadCreationOutcome")

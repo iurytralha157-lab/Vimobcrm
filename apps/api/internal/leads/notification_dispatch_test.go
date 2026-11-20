@@ -88,12 +88,7 @@ func TestDealWonNotificationEnqueueSharesLeadUpdateTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := string(raw)
-	updateStart := strings.Index(source, "func (repo Repository) Update(")
-	updateEnd := strings.Index(source, "func (repo Repository) dispatchDealStatusSideEffects(")
-	if updateStart < 0 || updateEnd <= updateStart {
-		t.Fatal("could not isolate lead update transaction")
-	}
-	update := source[updateStart:updateEnd]
+	update, _ := readRepositoryMethod(t, "lead_update.go", "Update")
 	enqueue := strings.Index(update, "repo.enqueueDealWonNotifications(ctx, tx,")
 	commit := strings.Index(update, "tx.Commit(ctx)")
 	if enqueue < 0 || commit < 0 || enqueue > commit {

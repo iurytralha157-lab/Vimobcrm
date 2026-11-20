@@ -31,7 +31,7 @@ func TestCanonicalDistributionChannelContracts(t *testing.T) {
 	})
 
 	t.Run("manual lead", func(t *testing.T) {
-		source := goFunctionSource(t, filepath.Join("..", "leads", "repository.go"), "createNewLead")
+		source := goFunctionSource(t, filepath.Join("..", "leads", "lead_creation.go"), "createNewLead")
 		requireContains(t, source,
 			`leadMetadata["distribution_deferred"] = true`,
 			"distributionOutcome := CreateDistributionOutcomeSkipped",
@@ -55,7 +55,7 @@ func TestCanonicalDistributionChannelContracts(t *testing.T) {
 		)
 		requireAbsent(t, request, "handle_lead_intake", "round_robin_logs", "request.jwt.claim.role")
 
-		reentry := goFunctionSource(t, filepath.Join("..", "leads", "repository.go"), "registerReentry")
+		reentry := goFunctionSource(t, filepath.Join("..", "leads", "lead_reentry.go"), "registerReentry")
 		requireContains(t, reentry,
 			"distributionOutcome := CreateDistributionOutcomeReentryPreserved",
 			`reentryBehavior := "keep_assignee"`,

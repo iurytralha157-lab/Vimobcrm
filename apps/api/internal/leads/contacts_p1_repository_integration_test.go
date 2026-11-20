@@ -85,7 +85,10 @@ func TestContactsP1RepositoryLocalPostgres(t *testing.T) {
 			if after["name"] != input.Name || after["reentry_count"] != float64(3) {
 				t.Fatal("repository reentry did not apply explicit name/bookkeeping")
 			}
-			for _, field := range []string{"name", "last_entry_at", "reentry_count", "updated_at"} {
+			if after["board_order_at"] == nil || after["board_order_at"] == before["board_order_at"] {
+				t.Fatal("repository reentry did not refresh the pipeline order")
+			}
+			for _, field := range []string{"name", "last_entry_at", "reentry_count", "board_order_at", "updated_at"} {
 				delete(before, field)
 				delete(after, field)
 			}
@@ -188,7 +191,7 @@ func contactsP1CreateBroker(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 	if _, err := pool.Exec(ctx, `insert into public.users (id, organization_id, name, email, role, is_active) values ($1::uuid, $2::uuid, $3, $4, 'broker', true) on conflict (id) do update set organization_id=excluded.organization_id, name=excluded.name, email=excluded.email, is_active=true`, userID, organizationID, suffix, suffix+"@example.invalid"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `insert into public.organization_members (organization_id, user_id, role, is_active) values ($1::uuid, $2::uuid, 'broker', true) on conflict (user_id, organization_id) do update set is_active=true`, organizationID, userID); err != nil {
+	if _, err := pool.Exec(ctx, `insert into public.organization_members (organization_id, user_id, role, is_active) values ($1::uuid, $2::uuid, 'user', true) on conflict (user_id, organization_id) do update set is_active=true`, organizationID, userID); err != nil {
 		t.Fatal(err)
 	}
 	return userID

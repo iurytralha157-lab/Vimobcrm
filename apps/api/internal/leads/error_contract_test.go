@@ -68,20 +68,7 @@ func TestLeadPhoneUniqueViolationUsesStableConflictContract(t *testing.T) {
 }
 
 func TestLeadIntakeRechecksLegacyAndScopedIdentityInsideTheTransaction(t *testing.T) {
-	raw, err := os.ReadFile("repository.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(raw)
-	start := strings.Index(source, "func (repo Repository) Create(")
-	if start < 0 {
-		t.Fatal("Create source was not found")
-	}
-	end := strings.Index(source[start:], "func (repo Repository) Update(")
-	if end < 0 {
-		t.Fatal("Create boundary was not found")
-	}
-	createSource := source[start : start+end]
+	createSource, _ := readRepositoryMethod(t, "lead_creation.go", "Create")
 	for _, required := range []string{
 		"leadIntakeMaxAttempts",
 		"errLeadIntakeRetry",
@@ -94,6 +81,11 @@ func TestLeadIntakeRechecksLegacyAndScopedIdentityInsideTheTransaction(t *testin
 			t.Fatalf("lead identity rollout contract is missing %q", required)
 		}
 	}
+	raw, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
 	for _, required := range []string{
 		"$1 || ':legacy-global:' || normalize_phone($2)",
 		"$1 || ':' || $3 || ':' || normalize_phone($2)",
@@ -106,14 +98,8 @@ func TestLeadIntakeRechecksLegacyAndScopedIdentityInsideTheTransaction(t *testin
 		}
 	}
 
-	createNewStart := strings.Index(source, "func (repo Repository) createNewLead")
-	registerStart := strings.Index(source, "func (repo Repository) registerReentry")
-	resolveStart := strings.Index(source, "func (repo Repository) resolveDestination")
-	if createNewStart < 0 || registerStart < 0 || resolveStart < 0 {
-		t.Fatal("could not isolate lead intake transaction functions")
-	}
-	createNew := source[createNewStart:registerStart]
-	reentry := source[registerStart:resolveStart]
+	createNew, _ := readRepositoryMethod(t, "lead_creation.go", "createNewLead")
+	reentry, _ := readRepositoryMethod(t, "lead_reentry.go", "registerReentry")
 	for _, required := range []string{
 		"lockLeadIntakeIdentity",
 		"legacyLeadPhoneUniquenessActive(ctx, tx)",
@@ -151,20 +137,7 @@ func TestLeadIntakeScopeKeyUsesOnlyValidatedExplicitQueue(t *testing.T) {
 }
 
 func TestManualReentryPendingRedistributionKeepsThePersistedAssignee(t *testing.T) {
-	raw, err := os.ReadFile("repository.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(raw)
-	start := strings.Index(source, "func (repo Repository) registerReentry")
-	if start < 0 {
-		t.Fatal("registerReentry source was not found")
-	}
-	end := strings.Index(source[start:], "func (repo Repository) resolveDestination")
-	if end < 0 {
-		t.Fatal("registerReentry boundary was not found")
-	}
-	reentry := source[start : start+end]
+	reentry, _ := readRepositoryMethod(t, "lead_reentry.go", "registerReentry")
 	for _, required := range []string{
 		`distributionResult.Reason == "no_matching_queue"`,
 		`distributionResult.Reason == "no_available_members"`,

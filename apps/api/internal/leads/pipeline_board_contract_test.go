@@ -306,19 +306,17 @@ func TestPipelineBoardSortUsesIndexBackedOperationalClock(t *testing.T) {
 }
 
 func TestOperationalLeadMutationsAdvanceBoardClock(t *testing.T) {
-	source, err := os.ReadFile("repository.go")
-	if err != nil {
-		t.Fatalf("read repository.go: %v", err)
-	}
-	functionSource := strings.ReplaceAll(string(source), "\r\n", "\n")
-	for _, contract := range []string{
-		`if !hasLeadColumnAssignment(assignments, "board_order_at")`,
-		`addRawAssignment("board_order_at = now()")`,
-		"set board_order_at = now(),",
-		"assigned_at = case when $3::uuid is null then null else now() end,\n\t\t    board_order_at = now(),",
+	update, _ := readRepositoryMethod(t, "lead_update.go", "Update")
+	assignment, _ := readRepositoryMethod(t, "lead_assignment.go", "transferLeadAssignee")
+	addTag, _ := readRepositoryMethod(t, "repository.go", "AddTag")
+	for _, check := range []struct{ source, contract string }{
+		{update, "if !hasLeadColumnAssignment(assignments, \"board_order_at\")"},
+		{update, "addRawAssignment(\"board_order_at = now()\")"},
+		{addTag, "set board_order_at = now(),"},
+		{assignment, "assigned_at = case when $3::uuid is null then null else now() end,\n\t\t    board_order_at = now(),"},
 	} {
-		if !strings.Contains(functionSource, contract) {
-			t.Fatalf("lead operational mutations must contain %q", contract)
+		if !strings.Contains(strings.ReplaceAll(check.source, "\r\n", "\n"), check.contract) {
+			t.Fatalf("lead operational mutations must contain %q", check.contract)
 		}
 	}
 
@@ -331,34 +329,14 @@ func TestOperationalLeadMutationsAdvanceBoardClock(t *testing.T) {
 }
 
 func TestLeadReentryAlwaysReturnsCardToTop(t *testing.T) {
-	source, err := os.ReadFile("repository.go")
-	if err != nil {
-		t.Fatalf("read repository.go: %v", err)
-	}
-	functionSource := string(source)
-	start := strings.Index(functionSource, "func (repo Repository) registerReentry(")
-	end := strings.Index(functionSource[start:], "func (repo Repository) resolveDestination")
-	if start < 0 || end < 0 {
-		t.Fatal("could not isolate registerReentry")
-	}
-	reentrySource := functionSource[start : start+end]
+	reentrySource, _ := readRepositoryMethod(t, "lead_reentry.go", "registerReentry")
 	if !strings.Contains(reentrySource, "board_order_at = now()") {
 		t.Fatal("lead reentry must advance board_order_at even when the stage does not change")
 	}
 }
 
 func TestGenericLeadUpdateResolvesStageStatusInsideTransaction(t *testing.T) {
-	source, err := os.ReadFile("repository.go")
-	if err != nil {
-		t.Fatalf("read repository.go: %v", err)
-	}
-	functionSource := string(source)
-	start := strings.Index(functionSource, "func (repo Repository) Update(")
-	end := strings.Index(functionSource[start:], "func (repo Repository) dispatchDealStatusSideEffects")
-	if start < 0 || end < 0 {
-		t.Fatal("could not isolate lead Update")
-	}
-	functionSource = functionSource[start : start+end]
+	functionSource, _ := readRepositoryMethod(t, "lead_update.go", "Update")
 	ordered := []string{
 		"repo.getLeadSnapshotForUpdate",
 		"repo.applyDestinationDealStatus(ctx, tx",
