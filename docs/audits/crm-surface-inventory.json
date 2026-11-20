@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "26b76fe5a29950c46214009b32337175d65a5890416c60a7e02696e412a84a59",
+  "sourceDigestSha256": "6b48aee39af29abd81e084fdb1b58306fb2406a258c8c66280a1fa3c13b0bcae",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1477,10 +1477,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:a566f75cee52089d37e9",
+          "id": "overlay:04ad156134228df28eb8",
           "column": 5,
           "file": "components/features/dashboard/DashboardLeadEntriesDialog.tsx",
-          "line": 88,
+          "line": 89,
           "owner": "DashboardLeadEntriesDialog",
           "routes": [
             "/dashboard"
@@ -1510,10 +1510,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:4fa25f2d274601767b4a",
+          "id": "overlay:70ca1a88e094859e335e",
           "column": 5,
           "file": "components/features/dashboard/DashboardVisitsDialog.tsx",
-          "line": 251,
+          "line": 252,
           "owner": "DashboardVisitsDialog",
           "routes": [
             "/dashboard"
@@ -1521,10 +1521,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:9fc290931a73b7c770e5",
+          "id": "overlay:06f105b0ee024f00586a",
           "column": 5,
           "file": "components/features/dashboard/FirstContactDialog.tsx",
-          "line": 188,
+          "line": 189,
           "owner": "FirstContactDialog",
           "routes": [
             "/dashboard"
@@ -1532,10 +1532,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:d74e7cf3dbd073d44705",
+          "id": "overlay:86f54bf5d884f8b51617",
           "column": 7,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 430,
+          "line": 434,
           "owner": "TeamPicker",
           "routes": [
             "/dashboard"
@@ -1554,10 +1554,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:1e8539747c9e17a4a750",
+          "id": "overlay:7246ba7ff8a17ef346a5",
           "column": 5,
           "file": "components/features/dashboard/TopCreativesCard.tsx",
-          "line": 236,
+          "line": 237,
           "owner": "CreativeImageDialog",
           "routes": [
             "/dashboard"
@@ -14023,10 +14023,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:6a0661afb157ca49b04b",
+          "id": "cta:c72cb712ac0fd08bf501",
           "column": 9,
           "file": "components/features/dashboard/DashboardLeadEntriesDialog.tsx",
-          "line": 66,
+          "line": 67,
           "owner": "EntryRow",
           "routes": [
             "/dashboard"
@@ -14036,10 +14036,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:cddcb2c4be982a7b0946",
+          "id": "cta:93821ba999d66f2937f4",
           "column": 17,
           "file": "components/features/dashboard/DashboardLeadEntriesDialog.tsx",
-          "line": 108,
+          "line": 109,
           "owner": "DashboardLeadEntriesDialog",
           "routes": [
             "/dashboard"
@@ -14048,10 +14048,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f28d6341825f6b0e8955",
+          "id": "cta:e5158d60c13cfb0bf591",
           "column": 17,
           "file": "components/features/dashboard/DashboardLeadEntriesDialog.tsx",
-          "line": 121,
+          "line": 122,
           "owner": "DashboardLeadEntriesDialog",
           "routes": [
             "/dashboard"
@@ -14060,10 +14060,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:4138a5f94daddd5a4890",
+          "id": "cta:2a01b7939599decd309a",
           "column": 240,
           "file": "components/features/dashboard/DashboardLeadEntriesDialog.tsx",
-          "line": 127,
+          "line": 128,
           "owner": "DashboardLeadEntriesDialog",
           "routes": [
             "/dashboard"
@@ -14072,10 +14072,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fd7dfee12fc0b260b5d8",
+          "id": "cta:246b769e229e2d30ccac",
           "column": 21,
           "file": "components/features/dashboard/DashboardLeadEntriesDialog.tsx",
-          "line": 146,
+          "line": 147,
           "owner": "DashboardLeadEntriesDialog",
           "routes": [
             "/dashboard"
@@ -14084,10 +14084,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:662c70883d45d5526767",
+          "id": "cta:c60d299156f3d2287f10",
           "column": 19,
           "file": "components/features/dashboard/DashboardLeadEntriesDialog.tsx",
-          "line": 149,
+          "line": 150,
           "owner": "DashboardLeadEntriesDialog",
           "routes": [
             "/dashboard"
@@ -14168,10 +14168,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:fd23a590f26ee7cac147",
+          "id": "cta:d3ee43a7c318ad20f06c",
           "column": 13,
           "file": "components/features/dashboard/DashboardVisitsDialog.tsx",
-          "line": 130,
+          "line": 131,
           "owner": "VisitRow",
           "routes": [
             "/dashboard"
@@ -14181,10 +14181,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:a62b4375686b0a632828",
+          "id": "cta:a91a3137fb9d7f7247f8",
           "column": 13,
           "file": "components/features/dashboard/DashboardVisitsDialog.tsx",
-          "line": 140,
+          "line": 141,
           "owner": "VisitRow",
           "routes": [
             "/dashboard"
@@ -14194,10 +14194,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:83f2cdb25f05409fe021",
+          "id": "cta:f6398439f08e25dd1b7e",
           "column": 17,
           "file": "components/features/dashboard/DashboardVisitsDialog.tsx",
-          "line": 267,
+          "line": 268,
           "owner": "DashboardVisitsDialog",
           "routes": [
             "/dashboard"
@@ -14206,10 +14206,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:92f560c8414f9560c2dd",
+          "id": "cta:37b9a8572f3b61bbc76e",
           "column": 11,
           "file": "components/features/dashboard/FirstContactDialog.tsx",
-          "line": 124,
+          "line": 125,
           "owner": "BrokerLeadDetails",
           "routes": [
             "/dashboard"
@@ -14218,10 +14218,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c7e35fe450e2876c0cf5",
+          "id": "cta:bffbcfd4ac49530769de",
           "column": 13,
           "file": "components/features/dashboard/FirstContactDialog.tsx",
-          "line": 150,
+          "line": 151,
           "owner": "BrokerLeadDetails",
           "routes": [
             "/dashboard"
@@ -14230,10 +14230,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d98aa4a96d2c12c82dd0",
+          "id": "cta:f68da6e227c8b118ace3",
           "column": 17,
           "file": "components/features/dashboard/FirstContactDialog.tsx",
-          "line": 214,
+          "line": 215,
           "owner": "FirstContactDialog",
           "routes": [
             "/dashboard"
@@ -14242,10 +14242,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:512bc5de67fd3687a67f",
+          "id": "cta:4d5240f3b209ba05045c",
           "column": 33,
           "file": "components/features/dashboard/FirstContactDialog.tsx",
-          "line": 272,
+          "line": 273,
           "owner": "FirstContactDialog",
           "routes": [
             "/dashboard"
@@ -14254,10 +14254,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d9f03007fc3d8ddc2432",
+          "id": "cta:13e48be92482a741c2c2",
           "column": 23,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 205,
+          "line": 207,
           "owner": "DistributionBars",
           "routes": [
             "/dashboard"
@@ -14266,10 +14266,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:b71f001430c74eb7674c",
+          "id": "cta:ded33534bd80859e44b3",
           "column": 13,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 335,
+          "line": 339,
           "owner": "DistributionCard",
           "routes": [
             "/dashboard"
@@ -14278,10 +14278,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:b5fec61b41be32f9c5b8",
+          "id": "cta:fe6ccabccfd22bbe60d3",
           "column": 7,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 416,
+          "line": 420,
           "owner": "TeamPicker",
           "routes": [
             "/dashboard"
@@ -14290,10 +14290,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:b77c1c9a2f1b699944a4",
+          "id": "cta:34e045f371d2d43462d7",
           "column": 13,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 443,
+          "line": 447,
           "owner": "TeamPicker",
           "routes": [
             "/dashboard"
@@ -14302,10 +14302,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:604905acd1ecba9bb876",
+          "id": "cta:c9909a095852066dfa04",
           "column": 13,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 463,
+          "line": 467,
           "owner": "TeamPicker",
           "routes": [
             "/dashboard"
@@ -14314,10 +14314,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:411e41b13fa167e16e2c",
+          "id": "cta:f2a85f67b2b26c1008be",
           "column": 13,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 466,
+          "line": 470,
           "owner": "TeamPicker",
           "routes": [
             "/dashboard"
@@ -14326,10 +14326,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c3561d3aa1caa97acb64",
+          "id": "cta:71287c1a5e082908212d",
           "column": 11,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 537,
+          "line": 541,
           "owner": "LeadDistributionSection",
           "routes": [
             "/dashboard"
@@ -14386,10 +14386,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:5f5543a2839e768ff3d3",
+          "id": "cta:cd2114551f56e3157097",
           "column": 7,
           "file": "components/features/dashboard/TopCreativesCard.tsx",
-          "line": 133,
+          "line": 134,
           "owner": "CreativeRow",
           "routes": [
             "/dashboard"
@@ -14398,10 +14398,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:1a1ac7e46bc0edd7a456",
+          "id": "cta:67b48a50b07f352ec82b",
           "column": 7,
           "file": "components/features/dashboard/TopCreativesCard.tsx",
-          "line": 198,
+          "line": 199,
           "owner": "CreativeRow",
           "routes": [
             "/dashboard"
@@ -14410,10 +14410,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:f7d29c439be8388bcbe4",
+          "id": "cta:fe34d4ccf3aa4cb07712",
           "column": 15,
           "file": "components/features/dashboard/TopCreativesCard.tsx",
-          "line": 255,
+          "line": 256,
           "owner": "CreativeImageDialog",
           "routes": [
             "/dashboard"
@@ -14422,10 +14422,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:65a3b491f3269d82b89e",
+          "id": "cta:6535db2472a56a1c9d41",
           "column": 174,
           "file": "components/features/dashboard/TopCreativesCard.tsx",
-          "line": 342,
+          "line": 343,
           "owner": "TopCreativesCard",
           "routes": [
             "/dashboard"
@@ -42776,18 +42776,6 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:d4a0fcbfa93b423f70b2",
-          "column": 23,
-          "file": "components/features/dashboard/DashboardVisitsDialog.tsx",
-          "line": 293,
-          "owner": "DashboardVisitsDialog",
-          "routes": [
-            "/dashboard"
-          ],
-          "kind": "TabsTrigger",
-          "tag": "TabsTrigger"
-        },
-        {
           "id": "control:4933cbcced35313ac12e",
           "column": 23,
           "file": "components/features/dashboard/DashboardVisitsDialog.tsx",
@@ -42816,6 +42804,18 @@
           "column": 23,
           "file": "components/features/dashboard/DashboardVisitsDialog.tsx",
           "line": 296,
+          "owner": "DashboardVisitsDialog",
+          "routes": [
+            "/dashboard"
+          ],
+          "kind": "TabsTrigger",
+          "tag": "TabsTrigger"
+        },
+        {
+          "id": "control:b177884c82918d20ee0e",
+          "column": 23,
+          "file": "components/features/dashboard/DashboardVisitsDialog.tsx",
+          "line": 297,
           "owner": "DashboardVisitsDialog",
           "routes": [
             "/dashboard"
@@ -47480,7 +47480,7 @@
         }
       ]
     },
-    "digestSha256": "fafc38d2dea23a7ee45dafe21c7b6256e1d598ab1c1cbeb0150c4460a7936419"
+    "digestSha256": "833d477ff99a166293f715169425a4536335e8b4ae83010626c69aca7f41febd"
   },
   "routes": [
     {
@@ -62036,9 +62036,9 @@
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 90,
       "asChildPrimitiveControlsWithUnrecognizedChild": 2,
-      "ctasAll": 1633,
+      "ctasAll": 1632,
       "ctasByKind": {
-        "actionButton": 1459,
+        "actionButton": 1458,
         "external": 6,
         "internal": 33,
         "internalDynamic": 80,
@@ -62047,7 +62047,7 @@
       "forms": 54,
       "formsRouteReachable": 54,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1572,
+      "internalCtas": 1571,
       "internalCtasRouteReachable": 1539,
       "overlays": 254,
       "overlaysByKind": {
@@ -62058,14 +62058,14 @@
         "sheet": 14
       },
       "overlaysRouteReachable": 249,
-      "supplementalControls": 297,
+      "supplementalControls": 295,
       "supplementalControlsByKind": {
         "AlertDialogAction": 69,
         "AlertDialogCancel": 71,
         "DropdownMenuItem": 97,
         "DropdownMenuRadioItem": 1,
         "DropdownMenuSubTrigger": 1,
-        "TabsTrigger": 58
+        "TabsTrigger": 56
       },
       "supplementalControlsRouteReachable": 292
     }
@@ -62089,7 +62089,6 @@
     "invariantFailures": [],
     "orphanSurfaceFiles": [
       "components/features/crm-management/DistributionQueueTab.tsx",
-      "components/features/dashboard/CampaignPerformanceWidget.tsx",
       "components/features/dashboard/DashboardAlertBar.tsx",
       "components/features/dashboard/RecentActivities.tsx",
       "components/features/dashboard/UpcomingTasksWidget.tsx",
@@ -62222,7 +62221,7 @@
     ]
   },
   "gaps": [
-    "10 arquivo(s) com superficie declarada nao aparecem no grafo conservador iniciado nas rotas.",
+    "9 arquivo(s) com superficie declarada nao aparecem no grafo conservador iniciado nas rotas.",
     "17 rota(s) dinamica(s) exigem fixture valida e caso invalido; o inventario nao cria dados.",
     "As 19 rotas /admin sao de superadministracao: ADM/Lider/Usuario da organizacao devem ter negacao esperada, e uma persona superadmin separada e necessaria para validar a tela.",
     "Imports por barrel sao seguidos em nivel de arquivo e podem superestimar associacoes rota-componente; os denominadores unicos nao duplicam a implementacao.",

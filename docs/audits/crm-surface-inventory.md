@@ -1,7 +1,7 @@
 # Inventario canonico de superficies do CRM
 
 Gerado por `node scripts/audits/inventory-crm-surfaces.mjs --write`.
-O conteudo e deterministico para o digest `26b76fe5a29950c46214009b32337175d65a5890416c60a7e02696e412a84a59`.
+O conteudo e deterministico para o digest `6b48aee39af29abd81e084fdb1b58306fb2406a258c8c66280a1fa3c13b0bcae`.
 
 ## Denominadores
 
@@ -16,16 +16,16 @@ O conteudo e deterministico para o digest `26b76fe5a29950c46214009b32337175d65a5
 | Rotas dinamicas | 17 |
 | Overlays unicos | 254 |
 | Formularios HTML unicos | 54 |
-| CTAs internos unicos | 1572 |
-| Controles complementares de overlay/tab | 297 |
+| CTAs internos unicos | 1571 |
+| Controles complementares de overlay/tab | 295 |
 
 Overlays: `alertDialog` 74, `dialog` 99, `dropdownMenu` 32, `popover` 35, `sheet` 14.
 
-CTAs declarados, inclusive externos/desconhecidos: `actionButton` 1459, `external` 6, `internal` 33, `internalDynamic` 80, `unknownDynamic` 55.
+CTAs declarados, inclusive externos/desconhecidos: `actionButton` 1458, `external` 6, `internal` 33, `internalDynamic` 80, `unknownDynamic` 55.
 
 ## Identificadores estaveis
 
-O indice JSON usa IDs no formato `tipo:00000000000000000000`, derivados por SHA-256 de tipo + caminho relativo + localizacao/assinatura estrutural. Nenhum caminho absoluto entra na chave. O digest do indice e `fafc38d2dea23a7ee45dafe21c7b6256e1d598ab1c1cbeb0150c4460a7936419`.
+O indice JSON usa IDs no formato `tipo:00000000000000000000`, derivados por SHA-256 de tipo + caminho relativo + localizacao/assinatura estrutural. Nenhum caminho absoluto entra na chave. O digest do indice e `833d477ff99a166293f715169425a4536335e8b4ae83010626c69aca7f41febd`.
 
 | Categoria enderecavel | IDs |
 | --- | ---: |
@@ -62,14 +62,14 @@ Nao se somam esses denominadores como se fossem equivalentes. A cobertura deve s
 
 ## Lacunas do inventario estatico
 
-- 10 arquivo(s) com superficie declarada nao aparecem no grafo conservador iniciado nas rotas.
+- 9 arquivo(s) com superficie declarada nao aparecem no grafo conservador iniciado nas rotas.
 - 17 rota(s) dinamica(s) exigem fixture valida e caso invalido; o inventario nao cria dados.
 - As 19 rotas /admin sao de superadministracao: ADM/Lider/Usuario da organizacao devem ter negacao esperada, e uma persona superadmin separada e necessaria para validar a tela.
 - Imports por barrel sao seguidos em nivel de arquivo e podem superestimar associacoes rota-componente; os denominadores unicos nao duplicam a implementacao.
 - Elementos gerados por map/lista contam uma implementacao de codigo, nao a quantidade dependente dos dados em runtime.
 - Handlers, feature flags, permissoes e destinos dinamicos precisam de verificacao em runtime; este auditor e deliberadamente estatico.
 
-Arquivos com superficie fora do grafo conservador: `components/features/crm-management/DistributionQueueTab.tsx`, `components/features/dashboard/CampaignPerformanceWidget.tsx`, `components/features/dashboard/DashboardAlertBar.tsx`, `components/features/dashboard/RecentActivities.tsx`, `components/features/dashboard/UpcomingTasksWidget.tsx`, `components/features/integrations/MetaConversionFeedbackPanel.tsx`, `components/features/integrations/MetaFormManager.tsx`, `components/features/leads/SdrDistributionButton.tsx`, `components/features/marketing/MarketingOverviewDashboard.tsx`, `components/features/round-robin/RulesManager.tsx`.
+Arquivos com superficie fora do grafo conservador: `components/features/crm-management/DistributionQueueTab.tsx`, `components/features/dashboard/DashboardAlertBar.tsx`, `components/features/dashboard/RecentActivities.tsx`, `components/features/dashboard/UpcomingTasksWidget.tsx`, `components/features/integrations/MetaConversionFeedbackPanel.tsx`, `components/features/integrations/MetaFormManager.tsx`, `components/features/leads/SdrDistributionButton.tsx`, `components/features/marketing/MarketingOverviewDashboard.tsx`, `components/features/round-robin/RulesManager.tsx`.
 
 Superficies de erro/infraestrutura verificadas separadamente: `app/(protected)/error.tsx`, `app/error.tsx`.
 

@@ -1,10 +1,10 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "ea32b031d2b16cf611c27795a2f38b70599e82c37abaef376513f85f45bd492a",
-  "surfaceInventoryDigestSha256": "26b76fe5a29950c46214009b32337175d65a5890416c60a7e02696e412a84a59",
+  "sourceDigestSha256": "bcba25da70af8fb9dded7fe8e4dc84d2c25475e81071656db78565cf5e7d0567",
+  "surfaceInventoryDigestSha256": "6b48aee39af29abd81e084fdb1b58306fb2406a258c8c66280a1fa3c13b0bcae",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 675,
+    "filesScanned": 674,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
@@ -1202,7 +1202,7 @@
     },
     {
       "file": "components/features/dashboard/DealsEvolutionChart.tsx",
-      "line": 143,
+      "line": 142,
       "match": "rounded-[12px]",
       "priority": "P1",
       "rule": "oversized-radius",
@@ -1211,7 +1211,7 @@
     },
     {
       "file": "components/features/dashboard/LeadDistributionSection.tsx",
-      "line": 235,
+      "line": 237,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1220,7 +1220,7 @@
     },
     {
       "file": "components/features/dashboard/LeadDistributionSection.tsx",
-      "line": 271,
+      "line": 273,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1229,7 +1229,7 @@
     },
     {
       "file": "components/features/dashboard/LeadDistributionSection.tsx",
-      "line": 328,
+      "line": 332,
       "match": "rounded-[12px]",
       "priority": "P1",
       "rule": "oversized-radius",
@@ -1238,7 +1238,7 @@
     },
     {
       "file": "components/features/dashboard/LeadDistributionSection.tsx",
-      "line": 531,
+      "line": 535,
       "match": "rounded-[12px]",
       "priority": "P1",
       "rule": "oversized-radius",
@@ -1274,7 +1274,7 @@
     },
     {
       "file": "components/features/dashboard/TopCreativesCard.tsx",
-      "line": 330,
+      "line": 331,
       "match": "rounded-[12px]",
       "priority": "P1",
       "rule": "oversized-radius",
