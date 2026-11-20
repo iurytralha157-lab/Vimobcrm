@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { ArrowUpRight, RefreshCw, Repeat2, Users } from 'lucide-react'
 
+import { DASHBOARD_CONTRAST } from '@/config/dashboard-layout'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -49,16 +50,16 @@ function EntryRow({ entry, onClose, onNavigate }: { entry: DashboardLeadEntry; o
               {entry.name}
             </p>
             <span className={isReentry
-              ? 'inline-flex shrink-0 items-center gap-1 rounded-[5px] bg-primary/15 px-2 py-0.5 text-[11px] font-normal text-primary'
+              ? `inline-flex shrink-0 items-center gap-1 rounded-[5px] bg-primary/15 px-2 py-0.5 text-[11px] font-normal ${DASHBOARD_CONTRAST.accentText}`
               : 'inline-flex shrink-0 items-center rounded-[5px] bg-[var(--app-surface-soft)] px-2 py-0.5 text-[11px] font-light text-[var(--app-text-secondary)]'}>
               {isReentry ? <Repeat2 className="h-3 w-3" aria-hidden="true" /> : null}
               {isReentry ? 'Reentrada' : 'Entrada inicial'}
             </span>
           </div>
-          <p className="mt-1 text-[11px] font-light text-[var(--app-text-secondary)]">
-            {formatEntryDate(entry.occurredAt)} · {source}
+          <p className="mt-1 text-[12px] font-normal text-[var(--app-text-secondary)]">
+            Entrada no CRM: {formatEntryDate(entry.occurredAt)} · {source}
           </p>
-          <p className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] font-light text-[var(--app-text-tertiary)]">
+          <p className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[12px] font-normal text-[var(--app-text-secondary)]">
             <span>Funil atual: {entry.pipelineName || 'Sem funil'}</span>
             {entry.campaignName ? <span>Campanha: {entry.campaignName}</span> : null}
           </p>
@@ -67,7 +68,7 @@ function EntryRow({ entry, onClose, onNavigate }: { entry: DashboardLeadEntry; o
           href={entry.leadUrl}
           onClick={onClose}
           onNavigate={onNavigate}
-          className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-[6px] bg-primary/50 px-2.5 text-[11px] font-light text-primary-foreground transition-colors hover:bg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
+          className={`inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-[6px] ${DASHBOARD_CONTRAST.accent} px-2.5 text-[12px] font-normal transition-colors ${DASHBOARD_CONTRAST.accentHover} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary`}
           aria-label={`Ver card de ${entry.name}`}
         >
           Ver card <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
@@ -92,8 +93,8 @@ export function DashboardLeadEntriesDialog({ open, onOpenChange, onCloseAutoFocu
         className="dashboard-dialog-shell flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden p-0 sm:h-[min(760px,calc(100dvh-32px))] sm:max-h-[calc(100dvh-32px)] sm:w-[min(900px,calc(100vw-32px))] sm:max-w-[900px] [&>button.absolute]:right-3 [&>button.absolute]:top-3 [&>button.absolute]:grid [&>button.absolute]:h-9 [&>button.absolute]:w-9 [&>button.absolute]:place-items-center sm:[&>button.absolute]:right-4 sm:[&>button.absolute]:top-4"
       >
         <DialogHeader className="shrink-0 px-4 pb-3 pr-14 pt-[calc(0.75rem+env(safe-area-inset-top))] text-left sm:px-5 sm:pt-4">
-          <DialogTitle className="flex items-center gap-2.5 text-[14px] font-light leading-snug text-[var(--app-text-primary)]">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+          <DialogTitle className="flex items-center gap-2.5 text-[16px] font-medium leading-snug text-[var(--app-text-primary)]">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]">
               <Users className="h-3.5 w-3.5" aria-hidden="true" />
             </span>
             Entradas de leads
@@ -126,7 +127,7 @@ export function DashboardLeadEntriesDialog({ open, onOpenChange, onCloseAutoFocu
               <>
                 {failureState === 'stale' ? <div role="status" className="rounded-[8px] bg-amber-500/10 p-3 text-[12px] text-[var(--app-text-secondary)]">Atualização indisponível. Exibindo as últimas entradas carregadas para estes filtros.<Button type="button" variant="ghost" size="sm" onClick={() => void query.refetch()}>Tentar novamente</Button></div> : null}
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-2.5 text-[11px] font-light text-[var(--app-text-secondary)]">
-                  <span><strong className="font-normal tabular-nums text-[var(--app-text-primary)]">{total.toLocaleString('pt-BR')}</strong> entradas nos filtros atuais</span>
+                  <span><strong className="font-normal tabular-nums text-[var(--app-text-primary)]">{total.toLocaleString('pt-BR')}</strong> entradas no CRM nos filtros atuais</span>
                   <span className="tabular-nums">Exibindo {entries.length.toLocaleString('pt-BR')} de {total.toLocaleString('pt-BR')}</span>
                 </div>
                 {entries.length === 0 ? (

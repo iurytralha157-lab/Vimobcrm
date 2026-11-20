@@ -72,8 +72,8 @@ func TestDashboardEntriesApplyCurrentCardScopeAndSameOccurrenceAttribution(t *te
 		"l.pipeline_id =",
 		"l.deal_status =",
 		"from public.lead_tags",
-		"coalesce(initial.occurred_at, l.created_at) as occurred_at",
-		"true as is_reentry, e.occurred_at",
+		"l.created_at as occurred_at",
+		"true as is_reentry, e.created_at as occurred_at",
 		"nullif(e.page_id, '') as page_id",
 		"nullif(e.campaign_id, '') as campaign_id",
 		"nullif(initial.page_id, '') as page_id",
@@ -201,7 +201,7 @@ func TestDashboardInitialAttributionUsesEarliestLedgerFactWithoutMutableFallback
 	for _, required := range []string{
 		"select l.id, l.organization_id, l.created_at",
 		"coalesce(initial.id::text, 'initial:' || l.id::text) as entry_id",
-		"coalesce(initial.occurred_at, l.created_at) as occurred_at",
+		"l.created_at as occurred_at",
 		"nullif(initial.source, '') as source",
 		"nullif(initial.page_id, '') as page_id",
 		"nullif(initial.campaign_id, '') as campaign_id",
@@ -225,6 +225,59 @@ func TestDashboardInitialAttributionUsesEarliestLedgerFactWithoutMutableFallback
 		if strings.Contains(initial, forbidden) {
 			t.Errorf("first arrival can inherit a later attribution from %q", forbidden)
 		}
+	}
+}
+
+func TestDashboardCardCohortUsesCRMRecordingDatesAndDoesNotMultiplyCards(t *testing.T) {
+	from := time.Date(2026, time.November, 17, 3, 0, 0, 0, time.UTC)
+	to := from.Add(24*time.Hour - time.Microsecond)
+	viewer := tenant.Context{
+		OrganizationID: "11111111-1111-4111-8111-111111111111",
+		UserID:         "22222222-2222-4222-8222-222222222222",
+		Permissions:    []string{permissions.LeadViewOwn},
+	}
+	where, args, err := (Repository{}).buildDashboardCardCohortWhere(viewer, DashboardFilter{DateFrom: &from, DateTo: &to}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := strings.Join(where, " and ")
+	for _, required := range []string{
+		"l.organization_id = $1::uuid", "private.queue_pool_read_access", "l.assigned_user_id is not null",
+		"l.created_at >= $5::timestamptz", "l.created_at <= $6::timestamptz", "or exists (",
+		"e.organization_id = l.organization_id and e.lead_id = l.id",
+		"e.entry_type = 'reentry' and e.is_countable = true", "e.created_at >= $5::timestamptz", "e.created_at <= $6::timestamptz",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("CRM card cohort is missing %q: %s", required, query)
+		}
+	}
+	if strings.Contains(query, "e.occurred_at") || strings.Contains(query, "initial_entries") || len(args) != 6 || args[4] != from || args[5] != to {
+		t.Fatalf("CRM cohort must use recording dates without initial snapshot scans: query=%s args=%#v", query, args)
+	}
+	allTime, _, err := (Repository{}).buildDashboardCardCohortWhere(viewer, DashboardFilter{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(allTime, " and "), "lead_entry_events") {
+		t.Fatal("unattributed all-time card metrics must retain the direct-card fast path")
+	}
+}
+
+func TestDashboardAttributedCardCohortUsesOneMatchingArrivalAndKeepsDealStatus(t *testing.T) {
+	filter := DashboardFilter{Source: "meta", CampaignIDs: []string{"campaign-a", "campaign-b"}, AdID: "ad-a"}
+	viewer := tenant.Context{OrganizationID: "11111111-1111-4111-8111-111111111111", MemberRole: "admin"}
+	cte, entryWhere, entryArgs, err := (Repository{}).buildDashboardEntriesCTE(viewer, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	where, args, err := (Repository{}).buildDashboardCardCohortWhere(viewer, filter, "won")
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := strings.Join(where, " and ")
+	if !strings.Contains(query, "l.id in ("+cte+" select entry.lead_id from entries entry where "+entryWhere+")") ||
+		!strings.Contains(query, "l.deal_status =") || args[len(args)-1] != "won" || !reflect.DeepEqual(args[:len(args)-1], entryArgs) {
+		t.Fatalf("status cards must reuse the same-arrival cohort without multiplying leads: %s %#v", query, args)
 	}
 }
 

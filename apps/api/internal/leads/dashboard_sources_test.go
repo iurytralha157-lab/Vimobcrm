@@ -28,10 +28,11 @@ func TestDashboardSourcesDefaultToCardCountsAndOptInToEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(cardQuery, "from public.leads l") ||
-		!strings.Contains(cardQuery, "l.created_at >=") ||
 		!strings.Contains(cardQuery, "group by coalesce(nullif(l.source, ''), 'manual')") ||
-		strings.Contains(cardQuery, "from entries entry") {
-		t.Fatalf("legacy source query must keep card counts: %s", cardQuery)
+		!strings.Contains(cardQuery, "l.id in (") ||
+		!strings.Contains(cardQuery, "from entries entry") ||
+		!strings.Contains(cardQuery, "entry.occurred_at >=") {
+		t.Fatalf("default source query must count distinct cards in the same matching-arrival cohort: %s", cardQuery)
 	}
 
 	filter.CountEntries = true

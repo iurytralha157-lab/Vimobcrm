@@ -55,6 +55,7 @@ function loadSource(relativePath) {
   return compiledModule.exports;
 }
 const { DashboardLeadEntriesDialog } = loadSource('components/features/dashboard/DashboardLeadEntriesDialog.tsx');
+const { DashboardKpiGrid } = loadSource('components/features/dashboard/DashboardKpis.tsx');
 const { LeadSourceRows } = loadSource('components/features/dashboard/LeadSourceRows.tsx');
 const { FirstContactDialog } = loadSource('components/features/dashboard/FirstContactDialog.tsx');
 const { SalesFunnelWithPipeline } = loadSource('components/features/dashboard/SalesFunnelWithPipeline.tsx');
@@ -89,8 +90,28 @@ test('entries render allowed prototype-name origins as text instead of crashing'
     }));
     assert.ok(html.includes(source));
     assert.ok(html.includes(cachedEntry.name));
+    assert.ok(html.includes('Entrada no CRM:'));
     assert.equal(entry.source, source);
   }
+});
+
+for (const layout of ['desktop', 'mobile']) test(`KPI ${layout} separates repeated entries from distinct lead statuses`, () => {
+  const data = {
+    totalLeads: 25, uniqueLeads: 25, reentries: 2, totalEntries: 27,
+    entryBreakdownAvailable: true, openLeads: 20, lostLeads: 5, closedLeads: 0,
+    avgResponseTime: '1min', totalSalesValue: 0,
+  };
+  const props = { layout, data, periodLabel: 'Personalizado', evolution: [{ abertos: 20, ganhos: 0, perdas: 5 }], onLeadsClick: () => {} };
+  const tree = DashboardKpiGrid(props);
+  const leads = tree.props.children[0].props.children[0];
+  assert.equal(leads.props.spark, undefined, 'The card evolution is not an entry series');
+  const html = renderToStaticMarkup(React.createElement(DashboardKpiGrid, props));
+  assert.match(html, /aria-label="Leads: 27\. Ver detalhes"/);
+  assert.match(html, /25 iniciais · 2 reentradas/);
+  assert.match(html, /80,0% dos leads distintos/);
+  assert.match(html, /20,0% dos leads distintos/);
+  assert.match(html, /Entradas no CRM no período/);
+  assert.match(html, /Cada reentrada soma uma nova entrada/);
 });
 
 test('source labels preserve known names, custom text and each existing empty fallback', () => {

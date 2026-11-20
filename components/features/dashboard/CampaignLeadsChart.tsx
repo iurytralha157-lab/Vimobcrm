@@ -19,7 +19,7 @@ type CampaignLeadsChartProps = {
 
 function CampaignChartSkeleton() {
   return (
-    <div aria-label="Carregando leads por campanha" className="space-y-2 py-1">
+    <div aria-label="Carregando leads distintos por campanha" className="space-y-2 py-1">
       {[76, 58, 87, 42].map((width, index) => (
         <div key={index} className="grid h-[52px] grid-cols-[minmax(96px,24%)_minmax(0,1fr)_auto] items-center gap-3 sm:grid-cols-[minmax(160px,28%)_minmax(0,1fr)_auto]">
           <Skeleton className="h-3 w-4/5" />
@@ -84,7 +84,7 @@ export function CampaignLeadsChart({ filters, filtersReady }: CampaignLeadsChart
       <div className="flex h-full min-w-0 flex-col rounded-[12px] bg-[var(--app-surface-solid)] p-4">
         <div className="mb-3 flex min-h-7 flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <h3 id="dashboard-campaigns-title" className="min-w-0 truncate text-[14px] font-normal leading-5 text-[var(--app-text-primary)]">
-            Leads por campanha
+            Leads distintos por campanha
           </h3>
           <div className={`flex min-w-0 items-center gap-3 ${visibleData && rows.length > 25 ? "max-sm:w-full" : ""}`}>
             {visibleData && rows.length > 25 ? (
@@ -113,7 +113,7 @@ export function CampaignLeadsChart({ filters, filtersReady }: CampaignLeadsChart
           ) : (
             <div
               role="region"
-              aria-label="Leads por campanha, lista rolável"
+              aria-label="Leads distintos por campanha, lista rolável"
               tabIndex={page.items.length > 7 ? 0 : undefined}
               className="app-scrollbar flex max-h-[330px] flex-1 flex-col overflow-y-auto overscroll-contain rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary lg:max-h-[420px]"
             >
@@ -126,7 +126,7 @@ export function CampaignLeadsChart({ filters, filtersReady }: CampaignLeadsChart
                   <div
                     key={rowKey}
                     role="listitem"
-                    aria-label={`${campaign.name}${duplicateNames.has(campaign.name) ? `, ID ${campaign.campaignId ?? campaign.key}` : ""}: ${campaign.leadCount} ${campaign.leadCount === 1 ? "lead" : "leads"}`}
+                    aria-label={`${campaign.name}${duplicateNames.has(campaign.name) ? `, ID ${campaign.campaignId ?? campaign.key}` : ""}: ${campaign.leadCount} ${campaign.leadCount === 1 ? "lead distinto" : "leads distintos"}`}
                     className={`grid grid-cols-[minmax(80px,26%)_minmax(0,1fr)_auto] gap-2 border-b border-[var(--app-border)] last:border-b-0 sm:grid-cols-[minmax(120px,30%)_minmax(0,1fr)_auto] ${expanded ? "min-h-[44px] items-start py-2" : "h-[44px] items-center"}`}
                   >
                     <button
@@ -135,11 +135,11 @@ export function CampaignLeadsChart({ filters, filtersReady }: CampaignLeadsChart
                       aria-label={`Ver campanha ${campaign.name}${duplicateNames.has(campaign.name) ? `, ID ${campaign.campaignId ?? campaign.key}` : ""}`}
                       aria-pressed={expanded}
                       onClick={() => setExpandedCampaignKey((current) => current === rowKey ? null : rowKey)}
-                      className="min-w-0 text-left text-[11px] font-light leading-[14px] text-[var(--app-text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:text-[12px]"
+                      className="min-w-0 text-left text-[12px] font-normal leading-4 text-[var(--app-text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                     >
                       <span className={expanded ? "block break-all" : "line-clamp-2 break-all"}>{campaign.name}</span>
                       {duplicateNames.has(campaign.name) ? (
-                        <span className={`block text-[10px] text-[var(--app-text-tertiary)] ${expanded ? "break-all" : "truncate"}`}>
+                        <span className={`block text-[11px] text-[var(--app-text-secondary)] ${expanded ? "break-all" : "truncate"}`}>
                           ID {expanded
                             ? campaign.campaignId ?? campaign.key
                             : campaign.campaignId ? `…${campaign.campaignId.slice(-8)}` : campaign.key.slice(-8)}
@@ -177,7 +177,7 @@ export function CampaignLeadsChart({ filters, filtersReady }: CampaignLeadsChart
           ) : null}
           {visibleData && unattributed > 0 ? (
             <p className="mt-3 text-[11px] font-light text-[var(--app-text-secondary)]">
-              Sem campanha: <span className="font-medium tabular-nums text-[var(--app-text-primary)]">{unattributed.toLocaleString("pt-BR")} {unattributed === 1 ? "lead" : "leads"}</span>
+              Sem campanha: <span className="font-medium tabular-nums text-[var(--app-text-primary)]">{unattributed.toLocaleString("pt-BR")} {unattributed === 1 ? "lead distinto" : "leads distintos"}</span>
             </p>
           ) : null}
         </div>

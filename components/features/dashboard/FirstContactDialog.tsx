@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChevronDown, Clock3, RefreshCw, Repeat2, UsersRound } from "lucide-react";
 
+import { DASHBOARD_CONTRAST } from "@/config/dashboard-layout";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -196,7 +197,7 @@ export function FirstContactDialog({
       >
         <DialogHeader className="shrink-0 px-4 pb-3 pr-14 pt-[calc(0.75rem+env(safe-area-inset-top))] text-left sm:px-5 sm:pt-4">
           <DialogTitle className="flex items-center gap-2.5 text-[16px] font-medium leading-snug text-[var(--app-text-primary)]">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] ${DASHBOARD_CONTRAST.accent}`}>
               <Clock3 className="h-3.5 w-3.5" aria-hidden="true" />
             </span>
             Primeiro contato

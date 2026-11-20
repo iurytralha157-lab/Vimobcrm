@@ -69,7 +69,12 @@ func TestDashboardHardeningLocalLoadIntegration(t *testing.T) {
 			t.Fatalf("prepare synthetic fixture step %d: %v", index, err)
 		}
 	}
-	runDashboardHardeningLocalFixtureChecks(t, ctx, database, true)
+	t.Run("dashboard_load", func(t *testing.T) {
+		runDashboardHardeningLocalFixtureChecks(t, ctx, database, true)
+	})
+	t.Run("Vimob_entry_dates_and_distinct_statuses", func(t *testing.T) {
+		checkDashboardVimobEntryCohort(t, ctx, database)
+	})
 }
 
 // This opt-in check can reuse only a prepared synthetic fixture database. It
@@ -127,7 +132,7 @@ func runDashboardHardeningLocalFixtureChecks(t *testing.T, ctx context.Context, 
 			where not entry.is_reentry and
 			  row(entry.entry_id, entry.occurred_at, entry.source, entry.campaign_id, entry.creative_id)
 			  is distinct from row(coalesce(expected.id::text, 'initial:' || card.id::text),
-				coalesce(expected.occurred_at, card.created_at), nullif(expected.source, ''),
+				card.created_at, nullif(expected.source, ''),
 				nullif(expected.campaign_id, ''), nullif(btrim(expected.metadata->>'creative_id'), ''))
 		`, arguments...).Scan(&mismatches); err != nil {
 			t.Fatal(err)
@@ -162,7 +167,7 @@ func runDashboardHardeningLocalFixtureChecks(t *testing.T, ctx context.Context, 
 	}
 	for _, status := range []string{"", "open", "won", "lost"} {
 		filter := DashboardFilter{DealStatus: status}
-		aggregate, err := repo.dashboardAggregate(ctx, tx, adminViewer, filter, dashboardLeadWhereOptions{DateColumn: "created_at"})
+		aggregate, err := repo.dashboardAggregate(ctx, tx, adminViewer, filter)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -184,7 +189,7 @@ func runDashboardHardeningLocalFixtureChecks(t *testing.T, ctx context.Context, 
 	for _, optimized := range []bool{false, true} {
 		started := time.Now()
 		for sample := 0; sample < 10; sample++ {
-			if _, err := repo.dashboardAggregate(ctx, database.Pool(), adminViewer, DashboardFilter{}, dashboardLeadWhereOptions{DateColumn: "created_at"}); err != nil {
+			if _, err := repo.dashboardAggregate(ctx, database.Pool(), adminViewer, DashboardFilter{}); err != nil {
 				t.Fatal(err)
 			}
 			if !optimized {
@@ -340,6 +345,8 @@ const (
 )
 
 const dashboardLoadFixtureSchema = `
+create schema private;
+create function private.queue_pool_read_access(uuid,uuid,uuid) returns boolean language sql stable as 'select null::boolean';
 alter table public.team_members add column is_leader boolean not null default false;
 alter table public.leads add column created_at timestamptz, add column deal_status text, add column name text,
   add column email text, add column phone text, add column source text, add column pipeline_id uuid,
@@ -349,7 +356,7 @@ alter table public.leads add column created_at timestamptz, add column deal_stat
   add column first_response_is_automation boolean, add column first_response_at timestamptz;
 create table public.properties(id uuid primary key, organization_id uuid, responsible_user_id uuid, created_by uuid, preco numeric, valor_venda_avaliado numeric);
 create table public.organization_attention_settings(organization_id uuid primary key, timezone text);
-create table public.lead_entry_events(id uuid primary key, organization_id uuid, lead_id uuid, entry_type text, is_countable boolean default true, occurred_at timestamptz, created_at timestamptz, source text, page_id text, page_name text, campaign_id text, campaign_name text, utm_campaign text, adset_id text, adset_name text, ad_id text, ad_name text, provider text, metadata jsonb default '{}');
+` + dashboardEntryFixtureTable + `;
 -- Reproduce existing baseline indexes, not a proposed production index.
 create index idx_lead_entry_events_lead on public.lead_entry_events(lead_id);
 create index idx_leads_dashboard_user_created on public.leads(organization_id, assigned_user_id, created_at desc);
@@ -361,6 +368,84 @@ create index lead_entry_events_campaign_history_idx on public.lead_entry_events(
 create index lead_entry_events_adset_history_idx on public.lead_entry_events(organization_id, adset_id, occurred_at desc, lead_id) where is_countable = true and adset_id is not null;
 create index lead_entry_events_ad_history_idx on public.lead_entry_events(organization_id, ad_id, occurred_at desc, lead_id) where is_countable = true and ad_id is not null;
 `
+
+const dashboardEntryFixtureTable = `create table public.lead_entry_events(
+  id uuid primary key, organization_id uuid, lead_id uuid, entry_type text, is_countable boolean default true,
+  occurred_at timestamptz, created_at timestamptz, source text, page_id text, page_name text,
+  campaign_id text, campaign_name text, utm_campaign text, adset_id text, adset_name text,
+  ad_id text, ad_name text, provider text, metadata jsonb default '{}')`
+
+func checkDashboardVimobEntryCohort(t *testing.T, ctx context.Context, database *dbpkg.Postgres) {
+	t.Helper()
+	// One new lead and two countable reentries of the same older won lead.
+	// Every provider timestamp differs from the Vimob date or from another event.
+	for _, statement := range []string{
+		`create table public.pipelines(id uuid primary key, organization_id uuid, name text)`,
+		`create table public.lead_meta(organization_id uuid, lead_id uuid, campaign_id text, campaign_name text, ad_id text, ad_name text)`,
+		`alter table public.leads add column meta_campaign_id text, add column utm_campaign text, add column meta_ad_id text`,
+		`insert into public.leads(id,organization_id,assigned_user_id,created_at,deal_status,name,source,valor_interesse,won_at) values
+		 ('78000000-0000-4000-8000-000000000001','71111111-1111-4111-8111-111111111111','73333333-3333-4333-8333-333333333333','2026-11-17T03:00:00Z','open','Novo QA','Atual',0,null),
+		 ('78000000-0000-4000-8000-000000000002','71111111-1111-4111-8111-111111111111','73333333-3333-4333-8333-333333333333','2026-11-14T03:00:00Z','won','Ganho QA','Atual',100,'2026-11-15T03:00:00Z'),
+		 ('78000000-0000-4000-8000-000000000003','79999999-9999-4999-8999-999999999999','73333333-3333-4333-8333-333333333333','2026-11-17T03:00:00Z','open','Outro tenant QA','Atual',0,null)`,
+		`insert into public.lead_entry_events(id,organization_id,lead_id,entry_type,is_countable,occurred_at,created_at,source,campaign_id,ad_id) values
+		 ('78100000-0000-4000-8000-000000000001','71111111-1111-4111-8111-111111111111','78000000-0000-4000-8000-000000000001','initial',true,'2026-11-16T19:00:00Z','2026-11-17T03:00:00Z','WhatsApp','inicial','ad-1'),
+		 ('78100000-0000-4000-8000-000000000002','71111111-1111-4111-8111-111111111111','78000000-0000-4000-8000-000000000002','reentry',true,'2026-11-16T20:00:00Z','2026-11-17T04:00:00Z','Meta','reentrada','ad-2'),
+		 ('78100000-0000-4000-8000-000000000003','71111111-1111-4111-8111-111111111111','78000000-0000-4000-8000-000000000002','reentry',true,'2026-11-17T05:00:00Z','2026-11-17T05:00:00Z','Meta','outra','ad-3'),
+		 ('78100000-0000-4000-8000-000000000004','71111111-1111-4111-8111-111111111111','78000000-0000-4000-8000-000000000002','reentry',false,'2026-11-17T05:00:00Z','2026-11-17T06:00:00Z','Meta','outra','ad-3')`,
+	} {
+		if _, err := database.Pool().Exec(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	from := time.Date(2026, 11, 17, 3, 0, 0, 0, time.UTC)
+	to := from.Add(24*time.Hour - time.Millisecond)
+	filter := DashboardFilter{DateFrom: &from, DateTo: &to, TeamID: dashboardLoadTeamID, IncludeDetails: true, Limit: 2}
+	repo := NewRepository(database, nil)
+	admin := tenant.Context{OrganizationID: dashboardLoadOrganizationID, UserID: dashboardLoadLeaderID, MemberRole: "admin"}
+	leader := tenant.Context{OrganizationID: dashboardLoadOrganizationID, UserID: dashboardLoadLeaderID, IsTeamLeader: true,
+		Permissions: []string{permissions.DashboardView, permissions.LeadViewTeam}, LedUserIDs: []string{dashboardLoadBrokerID}, LedTeamIDs: []string{dashboardLoadTeamID}}
+	broker := tenant.Context{OrganizationID: dashboardLoadOrganizationID, UserID: dashboardLoadBrokerID,
+		Permissions: []string{permissions.DashboardView, permissions.LeadViewOwn}}
+	for _, viewer := range []tenant.Context{admin, leader, broker} {
+		stats, err := repo.GetDashboardStats(ctx, viewer, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stats.UniqueLeads != 1 || stats.Reentries != 2 || stats.TotalEntries != 3 || stats.TotalLeads != 2 || stats.OpenLeads != 1 || stats.ClosedLeads != 1 || stats.LostLeads != 0 || len(stats.WonDeals) != 1 {
+			t.Fatalf("entries and distinct status counts disagree: %+v", stats)
+		}
+	}
+	stats, err := repo.GetDashboardStats(ctx, admin, filter)
+	if err != nil || stats.TotalSalesValue != 100 {
+		t.Fatalf("won reentries must not duplicate sales value: value=%v, err=%v", stats.TotalSalesValue, err)
+	}
+	distribution, err := repo.GetDashboardLeadDistribution(ctx, admin, filter)
+	if err != nil || distribution.TotalLeads != 2 {
+		t.Fatalf("distribution must count distinct leads with an entry: total=%d, err=%v", distribution.TotalLeads, err)
+	}
+	page, err := repo.ListDashboardLeadEntries(ctx, admin, filter, nil)
+	if err != nil || page.Total != 3 || len(page.Items) != 2 || page.NextCursor == nil {
+		t.Fatalf("entries drilldown first page: %+v, err=%v", page, err)
+	}
+	cursor, err := parseDashboardEntryCursor(*page.NextCursor)
+	if err != nil || !cursor.OccurredAt.Equal(from.Add(time.Hour)) {
+		t.Fatalf("cursor must use the Vimob entry date: %+v, err=%v", cursor, err)
+	}
+	page, err = repo.ListDashboardLeadEntries(ctx, admin, filter, cursor)
+	if err != nil || page.Total != 3 || page.HasMore || len(page.Items) != 1 || page.Items[0].OccurredAt != from.Format(time.RFC3339) || page.Items[0].EntryType != "initial" {
+		t.Fatalf("entries drilldown second page: %+v, err=%v", page, err)
+	}
+	filter.CampaignID, filter.AdID = "reentrada", "ad-3"
+	stats, err = repo.GetDashboardStats(ctx, admin, filter)
+	if err != nil || stats.TotalEntries != 0 || stats.TotalLeads != 0 {
+		t.Fatalf("campaign and ad must come from the same arrival: %+v, err=%v", stats, err)
+	}
+	filter.AdID = "ad-2"
+	stats, err = repo.GetDashboardStats(ctx, admin, filter)
+	if err != nil || stats.TotalEntries != 1 || stats.TotalLeads != 1 || stats.ClosedLeads != 1 || len(stats.WonDeals) != 1 || stats.TotalSalesValue != 100 {
+		t.Fatalf("a matching reentry must include its distinct won lead: %+v, err=%v", stats, err)
+	}
+}
 
 const dashboardLoadFixtureData = `
 insert into public.users(id, name) values

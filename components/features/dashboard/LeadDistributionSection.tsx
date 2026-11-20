@@ -127,10 +127,12 @@ function DistributionBars({
   const [localSelectedId, setLocalSelectedId] = useState<string | null>(null);
   const isBrokerChart = variant === "user";
   const selectedId = isBrokerChart && onBrokerSelect ? selectedBrokerId : localSelectedId;
-  // Brokers keep one compact column width whatever their number, and each bar fills
-  // its column, so bars sit close together and more of the team fits on screen.
-  const brokerColumnWidthClass = "w-[56px] sm:w-[62px]";
-  const brokerBarWidthClass = "w-full";
+  const spreadBrokers = isBrokerChart && rows.length <= 7;
+  const brokerColumnWidthClass = spreadBrokers ? "min-w-[64px] flex-1" : "w-[72px] sm:w-[80px]";
+  const brokerBarWidthClass = rows.length <= 2 ? "w-full max-w-[96px]"
+    : rows.length <= 4 ? "w-full max-w-[112px]"
+      : rows.length === 5 ? "w-full max-w-[96px]"
+        : rows.length === 6 ? "w-full max-w-[88px]" : "w-full max-w-[80px]";
   const spreadTeams = !isBrokerChart && rows.length <= 5;
   const teamColumnWidthClass = rows.length === 1
     ? "min-w-[132px] flex-1"
@@ -178,7 +180,7 @@ function DistributionBars({
   }
 
   return (
-    <div className={`flex min-w-0 flex-1 flex-col justify-end ${isBrokerChart ? "min-h-[300px]" : "min-h-[250px]"}`}>
+    <div className={`flex min-w-0 flex-1 flex-col justify-end ${isBrokerChart ? "min-h-0" : "min-h-[250px]"}`}>
       <div
         className={`app-scrollbar overflow-x-auto rounded-[6px] pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${isBrokerChart ? "min-h-0 flex-1" : ""}`}
         role="region"
@@ -187,7 +189,7 @@ function DistributionBars({
           : "Leads por equipe"}
         tabIndex={0}
       >
-        <div className={`flex min-w-full items-end border-b border-[var(--app-border)] px-2 ${isBrokerChart ? "h-full w-max gap-1" : spreadTeams ? "w-full gap-2" : "w-max justify-center gap-2"}`}>
+        <div className={`flex min-w-full items-end border-b border-[var(--app-border)] px-2 ${isBrokerChart ? `h-full gap-3 ${spreadBrokers ? "w-full" : "w-max"}` : spreadTeams ? "w-full gap-2" : "w-max justify-center gap-2"}`}>
           <TooltipProvider delayDuration={120}>
             {rows.map((row) => {
               const leadCount = Math.max(0, row.leadCount ?? 0);
@@ -198,7 +200,7 @@ function DistributionBars({
               const brokerBarRatio = leadCount / maxCount;
               const brokerMinimumBarHeight = Math.min(24, leadCount * 4);
               return (
-                <div key={row.id} className={`shrink-0 ${isBrokerChart ? `relative h-full min-h-[290px] ${brokerColumnWidthClass}` : `flex h-[240px] flex-col justify-end ${teamColumnWidthClass}`}`}>
+                <div key={row.id} className={`shrink-0 ${isBrokerChart ? `relative h-full min-h-0 ${brokerColumnWidthClass}` : `flex h-[240px] flex-col justify-end ${teamColumnWidthClass}`}`}>
                   {!isBrokerChart ? <span className="shrink-0" style={{ height: 145 - teamBarHeight }} aria-hidden="true" /> : null}
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -253,7 +255,7 @@ function DistributionBars({
                         style={isBrokerChart ? { flexGrow: 1, flexBasis: 0, minHeight: brokerMinimumBarHeight } : { height: teamBarHeight }}
                         aria-hidden="true"
                       />
-                      <span className="mt-2 block w-full shrink-0 truncate text-center text-[10px] leading-[15px] font-light text-[var(--app-text-secondary)]">
+                      <span className="mt-2 block w-full shrink-0 truncate text-center text-[11px] leading-4 font-normal text-[var(--app-text-secondary)]">
                         {row.name}
                       </span>
                       </button>
@@ -324,8 +326,10 @@ function DistributionCard({
   selectedBrokerId?: string | null;
   onBrokerSelect?: (brokerId: string | null) => void;
 }) {
+  const heightClass = !fillHeight ? "min-h-[360px]"
+    : variant === "user" ? "h-[320px] min-h-0 lg:h-full" : "min-h-[320px] lg:h-full";
   return (
-    <Card className={`flex min-w-0 flex-col overflow-hidden rounded-[12px] border-0 bg-[var(--app-surface-solid)] shadow-none ${fillHeight ? "min-h-[320px] lg:h-full" : "min-h-[360px]"}`}>
+    <Card data-dashboard-distribution={variant} className={`flex min-w-0 flex-col overflow-hidden rounded-[12px] border-0 bg-[var(--app-surface-solid)] shadow-none ${heightClass}`}>
       <CardHeader className="shrink-0 px-4 pb-2 pt-4">
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="min-w-0 truncate text-[14px] font-normal leading-5 text-[var(--app-text-primary)]">

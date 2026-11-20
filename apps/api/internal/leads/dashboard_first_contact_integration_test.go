@@ -90,7 +90,7 @@ func TestDashboardFirstContactReadOnlyIntegration(t *testing.T) {
 		t.Fatalf("selected broker source breakdown does not reconcile: leads=%d/%d contacts=%d/%d", sourceLeads, selected.LeadCount, sourceContacts, selected.ContactedLeads)
 	}
 	queryStarted = time.Now()
-	aggregate, err := repo.dashboardAggregate(ctx, db.Pool(), tenantContext, filter, dashboardLeadWhereOptions{DateColumn: "created_at"})
+	aggregate, err := repo.dashboardAggregate(ctx, db.Pool(), tenantContext, filter)
 	if err != nil {
 		t.Fatalf("KPI aggregate query: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestDashboardFirstContactReadOnlyIntegration(t *testing.T) {
 		t.Logf("today team first contact: %s (leads=%d, measured=%d, redistributions=%d, brokers=%d)",
 			time.Since(todayStarted).Round(time.Millisecond), todayTeam.LeadCount, todayTeam.ContactedLeads,
 			todayTeam.RedistributedLeads, len(todayTeam.Brokers))
-		teamKPI, err := repo.dashboardAggregate(ctx, db.Pool(), tenantContext, todayTeamFilter, dashboardLeadWhereOptions{DateColumn: "created_at"})
+		teamKPI, err := repo.dashboardAggregate(ctx, db.Pool(), tenantContext, todayTeamFilter)
 		if err != nil {
 			t.Fatalf("today team KPI query: %v", err)
 		}

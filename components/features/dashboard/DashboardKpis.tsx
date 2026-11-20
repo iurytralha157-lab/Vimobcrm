@@ -2,7 +2,7 @@ import type { DealsEvolutionPoint, EnhancedDashboardStats } from "@/hooks/use-da
 import { cn } from "@/lib/utils";
 
 import { DashboardKpiCard, DashboardSkeletonBlock } from "./dashboard-ui";
-import { dashboardCardsSpark, dashboardDelta, dashboardKpiRates } from "./dashboard-kpi-model";
+import { dashboardDelta, dashboardKpiRates } from "./dashboard-kpi-model";
 
 type Trigger = (trigger: HTMLElement) => void;
 
@@ -122,11 +122,11 @@ export function DashboardKpiGrid({
       tourTarget="dashboard-kpi-leads"
       label="Leads"
       value={formatNumber(data.totalEntries)}
-      spark={dashboardCardsSpark(evolution)}
-      note={entriesBreakdown ? `${data.reentries.toLocaleString("pt-BR")} reentradas` : "Leads únicos"}
+      note={entriesBreakdown ? `${data.uniqueLeads.toLocaleString("pt-BR")} iniciais · ${data.reentries.toLocaleString("pt-BR")} reentradas` : "Leads distintos"}
+      wrapNote
       delta={dashboardDelta(data.entryBreakdownAvailable ? data.entriesTrend : data.leadsTrend)}
       hint={entriesBreakdown
-        ? `Entradas no período: ${entriesBreakdown}. Cada reentrada soma uma nova entrada, mesmo quando continua no mesmo card. O gráfico mostra os cards criados em cada intervalo. ${periodLabel}.`
+        ? `Entradas no CRM no período: ${entriesBreakdown}. Cada reentrada soma uma nova entrada, mesmo no mesmo card. ${periodLabel}.`
         : `Leads únicos no período. A contagem de reentradas ainda não está disponível nesta versão da API. ${periodLabel}.`}
       onClick={onLeadsClick}
     />
@@ -138,9 +138,9 @@ export function DashboardKpiGrid({
       label="Em aberto"
       value={formatNumber(data.openLeads ?? 0)}
       spark={evolution.map((point) => point.abertos)}
-      note={`${formatPercent(rates.open)} dos leads`}
+      note={`${formatPercent(rates.open)} dos leads distintos`}
       delta={dashboardDelta(data.openTrend)}
-      hint={`Cards únicos do período que estão em aberto; percentual sobre os cards únicos. ${periodLabel}.`}
+      hint={`Leads distintos com entrada no CRM no período que estão em aberto; cada lead conta uma vez. ${periodLabel}.`}
     />
   );
   const lost = (
@@ -150,9 +150,9 @@ export function DashboardKpiGrid({
       label="Perdidos"
       value={formatNumber(data.lostLeads ?? 0)}
       spark={evolution.map((point) => point.perdas)}
-      note={`${formatPercent(rates.lost)} dos leads`}
+      note={`${formatPercent(rates.lost)} dos leads distintos`}
       delta={dashboardDelta(data.lostTrend, { lowerIsBetter: true })}
-      hint={`Cards únicos do período que estão perdidos; percentual sobre os cards únicos. ${periodLabel}.`}
+      hint={`Leads distintos com entrada no CRM no período que estão perdidos; cada lead conta uma vez. ${periodLabel}.`}
       onClick={onLostClick}
     />
   );
@@ -163,9 +163,9 @@ export function DashboardKpiGrid({
       label="Ganhos"
       value={formatNumber(data.closedLeads)}
       spark={evolution.map((point) => point.ganhos)}
-      note={`${formatPercent(rates.won)} de conversão`}
+      note={`${formatPercent(rates.won)} dos leads distintos`}
       delta={dashboardDelta(data.closedTrend)}
-      hint={`Cards únicos do período que estão ganhos; conversão sobre os cards únicos. ${periodLabel}.`}
+      hint={`Leads distintos com entrada no CRM no período que estão ganhos; conversão sobre os leads distintos. ${periodLabel}.`}
       onClick={onWonClick}
     />
   );
@@ -190,7 +190,7 @@ export function DashboardKpiGrid({
       compact
       className="col-span-2"
       note={salesValuePerWin === null ? "Sem vendas no período" : `${formatCurrency(salesValuePerWin)} por venda`}
-      hint={`VGV estimado dos cards ganhos captados no período - ${periodLabel}. Usa o valor do lead ou, quando ausente, o preço atual do imóvel. Não é histórico de fechamentos no período.`}
+      hint={`VGV estimado dos leads ganhos com entrada no CRM no período - ${periodLabel}. Usa o valor do lead ou, quando ausente, o preço atual do imóvel. Não é histórico de fechamentos no período.`}
     />
   );
   const firstContact = (

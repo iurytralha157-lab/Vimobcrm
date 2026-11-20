@@ -78,6 +78,20 @@ test("334 campaign aggregates render only 25 accessible rows and preserve the fu
   assert.match(html, /Buscar campanha pelo nome ou ID/);
 });
 
+test('campaign and creative counts stay distinct leads when entry totals differ', () => {
+  const campaign = renderDashboardMarketing('campaign', {
+    data: { campaigns: [{ key: 'one', name: 'Campanha dupla', leadCount: 25, entryCount: 27 }], unattributed: { leadCount: 0, entryCount: 0 } },
+    isPending: false, isError: false, refetch: () => {},
+  });
+  assert.match(campaign, /Leads distintos por campanha/);
+  assert.match(campaign, /Campanha dupla: 25 leads distintos/);
+  assert.doesNotMatch(campaign.replace(/<[^>]+>/g, ' '), /\b27\b/);
+  const creative = renderDashboardMarketing('creative', { data: creativeData, isPending: false, isError: false, refetch: () => {} });
+  assert.match(creative, /Criativos por leads distintos/);
+  assert.match(creative, /22 leads distintos/);
+  assert.doesNotMatch(creative.replace(/<[^>]+>/g, ' '), /\b25\b/);
+});
+
 for (const error of [{ status: 401 }, { status: 403 }, { status: 503, code: 'session_check_unavailable' }]) {
   test(`denied media refresh ${error.code ?? error.status} hides retained names, numbers and URLs`, () => {
     const html = renderDashboardMarketing("creative", { data: creativeData, isPending: false, isError: false, refetch: () => {} }, { data: { thumbnailUrl: "https://scontent.fbcdn.net/private.jpg" }, isError: true, error });

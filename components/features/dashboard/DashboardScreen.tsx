@@ -83,7 +83,7 @@ import {
   type DashboardAPIFilters,
 } from "@/lib/api/dashboard";
 import { DASHBOARD_CHART_COLORS } from "@/config/dashboard-chart-colors";
-import { DASHBOARD_LAYOUT } from "@/config/dashboard-layout";
+import { DASHBOARD_CONTRAST, DASHBOARD_LAYOUT } from "@/config/dashboard-layout";
 import { MAX_SHARED_REPORT_RANGE_DAYS } from "@/lib/filters/date-range-limits";
 import { FilterPeriodNotice } from "@/components/shared/filters/FilterPeriodNotice";
 
@@ -625,10 +625,10 @@ export default function Dashboard() {
               </div>
 
               <div className="col-span-4 flex min-h-0 flex-col gap-3">
-                <div data-tour="dashboard-funnel" className="h-[48%] min-h-0">
+                <div data-tour="dashboard-funnel" className="min-h-0 flex-[48]">
                   {funnelComponent}
                 </div>
-                <div data-tour="dashboard-sources" className="h-[52%] min-h-0">
+                <div data-tour="dashboard-sources" className="min-h-0 flex-[52]">
                   <LeadSourcesChart
                     data={sourcesData}
                     countEntries={stats?.entryBreakdownAvailable === true}
@@ -943,7 +943,7 @@ function DashboardDataError({
           type="button"
           onClick={onRetry}
           disabled={isRetrying}
-          className="h-8 shrink-0 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-primary-foreground shadow-none transition-colors hover:bg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
+          className={`h-8 shrink-0 rounded-[6px] ${DASHBOARD_CONTRAST.accent} px-3 text-[12px] font-light shadow-none transition-colors ${DASHBOARD_CONTRAST.accentHover} focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40`}
         >
           {isRetrying ? "Atualizando..." : "Tentar novamente"}
         </button>
@@ -1001,7 +1001,7 @@ function DashboardAssigneeAvatar({ name }: { name?: string | null }) {
       <Tooltip>
         <TooltipTrigger asChild>
           <div className="flex w-9 justify-end md:w-[34px]" aria-label={label}>
-            <div className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-primary/50 text-[9px] font-light text-primary-foreground ring-1 ring-primary/20">
+            <div className={`flex h-7 w-7 items-center justify-center rounded-[6px] ${DASHBOARD_CONTRAST.accent} text-[9px] font-light ring-1 ring-primary/20`}>
               {name ? getInitials(name) : "--"}
             </div>
           </div>
@@ -1252,8 +1252,8 @@ function LostDealsDialog({
         className="dashboard-dialog-shell flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden p-0 sm:h-[min(720px,calc(100dvh-32px))] sm:max-h-[calc(100dvh-32px)] sm:w-[min(960px,calc(100vw-32px))] sm:max-w-[960px] [&>button.absolute]:right-3 [&>button.absolute]:top-3 [&>button.absolute]:grid [&>button.absolute]:h-9 [&>button.absolute]:w-9 [&>button.absolute]:place-items-center sm:[&>button.absolute]:right-4 sm:[&>button.absolute]:top-4"
       >
         <DialogHeader className="shrink-0 px-4 pb-3 pr-14 pt-[calc(0.75rem+env(safe-area-inset-top))] text-left sm:px-5 sm:pt-4">
-          <DialogTitle className="flex items-center gap-2.5 text-[14px] font-light leading-snug text-[var(--app-text-primary)]">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+          <DialogTitle className="flex items-center gap-2.5 text-[16px] font-medium leading-snug text-[var(--app-text-primary)]">
+            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] ${DASHBOARD_CONTRAST.accent}`}>
               <XCircle className="h-3.5 w-3.5" />
             </span>
             <span>Perdidos - Motivos de Perda</span>
@@ -1308,14 +1308,14 @@ function LostDealsDialog({
                     Distribuição dos motivos
                   </h3>
                 </div>
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] ${DASHBOARD_CONTRAST.accent}`}>
                   <PieChartIcon className="h-3.5 w-3.5" />
                 </span>
               </div>
 
               {reasonBuckets.length === 0 ? (
                 <div className="rounded-[8px] bg-[var(--app-surface-solid)] p-4 text-center text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
-                  Nenhuma perda registrada nesse período.
+                  Nenhum lead com entrada neste período está perdido.
                 </div>
               ) : (
                 <div className="grid min-w-0 gap-3 md:grid-cols-[190px_minmax(0,1fr)] md:items-center">
@@ -1354,7 +1354,7 @@ function LostDealsDialog({
                       </PieChart>
                     </ResponsiveContainer>
                     <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="text-[10px] font-light text-[var(--app-text-tertiary)]">
+                      <span className="text-[11px] font-normal text-[var(--app-text-secondary)]">
                         Perdas
                       </span>
                       <span className="text-[30px] font-normal leading-tight text-[var(--app-text-primary)]">
@@ -1410,7 +1410,7 @@ function LostDealsDialog({
             <div className="overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none sm:p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <h3 className="text-[14px] font-light">
-                  {lostDetailsTruncated ? "Perdidos mais recentes" : "Perdidos do período"}
+                  {lostDetailsTruncated ? "Perdidos mais recentes" : "Perdidos no recorte"}
                 </h3>
                 <span className="shrink-0 text-[12px] font-light text-[var(--app-text-tertiary)]">
                   {lostDetailsTruncated
@@ -1426,7 +1426,7 @@ function LostDealsDialog({
                 />
               ) : lostDeals.length === 0 ? (
                 <div className="rounded-[8px] bg-[var(--app-surface-solid)] p-4 text-center text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
-                  Nenhum lead perdido nesse período.
+                  Nenhum lead com entrada neste período está perdido.
                 </div>
               ) : (
                 <div className="dashboard-dialog-list overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)]">
@@ -1469,8 +1469,8 @@ function LostDealsDialog({
                       </div>
                       <div className="col-span-2 grid grid-cols-2 gap-3 md:col-span-1 md:text-right">
                         <div className="min-w-0">
-                          <p className="text-[10px] font-light text-[var(--app-text-tertiary)]">
-                            Entrada
+                          <p className="text-[11px] font-normal text-[var(--app-text-secondary)]">
+                            Entrada inicial
                           </p>
                           <p className="truncate text-[11px] font-light text-[var(--app-text-primary)]">
                             {formatDateTime(deal.createdAt)}
@@ -1489,7 +1489,7 @@ function LostDealsDialog({
                         type="button"
                         onClick={() => onViewLead(deal.id)}
                         aria-label={`Visualizar ${deal.name}`}
-                        className="col-span-2 inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-primary-foreground shadow-none transition-colors hover:bg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40 md:col-span-1 md:h-9"
+                        className={`col-span-2 inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] ${DASHBOARD_CONTRAST.accent} px-3 text-[12px] font-light shadow-none transition-colors ${DASHBOARD_CONTRAST.accentHover} focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40 md:col-span-1 md:h-9`}
                       >
                         <Eye className="h-3.5 w-3.5" />
                         Visualizar
@@ -1548,8 +1548,8 @@ function WonDealsDialog({
         className="dashboard-dialog-shell flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden p-0 sm:h-[min(720px,calc(100dvh-32px))] sm:max-h-[calc(100dvh-32px)] sm:w-[min(960px,calc(100vw-32px))] sm:max-w-[960px] [&>button.absolute]:right-3 [&>button.absolute]:top-3 [&>button.absolute]:grid [&>button.absolute]:h-9 [&>button.absolute]:w-9 [&>button.absolute]:place-items-center sm:[&>button.absolute]:right-4 sm:[&>button.absolute]:top-4"
       >
         <DialogHeader className="shrink-0 px-4 pb-3 pr-14 pt-[calc(0.75rem+env(safe-area-inset-top))] text-left sm:px-5 sm:pt-4">
-          <DialogTitle className="flex items-center gap-2.5 text-[14px] font-light leading-snug text-[var(--app-text-primary)]">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+          <DialogTitle className="flex items-center gap-2.5 text-[16px] font-medium leading-snug text-[var(--app-text-primary)]">
+            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] ${DASHBOARD_CONTRAST.accent}`}>
               <Trophy className="h-3.5 w-3.5" />
             </span>
             <span>Ganhos - Tempo de Conversão</span>
@@ -1610,10 +1610,10 @@ function WonDealsDialog({
                   <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
                     {wonDetailsTruncated
                       ? "A origem considera os registros recentes exibidos; o tempo de conversão considera o total."
-                      : "Pizza por origem e tempo até o ganho dos leads captados no período filtrado."}
+                      : "Origem e tempo até o ganho dos leads distintos com entrada no período filtrado."}
                   </p>
                 </div>
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] ${DASHBOARD_CONTRAST.accent}`}>
                   <PieChartIcon className="h-3.5 w-3.5" />
                 </span>
               </div>
@@ -1625,7 +1625,7 @@ function WonDealsDialog({
                 />
               ) : sourceBuckets.length === 0 ? (
                 <div className="rounded-[8px] bg-[var(--app-surface-solid)] p-4 text-center text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
-                  Nenhum lead captado nesse período está ganho.
+                  Nenhum lead com entrada neste período está ganho.
                 </div>
               ) : (
                 <div className="grid min-w-0 gap-3 md:grid-cols-[190px_minmax(0,1fr)] md:items-center">
@@ -1664,7 +1664,7 @@ function WonDealsDialog({
                       </PieChart>
                     </ResponsiveContainer>
                     <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="text-[10px] font-light text-[var(--app-text-tertiary)]">
+                      <span className="text-[11px] font-normal text-[var(--app-text-secondary)]">
                         {wonDetailsTruncated ? "Exibidos" : "Ganhos"}
                       </span>
                       <span className="text-[30px] font-normal leading-tight text-[var(--app-text-primary)]">
@@ -1745,7 +1745,7 @@ function WonDealsDialog({
             <div className="overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none sm:p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <h3 className="text-[14px] font-light">
-                  {wonDetailsTruncated ? "Ganhos mais recentes" : "Ganhos do período"}
+                  {wonDetailsTruncated ? "Ganhos mais recentes" : "Ganhos no recorte"}
                 </h3>
                 <span className="shrink-0 text-[12px] font-light text-[var(--app-text-tertiary)]">
                   {wonDetailsTruncated
@@ -1761,7 +1761,7 @@ function WonDealsDialog({
                 />
               ) : wonDeals.length === 0 ? (
                 <div className="rounded-[8px] bg-[var(--app-surface-solid)] p-4 text-center text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
-                  Nenhum lead captado nesse período está ganho.
+                  Nenhum lead com entrada neste período está ganho.
                 </div>
               ) : (
                 <div className="dashboard-dialog-list overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)]">
@@ -1793,8 +1793,8 @@ function WonDealsDialog({
                       </div>
                       <div className="col-span-2 grid grid-cols-2 gap-3 md:col-span-1">
                         <div className="min-w-0">
-                          <p className="text-[10px] font-light text-[var(--app-text-tertiary)]">
-                            Entrada
+                          <p className="text-[11px] font-normal text-[var(--app-text-secondary)]">
+                            Entrada inicial
                           </p>
                           <p className="truncate text-[11px] font-light text-[var(--app-text-primary)]">
                             {formatDateTime(deal.createdAt)}
@@ -1821,7 +1821,7 @@ function WonDealsDialog({
                         type="button"
                         onClick={() => onViewLead(deal.id)}
                         aria-label={`Visualizar ${deal.name}`}
-                        className="col-span-2 inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-primary-foreground shadow-none transition-colors hover:bg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40 md:col-span-1 md:h-9"
+                        className={`col-span-2 inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] ${DASHBOARD_CONTRAST.accent} px-3 text-[12px] font-light shadow-none transition-colors ${DASHBOARD_CONTRAST.accentHover} focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40 md:col-span-1 md:h-9`}
                       >
                         <Eye className="h-3.5 w-3.5" />
                         Visualizar

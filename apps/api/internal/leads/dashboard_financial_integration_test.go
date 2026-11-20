@@ -199,10 +199,6 @@ const (
 )
 
 const dashboardFinancialFixtureData = `
--- These assigned synthetic leads have no managed pool override. Null keeps
--- the real own/team/all visibility predicate active for this financial check.
-create schema private;
-create function private.queue_pool_read_access(uuid,uuid,uuid) returns boolean language sql stable as 'select null::boolean';
 create table public.commissions(id uuid primary key, organization_id uuid not null, lead_id uuid, user_id uuid, amount numeric, status text);
 insert into public.users(id, name) values
  ('82222222-2222-4222-8222-222222222222','Lider sintetico'),

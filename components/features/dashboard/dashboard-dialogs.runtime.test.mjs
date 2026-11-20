@@ -225,7 +225,7 @@ for (const width of [320, 390, 1280]) for (const kind of ['won', 'lost']) test(`
     assert.ok(geometry.fragments.every(rect => rect.left >= geometry.column.left - 1 && rect.right <= geometry.column.right + 1));
     assert.deepEqual(geometry.intersections, []);
     for (const key of ['x', 'y', 'width', 'height']) assert.ok(Math.abs(shortBounds[key] - longBounds[key]) < 1, `modal ${key} changed`);
-    for (const label of ['Entrada', kind === 'won' ? 'Ganho' : 'Perda']) {
+    for (const label of ['Entrada inicial', kind === 'won' ? 'Ganho' : 'Perda']) {
       const field = row.getByText(label, { exact: true }).locator('..'); await field.scrollIntoViewIfNeeded();
       assert.match(await field.textContent(), /\d{2}\/\d{2}\/\d{2}/);
       const bounds = await field.boundingBox(); assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width + 1);

@@ -21,6 +21,8 @@ func TestDashboardEvolutionSingleBucketPostgres(t *testing.T) {
 		`create function private.queue_pool_read_access(uuid,uuid,uuid) returns boolean language sql stable as 'select null::boolean'`,
 		`alter table public.leads add column deal_status text not null default 'open', add column team_id uuid`,
 		`create table public.organization_attention_settings(organization_id uuid primary key, timezone text)`,
+		`drop table public.lead_entry_events`, // Empty table in the disposable Pipeline fixture.
+		dashboardEntryFixtureTable,
 	} {
 		pipelinePostgresExec(t, ctx, connection, statement)
 	}
@@ -82,6 +84,8 @@ func TestDashboardEvolutionSingleBucketPostgres(t *testing.T) {
 	} {
 		pipelinePostgresExec(t, ctx, connection, `insert into public.leads(id,organization_id,assigned_user_id,source,deal_status,created_at) values($1,$2,$3,$4,$5,$6)`,
 			pipelinePostgresID(8000+index), row.organization, row.owner, row.source, row.status, row.createdAt)
+		pipelinePostgresExec(t, ctx, connection, `insert into public.lead_entry_events(id,lead_id,organization_id,source,entry_type,occurred_at,created_at) values($1,$2,$3,$4,'initial',$5,$5)`,
+			pipelinePostgresID(8100+index), pipelinePostgresID(8000+index), row.organization, row.source, row.createdAt)
 	}
 	admin := tenant.Context{UserID: adminID, OrganizationID: organizationA, MemberRole: "admin"}
 	adminB := tenant.Context{UserID: adminBID, OrganizationID: organizationB, MemberRole: "admin"}

@@ -103,6 +103,7 @@ export function DashboardKpiCard({
   spark,
   hint,
   compact = false,
+  wrapNote = false,
   className,
   onClick,
 }: {
@@ -115,6 +116,7 @@ export function DashboardKpiCard({
   hint?: string;
   /** Without the sparkline row, for the second line of KPIs. */
   compact?: boolean;
+  wrapNote?: boolean;
   className?: string;
   onClick?: (trigger: HTMLElement) => void;
 }) {
@@ -146,8 +148,8 @@ export function DashboardKpiCard({
         </p>
         {compact ? null : spark ? <DashboardSparkline values={spark} /> : <div className="mt-2 h-[22px]" aria-hidden="true" />}
         <div className="min-h-2 flex-1" aria-hidden="true" />
-        <div className="flex items-baseline justify-between gap-2 border-t border-[var(--app-border)] pt-2 text-[10px] font-light text-[var(--app-text-tertiary)]">
-          <span className="min-w-0 truncate">{note ?? " "}</span>
+        <div className="flex items-baseline justify-between gap-2 border-t border-[var(--app-border)] pt-2 text-[11px] font-normal leading-4 text-[var(--app-text-secondary)]">
+          <span className={cn("min-w-0", wrapNote ? "line-clamp-2" : "truncate")} title={typeof note === "string" ? note : undefined}>{note ?? " "}</span>
           {delta ? (
             <span title="Comparado ao período anterior" className={cn("shrink-0 whitespace-nowrap tabular-nums", DELTA_TONE[delta.tone])}>
               {delta.text}

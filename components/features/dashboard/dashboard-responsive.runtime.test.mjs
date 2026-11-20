@@ -15,7 +15,7 @@ const { webpack } = require('next/dist/compiled/webpack/webpack.js');
 const postcss = require('postcss');
 const tailwind = require('@tailwindcss/postcss');
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const artifacts = resolve(process.env.DASHBOARD_VISUAL_ARTIFACT_DIR || 'D:/Vimob/tmp/dashboard-responsive-hardening-20261012');
+const artifacts = resolve(process.env.DASHBOARD_VISUAL_ARTIFACT_DIR || 'D:/Vimob/outputs/dashboard-contagens-polimento-local/visual');
 let directory, browser, bundle, css;
 before(async () => {
   directory = await mkdtemp(join(tmpdir(), 'vimob-dashboard-responsive-'));
@@ -132,6 +132,53 @@ for (const [width, height] of [[320, 568], [390, 844], [1024, 768], [1280, 800],
     } finally { await page.close(); }
   });
 }
+
+for (const width of [390, 1024, 1280]) test(`broker density keeps heading and labels separate at ${width}px`, async () => {
+  const page = await browser.newPage({ viewport: { width, height: width === 1024 ? 768 : 800 } });
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.route('**/*', route => route.abort());
+  try {
+    await page.setContent('<html><body><div id="root"></div></body></html>');
+    await page.addStyleTag({ content: css }); await page.addScriptTag({ content: bundle });
+    const card = page.locator('[data-dashboard-distribution="user"]');
+    await card.waitFor();
+    for (const count of [2, 3, 4, 6, 8, 11]) {
+      await page.evaluate(count => {
+        window.h.distribution.users = Array.from({ length: count }, (_, index) => ({
+          id: `density-${index}`, name: `Corretor sintético ${index + 1}`, kind: 'entity', leadCount: (index + 1) * 50,
+        }));
+        window.h.render();
+      }, count);
+      await page.waitForFunction(count => document.querySelectorAll('[data-dashboard-distribution="user"] button[aria-pressed]').length === count, count);
+      await card.scrollIntoViewIfNeeded();
+      const geometry = await card.evaluate(element => {
+        const rect = node => { const bounds = node.getBoundingClientRect(); return { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom, width: bounds.width }; };
+        const region = element.querySelector('[role="region"]');
+        const buttons = [...region.querySelectorAll('button[aria-pressed]')];
+        return {
+          card: rect(element), heading: rect(element.querySelector('h3')), region: rect(region),
+          clientWidth: region.clientWidth, scrollWidth: region.scrollWidth,
+          documentFits: document.documentElement.scrollWidth <= innerWidth,
+          bars: buttons.map(button => ({ count: rect(button.firstElementChild), name: rect(button.lastElementChild), bar: rect(button.querySelector(':scope > span[aria-hidden="true"]')) })),
+          evolution: innerWidth >= 1024 ? rect(document.querySelector('[data-tour="dashboard-evolution"] > section')) : null,
+        };
+      });
+      assert.ok(geometry.documentFits, `${count}/${width}: page overflow`);
+      for (const item of geometry.bars) {
+        assert.ok(item.count.top >= geometry.region.top - 1, `${count}/${width}: count above chart viewport`);
+        assert.ok(item.count.top >= geometry.heading.bottom + 8, `${count}/${width}: count collides with heading`);
+        assert.ok(item.name.bottom <= geometry.region.bottom + 1 && item.name.bottom <= geometry.card.bottom - 8, `${count}/${width}: clipped name`);
+        assert.ok(item.bar.width >= 36 && item.bar.width <= (count <= 2 ? 96 : count <= 4 ? 112 : count === 6 ? 88 : 80) + 1, `${count}/${width}: invalid bar width ${item.bar.width}`);
+      }
+      if (width >= 1024 && count <= 6) assert.ok(geometry.scrollWidth <= geometry.clientWidth + 1, `${count}/${width}: unnecessary desktop scrolling`);
+      if (count >= 8) assert.ok(geometry.bars.every(item => item.bar.width >= 64), `${count}/${width}: dense bars became too thin`);
+      if (width === 390 && count >= 8) assert.ok(geometry.scrollWidth > geometry.clientWidth, `${count}/${width}: missing horizontal scroll`);
+      if (geometry.evolution) assert.ok(geometry.evolution.top >= geometry.card.bottom + 15, `${count}/${width}: independent cards intersect`);
+      if (count === 3 || count === 11) await card.screenshot({ path: join(artifacts, `broker-density-${count}-${width}.png`) });
+    }
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
 
 test('load metric records elapsed time only after scoped stats and evolution both succeed', async () => {
   for (const mode of ['success', 'denied', 'evolution-error', 'disabled', 'missing-stats', 'missing-evolution']) {

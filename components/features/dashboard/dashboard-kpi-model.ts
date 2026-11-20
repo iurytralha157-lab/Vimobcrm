@@ -25,8 +25,3 @@ export function dashboardKpiRates(data: RateInput) {
     won: data.totalLeads > 0 ? (data.closedLeads / data.totalLeads) * 100 : 0,
   };
 }
-
-/** Cards created in each interval, the same series the evolution chart stacks. */
-export function dashboardCardsSpark(points: ReadonlyArray<{ abertos: number; ganhos: number; perdas: number }>) {
-  return points.map((point) => point.abertos + point.ganhos + point.perdas);
-}

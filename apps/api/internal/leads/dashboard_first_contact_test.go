@@ -223,18 +223,18 @@ func TestDashboardFirstContactKeepsEverySharedFilterAndScopesThePerson(t *testin
 	}
 }
 
-func TestDashboardDealCohortUsesLeadOriginForWonAndLost(t *testing.T) {
+func TestDashboardDealCohortUsesCRMEntriesForWonAndLost(t *testing.T) {
 	from := time.Date(2026, time.September, 22, 0, 0, 0, 0, time.UTC)
 	to := from.Add(24 * time.Hour)
 	tenantContext := tenant.Context{OrganizationID: "11111111-1111-4111-8111-111111111111", MemberRole: "admin"}
 	for _, status := range []string{"won", "lost"} {
-		where, _, err := (Repository{}).buildDashboardLeadWhere(tenantContext,
-			DashboardFilter{DateFrom: &from, DateTo: &to}, dashboardDealCohortOptions(status))
+		where, _, err := (Repository{}).buildDashboardCardCohortWhere(tenantContext,
+			DashboardFilter{DateFrom: &from, DateTo: &to}, status)
 		if err != nil {
 			t.Fatalf("cohort where for %s: %v", status, err)
 		}
 		query := strings.Join(where, " and ")
-		for _, fragment := range []string{"l.created_at >=", "l.created_at <=", "l.deal_status ="} {
+		for _, fragment := range []string{"l.created_at >=", "l.created_at <=", "e.created_at >=", "e.created_at <=", "l.deal_status ="} {
 			if !strings.Contains(query, fragment) {
 				t.Fatalf("%s cohort missing %q: %s", status, fragment, query)
 			}

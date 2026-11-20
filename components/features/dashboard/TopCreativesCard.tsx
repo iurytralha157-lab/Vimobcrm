@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { ExternalLink, ImageOff, Video } from "lucide-react";
 
+import { DASHBOARD_CONTRAST } from "@/config/dashboard-layout";
 import { DashboardChartError } from "@/components/features/dashboard/DashboardChartError";
 import { dashboardCreativeDisplayName } from "@/components/features/dashboard/creative-display";
 import { getDashboardCreativeSafeUrl } from "@/components/features/dashboard/creative-thumbnail-url";
@@ -156,14 +157,14 @@ function CreativeRow({ creative, rank, filters, rankingUpdatedAt, onRetryRanking
     ? getDashboardCreativeSafeUrl(displayCreative.imageUrl)
       ?? getDashboardCreativeSafeUrl(displayCreative.thumbnailUrl)
     : null;
-  const actionLabel = `${rank}º lugar, ${displayName}, ${campaignLabel}, ${displayCreative.leadCount} ${displayCreative.leadCount === 1 ? "lead" : "leads"}. ${isVideo ? "Abrir vídeo" : "Visualizar imagem"}`;
+  const actionLabel = `${rank}º lugar, ${displayName}, ${campaignLabel}, ${displayCreative.leadCount} ${displayCreative.leadCount === 1 ? "lead distinto" : "leads distintos"}. ${isVideo ? "Abrir vídeo" : "Visualizar imagem"}`;
   const rowClassName = "grid min-w-0 w-full grid-cols-[28px_40px_minmax(0,1fr)_auto] items-center gap-2.5 px-2 py-1.5 text-left";
   const interactiveClassName = `${rowClassName} rounded-[6px] transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary`;
 
   const content = (
     <>
       <span
-        className={`flex h-[22px] items-center justify-center rounded-[6px] text-[11px] font-medium tabular-nums ${rank === 1 ? "bg-primary text-primary-foreground" : rank <= 3 ? "bg-primary/15 text-primary" : "bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]"}`}
+        className={`flex h-[22px] items-center justify-center rounded-[6px] text-[11px] font-medium tabular-nums ${rank === 1 ? DASHBOARD_CONTRAST.accent : "bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]"}`}
         title={`${rank}º lugar`}
       >
         {rank}º
@@ -179,13 +180,13 @@ function CreativeRow({ creative, rank, filters, rankingUpdatedAt, onRetryRanking
         <p className="truncate text-[12px] font-normal leading-4 text-[var(--app-text-primary)]" title={displayName}>
           {displayName}
         </p>
-        <p className="mt-0.5 truncate text-[11px] font-light leading-4 text-[var(--app-text-secondary)]" title={campaignLabel}>
+        <p className="mt-0.5 truncate text-[12px] font-normal leading-4 text-[var(--app-text-secondary)]" title={campaignLabel}>
           {campaignLabel}
         </p>
       </div>
       <p className="text-right leading-4">
         <span className="block text-[14px] font-normal tabular-nums text-[var(--app-text-primary)]">{displayCreative.leadCount.toLocaleString("pt-BR")}</span>
-        <span className="block text-[10px] font-light text-[var(--app-text-tertiary)]">{displayCreative.leadCount === 1 ? "lead" : "leads"}</span>
+        <span className="block text-[11px] font-normal text-[var(--app-text-secondary)]">{displayCreative.leadCount === 1 ? "lead distinto" : "leads distintos"}</span>
       </p>
     </>
   );
@@ -238,7 +239,7 @@ function CreativeImageDialog({ creative, onClose, onUnavailable, onRetry, isRefr
         <DialogHeader className="min-w-0 pr-6 text-left">
           <DialogTitle className="break-words text-[15px] font-medium leading-5">{title}</DialogTitle>
           <DialogDescription className="break-words text-[11px]">
-            {creative?.campaignName ?? "Campanha não identificada"} · {creative?.leadCount.toLocaleString("pt-BR") ?? 0} {creative?.leadCount === 1 ? "lead" : "leads"}
+            {creative?.campaignName ?? "Campanha não identificada"} · {creative?.leadCount.toLocaleString("pt-BR") ?? 0} {creative?.leadCount === 1 ? "lead distinto" : "leads distintos"}
           </DialogDescription>
         </DialogHeader>
         <div className="relative flex h-[58vh] min-h-[240px] max-h-[650px] items-center justify-center overflow-hidden rounded-[6px] bg-[var(--app-surface-soft)]">
@@ -330,7 +331,7 @@ export function TopCreativesCard({ filters, filtersReady }: TopCreativesCardProp
       <div className="flex h-full min-w-0 flex-col rounded-[12px] bg-[var(--app-surface-solid)] p-4">
         <div className="mb-2 flex min-h-7 min-w-0 items-center justify-between gap-2">
           <h3 id="dashboard-creatives-title" className="min-w-0 text-[14px] font-normal leading-5 text-[var(--app-text-primary)]">
-            Criativos que mais geraram leads
+            Criativos por leads distintos
           </h3>
           {visibleData?.creatives.length ? (
             <span className="shrink-0 text-[12px] font-light text-[var(--app-text-secondary)]">

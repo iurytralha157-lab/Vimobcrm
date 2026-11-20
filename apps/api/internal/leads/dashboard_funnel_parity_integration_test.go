@@ -142,9 +142,8 @@ func TestDashboardFunnelPipelineParityReadOnlyIntegration(t *testing.T) {
 		t.Fatalf("Dashboard/Pipeline cohort classification did not reconcile")
 	}
 
-	// Exercise the shared origin-date and current-status filters used by both
-	// Dashboard and Pipeline. This detects a semantic drift that all-time totals
-	// alone would not expose.
+	// Pipeline origin mode counts creations. The Dashboard funnel can also
+	// include older cards that have a counted Vimob reentry in the period.
 	dateTo := time.Now().UTC()
 	dateFrom := dateTo.AddDate(0, 0, -7)
 	filteredDashboard := DashboardFilter{
@@ -154,7 +153,7 @@ func TestDashboardFunnelPipelineParityReadOnlyIntegration(t *testing.T) {
 		PipelineID: pipelineID, StageIDs: stageIDs, DateMode: PipelineBoardDateModeOrigin,
 		DateFrom: &dateFrom, DateTo: &dateTo, FilterDealStatus: "open",
 	}
-	filteredStats, err := repo.dashboardAggregate(ctx, db.Pool(), viewer, filteredDashboard, dashboardLeadWhereOptions{DateColumn: "created_at"})
+	filteredStats, err := repo.dashboardAggregate(ctx, db.Pool(), viewer, filteredDashboard)
 	if err != nil {
 		t.Fatalf("count filtered Dashboard leads: %v", err)
 	}
@@ -173,8 +172,21 @@ func TestDashboardFunnelPipelineParityReadOnlyIntegration(t *testing.T) {
 	for _, stage := range stages {
 		filteredBoardTotal += filteredMetrics[stage.ID].LeadCount
 	}
-	t.Logf("seven_day_open_cohort dashboard=%d funnel=%d pipeline_board=%d", filteredStats.Total, filteredFunnelTotal, filteredBoardTotal)
-	if filteredStats.Total != filteredFunnelTotal || filteredFunnelTotal != filteredBoardTotal {
-		t.Fatalf("filtered Dashboard/Pipeline cohort did not reconcile")
+	var reenteredOutsideOrigin int64
+	if err := db.Pool().QueryRow(ctx, `
+		select count(distinct l.id)::bigint
+		from public.leads l join public.lead_entry_events e
+		  on e.organization_id = l.organization_id and e.lead_id = l.id
+		where l.organization_id = $1::uuid and l.pipeline_id = $2::uuid
+		  and l.stage_id = any($3::uuid[]) and l.deal_status = 'open'
+		  and private.queue_pool_read_access(l.organization_id, l.id, $4::uuid) is distinct from false
+		  and not (l.created_at between $5 and $6)
+		  and e.entry_type = 'reentry' and e.is_countable and e.created_at between $5 and $6
+	`, organizationID, pipelineID, stageIDs, viewerUserID, dateFrom, dateTo).Scan(&reenteredOutsideOrigin); err != nil {
+		t.Fatalf("count reentered cards outside the Pipeline origin window: %v", err)
+	}
+	t.Logf("seven_day_open_cohort dashboard=%d funnel=%d pipeline_board=%d reentered=%d", filteredStats.Total, filteredFunnelTotal, filteredBoardTotal, reenteredOutsideOrigin)
+	if filteredFunnelTotal > filteredStats.Total || filteredFunnelTotal != filteredBoardTotal+reenteredOutsideOrigin {
+		t.Fatalf("Dashboard funnel must match visible Pipeline creations plus distinct reentered cards")
 	}
 }

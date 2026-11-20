@@ -11,7 +11,6 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { DashboardChartTooltip } from './DashboardChartTooltip';
-import { NEUTRAL_SOFT, NEUTRAL_STRONG } from '@/components/features/dashboard/dashboard-ui';
 import { cn } from '@/lib/utils';
 import { DashboardChartError } from './DashboardChartError';
 import { dashboardEvolutionTickLayout, dashboardEvolutionTickLines, dashboardEvolutionTickWidth } from '@/components/features/dashboard/evolution-chart-model';
@@ -33,9 +32,9 @@ interface DealsEvolutionChartProps {
 const SKELETON_BAR_HEIGHTS = [96, 128, 72, 112, 88, 136, 104];
 const INITIAL_CHART_DIMENSION = { width: 600, height: 250 };
 const chartTickStyle = {
-  fill: 'var(--app-text-tertiary)',
-  fontSize: 10,
-  fontWeight: 300,
+  fill: 'var(--app-text-secondary)',
+  fontSize: 11,
+  fontWeight: 400,
 };
 
 function ChartSkeleton() {
@@ -113,20 +112,20 @@ function EvolutionAxisTick({ x = 0, y = 0, payload, chartWidth, hourly }: {
 
 // Neutral volume with the accent on what was won, as in the Marketing reference.
 const EVOLUTION_FILLS = {
-  abertos: 'color-mix(in srgb, var(--app-text-primary) 11%, transparent)',
-  perdas: 'color-mix(in srgb, var(--app-text-primary) 27%, transparent)',
+  abertos: 'color-mix(in srgb, var(--app-text-primary) 55%, transparent)',
+  perdas: 'color-mix(in srgb, var(--app-text-primary) 80%, transparent)',
   ganhos: 'var(--primary)',
 };
 
 const EVOLUTION_LEGEND = [
-  { key: 'abertos', label: 'Em aberto', className: NEUTRAL_SOFT },
-  { key: 'perdas', label: 'Perdidos', className: NEUTRAL_STRONG },
+  { key: 'abertos', label: 'Em aberto', className: 'bg-[color-mix(in_srgb,var(--app-text-primary)_55%,transparent)]' },
+  { key: 'perdas', label: 'Perdidos', className: 'bg-[color-mix(in_srgb,var(--app-text-primary)_80%,transparent)]' },
   { key: 'ganhos', label: 'Ganhos', className: 'bg-primary' },
 ] as const;
 
 export function DealsEvolutionLegend({ className }: { className?: string }) {
   return (
-    <ul className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-light text-[var(--app-text-secondary)]', className)}>
+    <ul className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] font-normal text-[var(--app-text-secondary)]', className)}>
       {EVOLUTION_LEGEND.map((item) => (
         <li key={item.key} className="flex items-center gap-1.5">
           <span className={cn('h-2.5 w-2.5 rounded-[2px]', item.className)} aria-hidden="true" />
@@ -137,7 +136,7 @@ export function DealsEvolutionLegend({ className }: { className?: string }) {
   );
 }
 
-/** Cards created in each interval, stacked by their current state. */
+/** Distinct leads grouped by their first matching CRM entry and current state. */
 export function DealsEvolutionChart(props: DealsEvolutionChartProps) {
   return (
     <section className="flex h-full min-h-0 min-w-0 flex-col rounded-[12px] bg-[var(--app-surface-solid)] p-4">
@@ -181,7 +180,7 @@ function DealsEvolutionBars({ data, isLoading, isError, onRetry }: DealsEvolutio
   const barGap = data.length > 40 ? 1 : data.length > 20 ? 2 : 4;
 
   return (
-    <div className="relative min-h-[160px] w-full flex-1" role="img" aria-label={`Evolução de negócios em ${data.length} intervalos: cards em aberto, perdidos e ganhos.`}>
+    <div className="relative min-h-[160px] w-full flex-1" role="img" aria-label={`Evolução de negócios em ${data.length} intervalos: leads distintos com entrada no período, por estado atual em aberto, perdido ou ganho.`}>
       <ResponsiveContainer
         width="100%"
         height="100%"

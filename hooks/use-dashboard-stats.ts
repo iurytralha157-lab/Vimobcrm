@@ -12,7 +12,6 @@ import {
   getDashboardOptionalIdQueryKey,
   getDashboardSources,
   getDashboardStats,
-  getDashboardTopBrokers,
   getDashboardUpcomingTasks,
   type DashboardDealsEvolutionPoint,
   type DashboardAPIFilters,
@@ -21,7 +20,6 @@ import {
   type DashboardFirstContactResponse,
   type DashboardFirstContactLeadPageResponse,
   type DashboardStatsResponse,
-  type DashboardTopBrokersResponse,
   type DashboardUpcomingTask,
 } from "@/lib/api/dashboard";
 import { performanceTracker } from "@/lib/performance";
@@ -88,26 +86,11 @@ export function useDashboardQueryScope() {
 
 export type DealsEvolutionPoint = DashboardDealsEvolutionPoint;
 
-export interface DashboardStats {
-  totalLeads: number;
-  leadsInProgress: number;
-  leadsClosed: number;
-  leadsLost: number;
-  leadsTrend: number;
-  closedTrend: number;
-}
-
 export type EnhancedDashboardStats = DashboardStatsResponse;
 export type WonConversionBucket = DashboardStatsResponse["wonConversionBuckets"][number];
 export type WonDealDetail = DashboardStatsResponse["wonDeals"][number];
 export type LostReasonBucket = DashboardStatsResponse["lostReasonBuckets"][number];
 export type LostDealDetail = DashboardStatsResponse["lostDeals"][number];
-
-export interface ChartDataPoint {
-  name: string;
-  meta: number;
-  site: number;
-}
 
 export type FunnelDataPoint = DashboardFunnelPoint;
 
@@ -123,39 +106,10 @@ function getDashboardSourceLabel(value: string) {
     : undefined;
 }
 
-export type TopBroker = DashboardTopBrokersResponse["brokers"][number];
-export type TopBrokersResult = DashboardTopBrokersResponse;
 export type DashboardLeadDistribution = DashboardLeadDistributionResponse;
 export type DashboardFirstContact = DashboardFirstContactResponse;
 export type DashboardFirstContactLeadPage = DashboardFirstContactLeadPageResponse;
 export type UpcomingTask = DashboardUpcomingTask;
-
-export function useDashboardStats() {
-  const { organizationId, currentUserId, accessSignature, isReady } =
-    useDashboardQueryScope();
-
-  return useQuery({
-    queryKey: [
-      "dashboard-stats",
-      organizationId,
-      currentUserId,
-      accessSignature,
-    ],
-    enabled: isReady,
-    queryFn: async ({ signal }): Promise<DashboardStats> => {
-      const stats = await getDashboardStats({ organizationId, signal });
-      return {
-        totalLeads: stats.totalLeads,
-        leadsInProgress: stats.leadsInProgress ?? stats.openLeads,
-        leadsClosed: stats.leadsClosed ?? stats.closedLeads,
-        leadsLost: stats.leadsLost ?? stats.lostLeads,
-        leadsTrend: stats.leadsTrend,
-        closedTrend: stats.closedTrend,
-      };
-    },
-    staleTime: DASHBOARD_STALE_TIME_MS,
-  });
-}
 
 export function useEnhancedDashboardStats(
   filters?: DashboardAPIFilters,
@@ -189,25 +143,6 @@ export function useEnhancedDashboardStats(
     refetchOnMount: true,
     refetchOnWindowFocus: true,
   }, { accessSignature, isReady });
-}
-
-export function useLeadsChartData() {
-  const { organizationId, currentUserId, accessSignature, isReady } =
-    useDashboardQueryScope();
-
-  return useQuery({
-    queryKey: [
-      "leads-chart-data",
-      organizationId,
-      currentUserId,
-      accessSignature,
-    ],
-    enabled: isReady,
-    queryFn: async (): Promise<ChartDataPoint[]> => {
-      return [];
-    },
-    staleTime: DASHBOARD_STALE_TIME_MS,
-  });
 }
 
 export function useFunnelData(
@@ -285,26 +220,6 @@ export function useLeadSourcesData(
     staleTime: DASHBOARD_STALE_TIME_MS,
     refetchOnMount: true,
     refetchOnWindowFocus: true,
-  });
-}
-
-export function useTopBrokers(filters?: DashboardAPIFilters) {
-  const { organizationId, currentUserId, accessSignature, isReady } =
-    useDashboardQueryScope();
-  const filterKey = getDashboardFiltersQueryKey(filters);
-
-  return useQuery({
-    queryKey: [
-      "top-brokers",
-      organizationId,
-      currentUserId,
-      accessSignature,
-      filterKey,
-    ],
-    enabled: isReady,
-    queryFn: ({ signal }) =>
-      getDashboardTopBrokers({ organizationId, filters, signal }),
-    staleTime: DASHBOARD_STALE_TIME_MS,
   });
 }
 

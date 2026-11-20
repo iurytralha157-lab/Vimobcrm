@@ -232,7 +232,7 @@ func (dashboardAggregateFixtureRow) Scan(targets ...any) error {
 
 func TestDashboardPreviousStatusCountsShareOneAggregateQuery(t *testing.T) {
 	query := &dashboardAggregateRecordingQuery{}
-	result, err := (Repository{}).dashboardAggregate(context.Background(), query, tenant.Context{MemberRole: "admin"}, DashboardFilter{}, dashboardLeadWhereOptions{DateColumn: "created_at"})
+	result, err := (Repository{}).dashboardAggregate(context.Background(), query, tenant.Context{MemberRole: "admin"}, DashboardFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { AlertTriangle, ArrowUpRight, CalendarDays, Clock3, RefreshCw, UsersRound } from 'lucide-react'
 
+import { DASHBOARD_CONTRAST } from '@/config/dashboard-layout'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -71,7 +72,7 @@ function VisitPerson({ label, name, avatarUrl }: { label: string; name: string; 
 
   return (
     <div className="min-w-0">
-      <p className="mb-0.5 text-[10px] font-light text-[var(--app-text-tertiary)]">{label}</p>
+      <p className="mb-0.5 text-[11px] font-normal text-[var(--app-text-secondary)]">{label}</p>
       <div className="flex min-w-0 items-center gap-1.5">
         <Avatar className="h-6 w-6 border border-[var(--app-border)]">
           <AvatarImage src={avatarUrl ?? undefined} alt={displayName} />
@@ -103,7 +104,7 @@ function VisitRow({ visit, timezone, canOpenAgenda, canOpenLead, onNavigate }: {
         </Avatar>
         <div className="min-w-0">
           <p className="truncate text-[12px] font-normal text-[var(--app-text-primary)]" title={leadName}>{leadName}</p>
-          <p className="truncate text-[10px] font-light text-[var(--app-text-tertiary)]" title={source}>
+          <p className="truncate text-[11px] font-normal text-[var(--app-text-secondary)]" title={source}>
             {visit.event_type === 'meeting' ? 'Reunião' : 'Visita'} · {source}
           </p>
           {visit.title ? <p className="truncate text-[10px] font-light text-[var(--app-text-secondary)]" title={visit.title}>{visit.title}</p> : null}
@@ -116,7 +117,7 @@ function VisitRow({ visit, timezone, canOpenAgenda, canOpenLead, onNavigate }: {
           </span>
           <span className="min-w-0 truncate font-normal text-[var(--app-text-primary)]" title={startLabel}>{startLabel}</span>
         </div>
-        <p className="mt-0.5 truncate text-[10px] font-light text-[var(--app-text-tertiary)]" title={`Marcada em ${createdLabel}`}>
+        <p className="mt-0.5 truncate text-[11px] font-normal text-[var(--app-text-secondary)]" title={`Marcada em ${createdLabel}`}>
           Marcada em {createdLabel}
         </p>
       </div>
@@ -130,7 +131,7 @@ function VisitRow({ visit, timezone, canOpenAgenda, canOpenLead, onNavigate }: {
             <Link
               href={`/agenda?event=${encodeURIComponent(visit.id)}`}
               onNavigate={onNavigate}
-              className="inline-flex h-8 min-w-0 items-center justify-center gap-1 rounded-[6px] bg-primary/50 px-2.5 text-[11px] font-light text-primary-foreground transition-colors hover:bg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
+              className={`inline-flex h-8 min-w-0 items-center justify-center gap-1 rounded-[6px] ${DASHBOARD_CONTRAST.accent} px-2.5 text-[12px] font-normal transition-colors ${DASHBOARD_CONTRAST.accentHover} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary`}
               aria-label={`Abrir compromisso de ${leadName} na Agenda`}
             >
               Abrir na Agenda <ArrowUpRight className="h-3 w-3 shrink-0" aria-hidden="true" />
@@ -252,7 +253,7 @@ export function DashboardVisitsDialog({ open, onOpenChange, onCloseAutoFocus, on
       <DialogContent onCloseAutoFocus={onCloseAutoFocus} aria-describedby={undefined} className="dashboard-dialog-shell flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden p-0 sm:h-[min(680px,calc(100dvh-32px))] sm:max-h-[calc(100dvh-32px)] sm:w-[min(960px,calc(100vw-32px))] sm:max-w-[960px] [&>button.absolute]:right-3 [&>button.absolute]:top-3 [&>button.absolute]:grid [&>button.absolute]:h-9 [&>button.absolute]:w-9 [&>button.absolute]:place-items-center sm:[&>button.absolute]:right-4 sm:[&>button.absolute]:top-4">
         <DialogHeader className="shrink-0 px-4 pb-3 pr-14 pt-[calc(0.75rem+env(safe-area-inset-top))] text-left sm:px-5 sm:pt-4">
           <DialogTitle className="flex items-center gap-2.5 text-[16px] font-medium leading-snug text-[var(--app-text-primary)]">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] ${DASHBOARD_CONTRAST.accent}`}>
               <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
             </span>
             Visitas e reuniões

@@ -6,3 +6,10 @@ export const DASHBOARD_LAYOUT = {
   mobileFunnel: "h-[clamp(280px,42dvh,360px)]",
   mobileSources: "h-[clamp(320px,48dvh,390px)]",
 } as const;
+
+// Darken the theme accent for small labels and actions with white text.
+export const DASHBOARD_CONTRAST = {
+  accent: "bg-[color-mix(in_srgb,var(--primary)_76%,black)] text-primary-foreground",
+  accentHover: "hover:bg-[color-mix(in_srgb,var(--primary)_66%,black)]",
+  accentText: "text-[color-mix(in_srgb,var(--primary)_72%,black)] dark:text-[color-mix(in_srgb,var(--primary)_86%,white)]",
+} as const;

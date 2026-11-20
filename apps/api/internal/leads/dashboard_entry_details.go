@@ -22,8 +22,9 @@ const (
 	dashboardEntryCursorMaxLength    = 512
 )
 
-// DashboardLeadEntryDetail is one arrival, not one card. The URL is a local
-// pipeline deep link; opening it performs the usual lead authorization again.
+// DashboardLeadEntryDetail is one CRM-recorded arrival, not one card. OccurredAt
+// is the Dashboard recording time, rather than the provider's occurrence time.
+// Its local pipeline deep link performs the usual lead authorization again.
 type DashboardLeadEntryDetail struct {
 	EntryID      string  `json:"entryId"`
 	LeadID       string  `json:"leadId"`

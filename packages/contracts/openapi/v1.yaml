@@ -1497,12 +1497,12 @@ paths:
     get:
       summary: Get dashboard KPI stats for visible leads
       description: >-
-        totalLeads and the open, won and lost totals count unique visible lead
-        cards selected by leads.created_at and their current deal status.
-        totalEntries counts one initial arrival per visible card plus countable
-        reentry events. For entries, date, source, page and campaign filters use
-        that arrival; pipeline, owner, team, status, tags and visibility use the
-        current card. Won conversion time still measures creation to closing.
+        totalEntries counts one initial entry at leads.created_at and each
+        countable reentry at lead_entry_events.created_at. Attribution filters
+        match the same entry. Pipeline, owner, team, status, tags and visibility
+        use the current card. totalLeads and the open, won and lost totals count
+        distinct visible leads with a matching entry, classified by current
+        status. Won conversion time measures creation to closing.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/DashboardDateFrom"
@@ -1535,7 +1535,8 @@ paths:
         Uses the same card scope and entry-level filters as totalEntries. Each
         visible card contributes one initial arrival even when historical
         initial ledger rows are duplicated. Reentries require countable ledger
-        events. Pipeline name reflects the card's current pipeline.
+        events. occurredAt is the entry date in Vimob. Pipeline name reflects
+        the card's current pipeline.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/DashboardDateFrom"
@@ -1604,8 +1605,8 @@ paths:
     get:
       summary: Get dashboard card or arrival counts by source
       description: >-
-        By default, groups visible lead cards by their current source and
-        creation date for older clients. Set countEntries=true to group the
+        By default, groups distinct visible lead cards with a matching entry
+        by their current source. Set countEntries=true to group the
         same initial arrivals and countable reentries as stats.totalEntries.
         Entry mode uses each arrival's date and source/page/campaign/ad
         attribution; current card ownership, team, pipeline, status, tags and
@@ -1796,12 +1797,13 @@ paths:
     get:
       summary: Get visible lead counts by current assignee and current team membership
       description: >-
-        Available only to organization owners, administrators and team leaders.
-        Both dimensions select visible leads by created_at (origin date). User
+        Available to superadmins, organization owners and admins, team leaders,
+        and managers with lead_view_all.
+        Both dimensions count distinct visible leads with a matching entry. User
         counts respect every dashboard filter, including teamId, and include
-        eligible active users with zero leads. The team dimension ignores only
-        teamId and preserves the other filters. It attributes each lead to every
-        active team of its current assignee, including leads assigned directly
+        eligible active users with zero leads. The team dimension also respects
+        teamId. It attributes each lead to the matching active teams of its
+        current assignee, including leads assigned directly
         to that assignee. A lead can therefore count in multiple teams. Active
         authorized teams appear with zero when they have no matching leads.
         totalLeads is the sum of user buckets and need not equal the sum of team
@@ -1840,7 +1842,8 @@ paths:
     get:
       summary: Get first human contact and redistribution performance
       description: >-
-        Available only to organization owners, administrators and team leaders.
+        Available to superadmins, organization owners and admins, team leaders,
+        and managers with lead_view_all.
         All dashboard filters, including dateFrom and dateTo, select the visible
         lead cohort by the lead's created_at (origin date). The average is based
         on recorded human first contacts, grouped by the responding broker;
@@ -1945,6 +1948,9 @@ paths:
   /v1/dashboard/deals-evolution:
     get:
       summary: Get dashboard deals evolution chart data
+      description: >-
+        Counts each visible lead once in the interval of its first matching
+        Vimob entry and groups it by current deal status.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/DashboardDateFrom"
@@ -21195,7 +21201,10 @@ components:
         entryId: { type: string }
         leadId: { type: string, format: uuid }
         name: { type: string }
-        occurredAt: { type: string, format: date-time }
+        occurredAt:
+          type: string
+          format: date-time
+          description: Date registered in Vimob for this dashboard entry.
         source: { type: [string, "null"] }
         campaignName: { type: [string, "null"] }
         pipelineId: { type: [string, "null"], format: uuid }
@@ -21243,7 +21252,7 @@ components:
         totalLeads:
           type: integer
           format: int64
-          description: Unique cards in the legacy created-at cohort.
+          description: Distinct visible lead cards with at least one matching entry.
         uniqueLeads:
           type: integer
           format: int64

@@ -25,10 +25,6 @@ type dashboardLeadWhereOptions struct {
 	ForceDealStatus string
 }
 
-func dashboardDealCohortOptions(status string) dashboardLeadWhereOptions {
-	return dashboardLeadWhereOptions{DateColumn: "created_at", ForceDealStatus: status}
-}
-
 const currentAssigneeTeamFilterSQL = `exists (
 	select 1
 	from public.team_members dtm
@@ -135,7 +131,7 @@ func (repo Repository) GetDashboardStats(ctx context.Context, tenantContext tena
 	}
 	defer tx.Rollback(ctx)
 
-	currentAggregate, err = repo.dashboardAggregate(ctx, tx, tenantContext, currentFilter, dashboardLeadWhereOptions{DateColumn: "created_at"})
+	currentAggregate, err = repo.dashboardAggregate(ctx, tx, tenantContext, currentFilter)
 	if err != nil {
 		return DashboardStats{}, err
 	}
@@ -156,7 +152,7 @@ func (repo Repository) GetDashboardStats(ctx context.Context, tenantContext tena
 		return DashboardStats{}, err
 	}
 	if hasPreviousPeriod {
-		previousAggregate, err = repo.dashboardAggregate(ctx, tx, tenantContext, previousFilter, dashboardLeadWhereOptions{DateColumn: "created_at"})
+		previousAggregate, err = repo.dashboardAggregate(ctx, tx, tenantContext, previousFilter)
 		if err != nil {
 			return DashboardStats{}, err
 		}
@@ -248,7 +244,7 @@ func (repo Repository) GetDashboardFunnel(ctx context.Context, tenantContext ten
 		return []FunnelDataPoint{}, nil
 	}
 
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{DateColumn: "created_at"})
+	where, args, err := repo.buildDashboardCardCohortWhere(tenantContext, filter, "")
 	if err != nil {
 		return nil, err
 	}
@@ -368,7 +364,7 @@ func (repo Repository) buildDashboardSourcesQuery(tenantContext tenant.Context, 
 		`, args, nil
 	}
 
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{DateColumn: "created_at"})
+	where, args, err := repo.buildDashboardCardCohortWhere(tenantContext, filter, "")
 	if err != nil {
 		return "", nil, err
 	}
@@ -390,18 +386,18 @@ func (repo Repository) GetDashboardLeadDistribution(ctx context.Context, tenantC
 		return result, tenant.ErrOrganizationAccessDenied
 	}
 
-	userWhere, userArgs, err := repo.buildDashboardLeadWhere(
+	userWhere, userArgs, err := repo.buildDashboardCardCohortWhere(
 		tenantContext,
 		filter,
-		dashboardLeadWhereOptions{DateColumn: "created_at"},
+		"",
 	)
 	if err != nil {
 		return DashboardLeadDistribution{}, err
 	}
-	teamWhere, teamArgs, err := repo.buildDashboardLeadWhere(
+	teamWhere, teamArgs, err := repo.buildDashboardCardCohortWhere(
 		tenantContext,
 		filter,
-		dashboardLeadWhereOptions{DateColumn: "created_at"},
+		"",
 	)
 	if err != nil {
 		return DashboardLeadDistribution{}, err
@@ -728,18 +724,15 @@ func (repo Repository) GetDashboardDealsEvolution(ctx context.Context, tenantCon
 }
 
 func (repo Repository) dashboardEvolutionBounds(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) (time.Time, time.Time, bool, error) {
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{DateColumn: "created_at"})
+	cte, args, err := repo.buildDashboardCardCohortCTE(tenantContext, filter)
 	if err != nil {
 		return time.Time{}, time.Time{}, false, err
 	}
-	eventAt := dashboardEvolutionEventSQL("l")
-
 	var minimum, maximum pgtype.Timestamptz
-	err = queryer.QueryRow(ctx, `
-		select min(`+eventAt+`), max(`+eventAt+`)
-		from public.leads l
-		where `+strings.Join(where, " and ")+`
-		  and `+eventAt+` is not null
+	err = queryer.QueryRow(ctx, cte+`
+		select min(entered_at), max(entered_at)
+		from card_cohort
+		where entered_at is not null
 	`, args...).Scan(&minimum, &maximum)
 	if err != nil {
 		return time.Time{}, time.Time{}, false, err
@@ -766,11 +759,10 @@ func (repo Repository) dashboardDealsEvolutionAggregate(ctx context.Context, que
 		return []DealsEvolutionPoint{}, nil
 	}
 
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{DateColumn: "created_at"})
+	cte, args, err := repo.buildDashboardCardCohortCTE(tenantContext, filter)
 	if err != nil {
 		return nil, err
 	}
-	eventAt := dashboardEvolutionEventSQL("l")
 	args = append(args, from, to)
 	fromIndex := len(args) - 1
 	toIndex := len(args)
@@ -786,13 +778,12 @@ func (repo Repository) dashboardDealsEvolutionAggregate(ctx context.Context, que
 	}
 	caseParts = append(caseParts, fmt.Sprintf("else %d", len(intervals)-1))
 
-	rows, err := queryer.Query(ctx, `
-		with filtered_events as (
+	rows, err := queryer.Query(ctx, cte+`, filtered_events as (
 			select
 				coalesce(l.deal_status, 'open') as deal_status,
-				`+eventAt+` as event_at
-			from public.leads l
-			where `+strings.Join(where, " and ")+`
+				c.entered_at as event_at
+			from card_cohort c
+			join public.leads l on l.id = c.lead_id and l.organization_id = $1::uuid
 		), bucketed_events as (
 			select
 				deal_status,
@@ -841,10 +832,6 @@ func (repo Repository) dashboardDealsEvolutionAggregate(ctx context.Context, que
 	}
 
 	return result, nil
-}
-
-func dashboardEvolutionEventSQL(alias string) string {
-	return alias + ".created_at"
 }
 
 func (repo Repository) GetDashboardExtraCounts(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) (DashboardExtraCounts, error) {
@@ -951,7 +938,7 @@ func (repo Repository) GetDashboardTeamLeadIDs(ctx context.Context, tenantContex
 	}
 	filter.TeamID = teamID
 
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{DateColumn: "created_at"})
+	where, args, err := repo.buildDashboardCardCohortWhere(tenantContext, filter, "")
 	if err != nil {
 		return nil, err
 	}
@@ -1089,8 +1076,8 @@ func (repo Repository) buildDashboardScheduledVisitsWhere(tenantContext tenant.C
 	return where, args, nil
 }
 
-func (repo Repository) dashboardAggregate(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter, options dashboardLeadWhereOptions) (dashboardAggregate, error) {
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, options)
+func (repo Repository) dashboardAggregate(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) (dashboardAggregate, error) {
+	where, args, err := repo.buildDashboardCardCohortWhere(tenantContext, filter, "")
 	if err != nil {
 		return dashboardAggregate{}, err
 	}
@@ -1120,11 +1107,11 @@ func (repo Repository) dashboardAggregate(ctx context.Context, queryer dashboard
 		value := average.Float64
 		aggregate.AverageResponseSecs = &value
 	}
-	// The lead-count cards use the current owner. A selected user's response
-	// time instead belongs to the human actor, including leads since transferred
-	// away. Apply the same response cohort and actor scope as the detail dialog.
+	// First-contact keeps its creation-date cohort and response actor even when
+	// the card metrics include an old card's reentry. Match its detail dialog.
 	actorScoped, allowedActorIDs := dashboardFirstContactActorScope(tenantContext)
-	if (filter.UserID != "" && filter.UserID != "all" && filter.UserID != "unassigned") || actorScoped || dashboardFirstContactSelectedTeamID(filter) != "" {
+	if filter.DateFrom != nil || filter.DateTo != nil || dashboardHasEntryAttributionFilter(filter) ||
+		(filter.UserID != "" && filter.UserID != "all" && filter.UserID != "unassigned") || actorScoped || dashboardFirstContactSelectedTeamID(filter) != "" {
 		responseWhere, responseArgs, selectedUserID, err := repo.buildDashboardFirstContactWhere(tenantContext, filter)
 		if err != nil {
 			return dashboardAggregate{}, err
@@ -1156,7 +1143,7 @@ func (repo Repository) dashboardAggregate(ctx context.Context, queryer dashboard
 }
 
 func (repo Repository) dashboardWonSummary(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) (dashboardWonSummary, error) {
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardDealCohortOptions("won"))
+	where, args, err := repo.buildDashboardCardCohortWhere(tenantContext, filter, "won")
 	if err != nil {
 		return dashboardWonSummary{}, err
 	}
@@ -1230,7 +1217,7 @@ func (repo Repository) dashboardWonSummary(ctx context.Context, queryer dashboar
 }
 
 func (repo Repository) dashboardLostReasonSummary(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) ([]LostReasonBucket, int64, error) {
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardDealCohortOptions("lost"))
+	where, args, err := repo.buildDashboardCardCohortWhere(tenantContext, filter, "lost")
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1266,7 +1253,7 @@ func (repo Repository) dashboardLostReasonSummary(ctx context.Context, queryer d
 }
 
 func (repo Repository) dashboardWonCount(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) (int64, error) {
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardDealCohortOptions("won"))
+	where, args, err := repo.buildDashboardCardCohortWhere(tenantContext, filter, "won")
 	if err != nil {
 		return 0, err
 	}
@@ -1283,7 +1270,7 @@ func (repo Repository) dashboardWonCount(ctx context.Context, queryer dashboardQ
 }
 
 func (repo Repository) dashboardLostCount(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) (int64, error) {
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardDealCohortOptions("lost"))
+	where, args, err := repo.buildDashboardCardCohortWhere(tenantContext, filter, "lost")
 	if err != nil {
 		return 0, err
 	}
@@ -1317,7 +1304,7 @@ func (repo Repository) dashboardDealDetails(ctx context.Context, queryer dashboa
 }
 
 func (repo Repository) dashboardWonDeals(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) ([]WonDealDetail, error) {
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardDealCohortOptions("won"))
+	where, args, err := repo.buildDashboardCardCohortWhere(tenantContext, filter, "won")
 	if err != nil {
 		return nil, err
 	}
@@ -1390,7 +1377,7 @@ func (repo Repository) dashboardWonDeals(ctx context.Context, queryer dashboardQ
 }
 
 func (repo Repository) dashboardLostDeals(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) ([]LostDealDetail, error) {
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardDealCohortOptions("lost"))
+	where, args, err := repo.buildDashboardCardCohortWhere(tenantContext, filter, "lost")
 	if err != nil {
 		return nil, err
 	}
@@ -1449,12 +1436,12 @@ func (repo Repository) dashboardLostDeals(ctx context.Context, queryer dashboard
 }
 
 func (repo Repository) dashboardTopBrokers(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter, fallback bool) ([]TopBroker, error) {
-	options := dashboardDealCohortOptions("won")
+	forceStatus := "won"
 	if fallback {
-		options = dashboardLeadWhereOptions{DateColumn: "created_at"}
+		forceStatus = ""
 	}
 
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, options)
+	where, args, err := repo.buildDashboardCardCohortWhere(tenantContext, filter, forceStatus)
 	if err != nil {
 		return nil, err
 	}

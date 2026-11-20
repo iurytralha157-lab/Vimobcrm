@@ -85,9 +85,3 @@ export function getDateRangeFromPreset(preset: DatePreset): { from: Date; to: Da
       return { from: startOfDay(subDays(now, 29)), to: endOfDay(now) };
   }
 }
-
-// Deprecated: use useSharedFilters instead
-export function useDashboardFilters() {
-  console.warn("useDashboardFilters is deprecated. Use useSharedFilters instead.");
-  return {} as Record<string, never>;
-}
