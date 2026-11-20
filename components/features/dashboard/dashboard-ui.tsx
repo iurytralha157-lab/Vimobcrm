@@ -5,7 +5,6 @@ import { cn } from "@/lib/utils";
 
 // Same tones as the Marketing reference, kept here so the Dashboard does not
 // load the Marketing module (and its Meta preview) just for class names.
-export const NEUTRAL_SOFT = "bg-[color-mix(in_srgb,var(--app-text-primary)_11%,transparent)]";
 export const NEUTRAL_STRONG = "bg-[color-mix(in_srgb,var(--app-text-primary)_27%,transparent)]";
 export const PANEL_SOFT = "bg-[color-mix(in_srgb,var(--app-text-primary)_4%,transparent)]";
 
@@ -76,33 +75,13 @@ function WithHint({ hint, children }: { hint?: string; children: ReactNode }) {
   );
 }
 
-/** Recent quarter of the series in the accent, as in the Marketing cards. */
-export function DashboardSparkline({ values }: { values: readonly number[] }) {
-  const max = Math.max(0, ...values);
-  if (values.length < 2 || max <= 0) return <div className="mt-2 h-[22px]" aria-hidden="true" />;
-  const recentFrom = Math.floor(values.length * 0.75);
-  return (
-    <div className="mt-2 flex h-[22px] items-end gap-px" aria-hidden="true">
-      {values.map((value, index) => (
-        <span
-          key={index}
-          className={cn("min-w-0 flex-1", index >= recentFrom ? "bg-primary" : NEUTRAL_SOFT)}
-          style={{ height: `${Math.max(4, (Math.max(0, value) / max) * 100)}%` }}
-        />
-      ))}
-    </div>
-  );
-}
-
 export function DashboardKpiCard({
   tourTarget,
   label,
   value,
   note,
   delta,
-  spark,
   hint,
-  compact = false,
   wrapNote = false,
   className,
   onClick,
@@ -112,10 +91,7 @@ export function DashboardKpiCard({
   value: string;
   note?: ReactNode;
   delta?: DashboardDelta | null;
-  spark?: readonly number[];
   hint?: string;
-  /** Without the sparkline row, for the second line of KPIs. */
-  compact?: boolean;
   wrapNote?: boolean;
   className?: string;
   onClick?: (trigger: HTMLElement) => void;
@@ -146,7 +122,6 @@ export function DashboardKpiCard({
         >
           {value}
         </p>
-        {compact ? null : spark ? <DashboardSparkline values={spark} /> : <div className="mt-2 h-[22px]" aria-hidden="true" />}
         <div className="min-h-2 flex-1" aria-hidden="true" />
         <div className="flex items-baseline justify-between gap-2 border-t border-[var(--app-border)] pt-2 text-[11px] font-normal leading-4 text-[var(--app-text-secondary)]">
           <span className={cn("min-w-0", wrapNote ? "line-clamp-2" : "truncate")} title={typeof note === "string" ? note : undefined}>{note ?? " "}</span>

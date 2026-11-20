@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "565ca7be199573167268febcfd1c10477da83ff4449cb8313fea7fab75aeef86",
+  "sourceDigestSha256": "f76fdfbf73e647777515f916c36b53d88c1e6e0fdc86bbbf9da4c9b041f72c4d",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1488,10 +1488,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:6a35ff75e981f0dfc41a",
+          "id": "overlay:348116b1bf190f4e29e4",
           "column": 5,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1247,
+          "line": 1245,
           "owner": "LostDealsDialog",
           "routes": [
             "/dashboard"
@@ -1499,10 +1499,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:b056582fdc3e38889177",
+          "id": "overlay:09a58596390547dae2db",
           "column": 5,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1543,
+          "line": 1541,
           "owner": "WonDealsDialog",
           "routes": [
             "/dashboard"
@@ -3349,10 +3349,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:c920684238969f366c6a",
+          "id": "overlay:1ea067a1a45a70005633",
           "column": 7,
           "file": "components/features/pwa/InstallPrompt.tsx",
-          "line": 76,
+          "line": 57,
           "owner": "InstallPrompt",
           "routes": [
             "/",
@@ -14096,10 +14096,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:65e5f233301651fba5fe",
+          "id": "cta:2a491b57ca74016fecd1",
           "column": 9,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 942,
+          "line": 940,
           "owner": "DashboardDataError",
           "routes": [
             "/dashboard"
@@ -14108,10 +14108,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:bc7d055e865ddec7c5c9",
+          "id": "cta:53c98e0e5af486fc9b78",
           "column": 5,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1142,
+          "line": 1140,
           "owner": "DashboardExtraCountsError",
           "routes": [
             "/dashboard"
@@ -14120,10 +14120,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:5553467efb8f9d41deff",
+          "id": "cta:618659d13ea708d85580",
           "column": 7,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1165,
+          "line": 1163,
           "owner": "DashboardStatsStaleNotice",
           "routes": [
             "/dashboard"
@@ -14132,10 +14132,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:385fdea04bc37dd613f8",
+          "id": "cta:cbcd8547c25b9ec2f582",
           "column": 9,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1188,
+          "line": 1186,
           "owner": "DashboardDealDetailsState",
           "routes": [
             "/dashboard"
@@ -14144,10 +14144,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:8fb617a69510ac03722e",
+          "id": "cta:7c790d74021cf6bb8fa9",
           "column": 23,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1488,
+          "line": 1486,
           "owner": "LostDealsDialog",
           "routes": [
             "/dashboard"
@@ -14156,10 +14156,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:313219f4219944f770e8",
+          "id": "cta:ed40388793267f2170cb",
           "column": 23,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1820,
+          "line": 1818,
           "owner": "WonDealsDialog",
           "routes": [
             "/dashboard"
@@ -25291,11 +25291,115 @@
           "tag": "Link"
         },
         {
-          "id": "cta:e0ac3e64cc6f329178ce",
+          "id": "cta:1aaf7ed8ae5b2b657012",
           "column": 13,
           "file": "components/features/pwa/InstallPrompt.tsx",
-          "line": 141,
+          "line": 122,
           "owner": "InstallPrompt",
+          "routes": [
+            "/",
+            "/admin",
+            "/admin/ai",
+            "/admin/announcements",
+            "/admin/audit",
+            "/admin/database",
+            "/admin/email-logs",
+            "/admin/email-templates",
+            "/admin/error-logs",
+            "/admin/help",
+            "/admin/home-content",
+            "/admin/notifications",
+            "/admin/onboarding",
+            "/admin/organizations",
+            "/admin/organizations/[id]",
+            "/admin/plans",
+            "/admin/requests",
+            "/admin/settings",
+            "/admin/system-settings",
+            "/admin/users",
+            "/agenda",
+            "/attention",
+            "/automations",
+            "/cadastro",
+            "/checkout/[token]",
+            "/checkout/organizacao/[organizationId]",
+            "/comprovantes/[token]",
+            "/confirmar-email",
+            "/contato",
+            "/convite/[token]",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/campaigns",
+            "/dashboard/site",
+            "/exclusao-de-dados",
+            "/favoritos",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help",
+            "/help/[slug]",
+            "/imoveis/[[...path]]",
+            "/imovel/[code]",
+            "/inicio",
+            "/login",
+            "/marketing",
+            "/notifications",
+            "/onboarding",
+            "/pipeline",
+            "/politica-de-privacidade",
+            "/preview/sem-organizacao",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/ready",
+            "/properties/rentals",
+            "/properties/settings",
+            "/properties/third-party",
+            "/reset-password",
+            "/select-organization",
+            "/settings",
+            "/settings/ai",
+            "/settings/integrations/grupo-olx",
+            "/settings/integrations/meta",
+            "/settings/integrations/meta-marketing",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/sites/[slug]/[[...path]]",
+            "/sobre",
+            "/suporte",
+            "/suporte/[slug]",
+            "/termos-de-uso"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:e9f392cc2d03beb9c06a",
+          "column": 11,
+          "file": "components/features/pwa/PwaActionPrompt.tsx",
+          "line": 89,
+          "owner": "PwaActionPrompt",
           "routes": [
             "/",
             "/admin",
@@ -25399,110 +25503,6 @@
           "column": 11,
           "file": "components/features/pwa/PwaActionPrompt.tsx",
           "line": 99,
-          "owner": "PwaActionPrompt",
-          "routes": [
-            "/",
-            "/admin",
-            "/admin/ai",
-            "/admin/announcements",
-            "/admin/audit",
-            "/admin/database",
-            "/admin/email-logs",
-            "/admin/email-templates",
-            "/admin/error-logs",
-            "/admin/help",
-            "/admin/home-content",
-            "/admin/notifications",
-            "/admin/onboarding",
-            "/admin/organizations",
-            "/admin/organizations/[id]",
-            "/admin/plans",
-            "/admin/requests",
-            "/admin/settings",
-            "/admin/system-settings",
-            "/admin/users",
-            "/agenda",
-            "/attention",
-            "/automations",
-            "/cadastro",
-            "/checkout/[token]",
-            "/checkout/organizacao/[organizationId]",
-            "/comprovantes/[token]",
-            "/confirmar-email",
-            "/contato",
-            "/convite/[token]",
-            "/crm/contacts",
-            "/crm/conversas",
-            "/crm/management",
-            "/crm/management/distribution/[id]/edit",
-            "/crm/management/distribution/new",
-            "/crm/management/teams/[id]/edit",
-            "/crm/management/teams/new",
-            "/crm/pipelines",
-            "/dashboard",
-            "/dashboard/campaigns",
-            "/dashboard/site",
-            "/exclusao-de-dados",
-            "/favoritos",
-            "/financeiro",
-            "/financeiro/comissoes",
-            "/financeiro/contas",
-            "/financeiro/contratos",
-            "/financeiro/contratos/[id]",
-            "/financeiro/corretor",
-            "/financeiro/dre",
-            "/financeiro/relatorios",
-            "/gamificacao",
-            "/help",
-            "/help/[slug]",
-            "/imoveis/[[...path]]",
-            "/imovel/[code]",
-            "/inicio",
-            "/login",
-            "/marketing",
-            "/notifications",
-            "/onboarding",
-            "/pipeline",
-            "/politica-de-privacidade",
-            "/preview/sem-organizacao",
-            "/properties",
-            "/properties/[id]",
-            "/properties/[id]/edit",
-            "/properties/condominiums",
-            "/properties/developments",
-            "/properties/developments/[id]",
-            "/properties/launches",
-            "/properties/locations",
-            "/properties/new",
-            "/properties/owners",
-            "/properties/ready",
-            "/properties/rentals",
-            "/properties/settings",
-            "/properties/third-party",
-            "/reset-password",
-            "/select-organization",
-            "/settings",
-            "/settings/ai",
-            "/settings/integrations/grupo-olx",
-            "/settings/integrations/meta",
-            "/settings/integrations/meta-marketing",
-            "/settings/integrations/whatsapp",
-            "/settings/site",
-            "/settings/users/[id]",
-            "/sites/[slug]/[[...path]]",
-            "/sobre",
-            "/suporte",
-            "/suporte/[slug]",
-            "/termos-de-uso"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:20c0311fa69728d1c57d",
-          "column": 11,
-          "file": "components/features/pwa/PwaActionPrompt.tsx",
-          "line": 109,
           "owner": "PwaActionPrompt",
           "routes": [
             "/",
@@ -42752,10 +42752,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:bb769b4f5093333cbb23",
+          "id": "control:23bd5c962cdf3376f25b",
           "column": 19,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 747,
+          "line": 745,
           "owner": "Dashboard",
           "routes": [
             "/dashboard"
@@ -42764,10 +42764,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:5f2064d22f16a4de9aac",
+          "id": "control:f91ebe2d7906070d906a",
           "column": 19,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 753,
+          "line": 751,
           "owner": "Dashboard",
           "routes": [
             "/dashboard"
@@ -47480,7 +47480,7 @@
         }
       ]
     },
-    "digestSha256": "d84be251569e2728d397233f4f30dd5687222136c39d7e3d65e3d5216986179c"
+    "digestSha256": "dac85231ec3a3b231b161f11ef400f3d02a161756a5efb33eb1d8ca261945f1d"
   },
   "routes": [
     {

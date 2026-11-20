@@ -1,7 +1,8 @@
 import NextImage from "next/image";
+import { createPortal } from "react-dom";
 import { X, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 
 export const PWA_INSTALL_PROMPT_VISIBILITY_EVENT =
   "vimob:pwa-install-prompt-visibility";
@@ -31,42 +32,31 @@ export function PwaActionPrompt({
   ariaLabel,
   promptKind,
 }: PwaActionPromptProps) {
-  const promptRef = useRef<HTMLDivElement>(null);
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
-    const prompt = promptRef.current;
-    if (!prompt) return;
-    const updateSpace = (excluded?: HTMLElement) => {
-      const space = Math.max(0, ...Array.from(document.querySelectorAll<HTMLElement>("[data-pwa-prompt]"), (candidate) => {
-        if (candidate === excluded || !candidate.offsetHeight) return 0;
-        const style = getComputedStyle(candidate);
-        if (style.visibility === "hidden") return 0;
-        const bottom = Number.parseFloat(style.bottom) || 0;
-        return Math.ceil(candidate.offsetHeight + bottom + 12);
-      }));
-      if (space) {
-        document.documentElement.style.setProperty("--vimob-pwa-prompt-space", `${space}px`);
-      } else {
-        document.documentElement.style.removeProperty("--vimob-pwa-prompt-space");
-      }
-    };
-    const handleResize = () => updateSpace();
-    const observer = new ResizeObserver(handleResize);
-    observer.observe(prompt);
-    window.addEventListener("resize", handleResize);
-    updateSpace();
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", handleResize);
-      updateSpace(prompt);
-    };
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) setPortalTarget(document.body);
+    });
+    return () => { cancelled = true; };
   }, []);
 
-  return (
+  useEffect(() => {
+    if (!portalTarget || promptKind !== "install") return;
+    const publishVisibility = (visible: boolean) => {
+      window.dispatchEvent(new CustomEvent(PWA_INSTALL_PROMPT_VISIBILITY_EVENT, { detail: { visible } }));
+    };
+    publishVisibility(true);
+    return () => publishVisibility(false);
+  }, [portalTarget, promptKind]);
+
+  if (!portalTarget) return null;
+
+  return createPortal(
     <div
-      ref={promptRef}
       data-pwa-prompt={promptKind}
-      className="pointer-events-none fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] left-1/2 z-50 w-[calc(100vw-1.5rem)] max-w-lg -translate-x-1/2 animate-in slide-in-from-bottom duration-300 md:bottom-[calc(1rem+env(safe-area-inset-bottom))]"
+      className="pointer-events-none fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] z-40 mx-auto max-w-lg animate-in slide-in-from-bottom duration-300 md:bottom-[calc(1rem+env(safe-area-inset-bottom))]"
     >
       <section
         aria-label={ariaLabel}
@@ -117,6 +107,7 @@ export function PwaActionPrompt({
           </Button>
         </div>
       </section>
-    </div>
+    </div>,
+    portalTarget,
   );
 }

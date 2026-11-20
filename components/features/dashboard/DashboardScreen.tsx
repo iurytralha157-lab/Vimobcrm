@@ -585,7 +585,6 @@ export default function Dashboard() {
                       data={kpiData}
                       isLoading={kpisLoading}
                       periodLabel={periodLabel}
-                      evolution={evolutionError ? [] : evolutionData}
                       propertyCount={propertyCount}
                       siteVisits={siteVisits}
                       scheduledVisits={scheduledVisitsCount}
@@ -703,7 +702,6 @@ export default function Dashboard() {
                   data={kpiData}
                   isLoading={kpisLoading}
                   periodLabel={periodLabel}
-                  evolution={evolutionError ? [] : evolutionData}
                   scheduledVisits={scheduledVisitsCount}
                   propertyCount={propertyCount}
                   siteVisits={siteVisits}

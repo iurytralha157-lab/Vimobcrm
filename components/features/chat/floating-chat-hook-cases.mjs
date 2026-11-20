@@ -13,7 +13,7 @@ export async function scopedDraftsAndRollback() {
   const floatingArgs = calls(F, 'useWhatsAppConversationDraft')[0].arguments;
   const scope = { organizationId: 'org-A', userId: 'actor-A', accessScope: 'sid' };
   assert.equal(evaluate(floatingArgs[0].getText(), { whatsappQueryScope: scope }), scope);
-  assert.equal(evaluate(floatingArgs[1].getText(), { activeConversationId: 'conversation-A' }), 'conversation-A');
+  assert.equal(evaluate(floatingArgs[1].getText(), { activeConversationId: 'conversation-A', activeSupervisoryView: false }), 'conversation-A');
   assert.equal(evaluate(floatingArgs[2].getText(), { activeConversationMessageScope: { expectedLeadId: 'lead-A' } }), 'lead-A');
   const pageArgs = calls('components/features/whatsapp/ConversationsScreen.tsx', 'useWhatsAppConversationDraft')[0].arguments;
   assert.equal(evaluate(pageArgs[2].getText(), { activePlatform: 'whatsapp', selectedExpectedLeadId: 'lead-B' }), 'lead-B');

@@ -1,13 +1,10 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { Download, Share, Plus, Smartphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PWA_INSTALL_PROMPT_EXCLUDED_ROUTES } from "@/config/constants";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
-import {
-  PWA_INSTALL_PROMPT_VISIBILITY_EVENT,
-  PwaActionPrompt,
-} from "./PwaActionPrompt";
+import { PwaActionPrompt } from "./PwaActionPrompt";
 import {
   Dialog,
   DialogContent,
@@ -24,22 +21,6 @@ export function InstallPrompt() {
   const isExcludedRoute = PWA_INSTALL_PROMPT_EXCLUDED_ROUTES.some(
     (route) => pathname === route || pathname.startsWith(`${route}/`),
   );
-  const isBannerVisible =
-    !isExcludedRoute && !isStandalone && showPrompt && !showIOSInstructions;
-
-  useEffect(() => {
-    const publishVisibility = (visible: boolean) => {
-      window.dispatchEvent(
-        new CustomEvent(PWA_INSTALL_PROMPT_VISIBILITY_EVENT, {
-          detail: { visible },
-        }),
-      );
-    };
-
-    publishVisibility(isBannerVisible);
-    return () => publishVisibility(false);
-  }, [isBannerVisible]);
-
   // Don't show if already installed or prompt shouldn't be shown
   if (isExcludedRoute || isStandalone || !showPrompt) {
     return null;

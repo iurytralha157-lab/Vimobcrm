@@ -2599,7 +2599,6 @@ export function FloatingChat() {
     );
   }
 
-  // Desktop version - floating window
   return (
     <>
       {SessionSelectorDialog()}
@@ -2630,23 +2629,11 @@ export function FloatingChat() {
         aria-label="Chat do WhatsApp"
         tabIndex={-1}
         className={cn(
-          "fixed z-50",
-          "bg-[var(--app-surface-solid)]",
-          "rounded-[8px]",
-          "shadow-[0_12px_32px_rgba(0,0,0,0.10)]",
-          "transition-colors",
-          "flex flex-col overflow-hidden",
-          "animate-scale-in",
-          "motion-reduce:animate-none",
-          "focus:outline-none"
+          "fixed inset-y-0 right-0 z-50 flex w-[420px] max-w-full flex-col overflow-hidden",
+          "rounded-l-[8px] bg-[var(--app-surface-solid)] shadow-[0_12px_32px_rgba(0,0,0,0.10)]",
+          "pb-[env(safe-area-inset-bottom)] pr-[env(safe-area-inset-right)] pt-[env(safe-area-inset-top)] focus:outline-none",
         )}
-        style={{
-          display: presentationMinimized ? 'none' : undefined,
-          right: "max(24px, env(safe-area-inset-right))",
-          bottom: "max(24px, env(safe-area-inset-bottom))",
-          width: "min(420px, calc(100vw - 48px))",
-          height: "min(600px, calc(100vh - 48px))",
-        }}
+        style={{ display: presentationMinimized ? 'none' : undefined }}
       >
         {/* Header */}
         {FloatingChatHeader()}

@@ -1,4 +1,4 @@
-import type { DealsEvolutionPoint, EnhancedDashboardStats } from "@/hooks/use-dashboard-stats";
+import type { EnhancedDashboardStats } from "@/hooks/use-dashboard-stats";
 import { cn } from "@/lib/utils";
 
 import { DashboardKpiCard, DashboardSkeletonBlock } from "./dashboard-ui";
@@ -31,7 +31,6 @@ type DashboardKpiGridProps = {
   data: KpiData;
   isLoading?: boolean;
   periodLabel: string;
-  evolution: readonly DealsEvolutionPoint[];
   scheduledVisits?: number | string;
   propertyCount?: number | string;
   siteVisits?: number | string;
@@ -77,7 +76,6 @@ export function DashboardKpiGrid({
   data,
   isLoading,
   periodLabel,
-  evolution,
   scheduledVisits,
   propertyCount,
   siteVisits,
@@ -95,7 +93,7 @@ export function DashboardKpiGrid({
         <div className={cn("grid gap-2", desktop ? "grid-cols-5" : "grid-cols-2 sm:grid-cols-4")}>
           {(desktop ? PRIMARY_TOURS : PRIMARY_TOURS.slice(0, 4)).map((tour) => (
             <div key={tour} data-tour={tour}>
-              <DashboardSkeletonBlock className="h-[118px] rounded-[12px]" />
+              <DashboardSkeletonBlock className="h-[88px] rounded-[12px]" />
             </div>
           ))}
         </div>
@@ -137,7 +135,6 @@ export function DashboardKpiGrid({
       tourTarget="dashboard-kpi-open"
       label="Em aberto"
       value={formatNumber(data.openLeads ?? 0)}
-      spark={evolution.map((point) => point.abertos)}
       note={`${formatPercent(rates.open)} dos leads distintos`}
       delta={dashboardDelta(data.openTrend)}
       hint={`Leads distintos com entrada no CRM no período que estão em aberto; cada lead conta uma vez. ${periodLabel}.`}
@@ -149,7 +146,6 @@ export function DashboardKpiGrid({
       tourTarget="dashboard-kpi-lost"
       label="Perdidos"
       value={formatNumber(data.lostLeads ?? 0)}
-      spark={evolution.map((point) => point.perdas)}
       note={`${formatPercent(rates.lost)} dos leads distintos`}
       delta={dashboardDelta(data.lostTrend, { lowerIsBetter: true })}
       hint={`Leads distintos com entrada no CRM no período que estão perdidos; cada lead conta uma vez. ${periodLabel}.`}
@@ -162,7 +158,6 @@ export function DashboardKpiGrid({
       tourTarget="dashboard-kpi-won"
       label="Ganhos"
       value={formatNumber(data.closedLeads)}
-      spark={evolution.map((point) => point.ganhos)}
       note={`${formatPercent(rates.won)} dos leads distintos`}
       delta={dashboardDelta(data.closedTrend)}
       hint={`Leads distintos com entrada no CRM no período que estão ganhos; conversão sobre os leads distintos. ${periodLabel}.`}
@@ -175,7 +170,6 @@ export function DashboardKpiGrid({
       tourTarget="dashboard-kpi-visits"
       label="Visitas"
       value={formatNumber(scheduledVisits ?? 0)}
-      compact={!desktop}
       note="Visitas e reuniões marcadas"
       hint={`Visitas e reuniões criadas no período - ${periodLabel}. O filtro usa a data de criação da marcação, independente do dia da visita e da entrada do lead.`}
       onClick={onVisitsClick}
@@ -187,7 +181,6 @@ export function DashboardKpiGrid({
       tourTarget="dashboard-kpi-vgv"
       label="VGV"
       value={formatCurrency(data.totalSalesValue)}
-      compact
       className="col-span-2"
       note={salesValuePerWin === null ? "Sem vendas no período" : `${formatCurrency(salesValuePerWin)} por venda`}
       hint={`VGV estimado dos leads ganhos com entrada no CRM no período - ${periodLabel}. Usa o valor do lead ou, quando ausente, o preço atual do imóvel. Não é histórico de fechamentos no período.`}
@@ -199,7 +192,6 @@ export function DashboardKpiGrid({
       tourTarget="dashboard-kpi-first-contact"
       label="1º contato"
       value={data.avgResponseTime}
-      compact
       note="Média da primeira resposta"
       hint="Média da primeira resposta humana registrada. Ao filtrar por usuário, considera quem respondeu; os demais indicadores usam o responsável atual do lead."
       onClick={onFirstContactClick}
@@ -211,7 +203,6 @@ export function DashboardKpiGrid({
       tourTarget="dashboard-kpi-properties"
       label="Imóveis"
       value={formatNumber(propertyCount ?? 0)}
-      compact
       note="Cadastrados"
       hint="Total de imóveis cadastrados"
     />
@@ -222,7 +213,6 @@ export function DashboardKpiGrid({
       tourTarget="dashboard-kpi-site-visits"
       label="Visitas no site"
       value={formatNumber(siteVisits ?? 0)}
-      compact
       note="Sessões únicas"
       hint={`Sessões únicas no site no período - ${periodLabel}`}
     />

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "103d5f4d9bceba277b0fe55bcc1194cd9d0272e654ea290c2a923819a12b1173",
-  "surfaceInventoryDigestSha256": "565ca7be199573167268febcfd1c10477da83ff4449cb8313fea7fab75aeef86",
+  "sourceDigestSha256": "a0e19f4229aadd3ebe27024f26316826d74c551c871d6a957252b782345de35b",
+  "surfaceInventoryDigestSha256": "f76fdfbf73e647777515f916c36b53d88c1e6e0fdc86bbbf9da4c9b041f72c4d",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 674,
@@ -1166,7 +1166,7 @@
     },
     {
       "file": "components/features/dashboard/DashboardKpis.tsx",
-      "line": 98,
+      "line": 96,
       "match": "rounded-[12px]",
       "priority": "P1",
       "rule": "oversized-radius",
@@ -1175,7 +1175,7 @@
     },
     {
       "file": "components/features/dashboard/DashboardKpis.tsx",
-      "line": 105,
+      "line": 103,
       "match": "rounded-[12px]",
       "priority": "P1",
       "rule": "oversized-radius",
@@ -1184,7 +1184,7 @@
     },
     {
       "file": "components/features/dashboard/DashboardScreen.tsx",
-      "line": 746,
+      "line": 744,
       "match": "rounded-[10px]",
       "priority": "P1",
       "rule": "oversized-radius",
@@ -1193,7 +1193,7 @@
     },
     {
       "file": "components/features/dashboard/DashboardScreen.tsx",
-      "line": 927,
+      "line": 925,
       "match": "rounded-[12px]",
       "priority": "P1",
       "rule": "oversized-radius",

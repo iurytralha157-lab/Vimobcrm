@@ -3,18 +3,23 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 .app-main-content {
-  padding-bottom: max(1.5rem, var(--vimob-pwa-prompt-space, 0px));
+  padding-bottom: 1.5rem;
 }
 
 .app-main-content[data-main-scroll="locked"] {
-  padding-bottom: max(0.75rem, var(--vimob-pwa-prompt-space, 0px));
+  padding-bottom: 0.75rem;
 }
 
 @media (width < 48rem) {
   .app-main-content,
   .app-main-content[data-main-scroll="locked"] {
-    padding-bottom: max(calc(4rem + 1px + env(safe-area-inset-bottom)), var(--vimob-pwa-prompt-space, 0px));
+    padding-bottom: calc(4rem + 1px + env(safe-area-inset-bottom));
   }
+}
+
+body:has(#floating-whatsapp-chat:not([hidden]):not([data-floating-chat-parking] *)) [data-pwa-prompt],
+body:has([data-team-presence-panel][aria-hidden="false"]) [data-pwa-prompt] {
+  visibility: hidden;
 }
 
 :root {

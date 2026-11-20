@@ -31,7 +31,7 @@ after(async () => {
   assert.match(basename(target), /^vimob-wa-mobile-modal-/); await rm(target, { recursive: true, force: true });
 });
 
-for (const width of [320, 390, 1440]) for (const theme of ['light', 'dark']) {
+for (const width of [320, 390, 768, 1440]) for (const theme of ['light', 'dark']) {
   test(`floating focus containment ${width} ${theme}: mobile is modal, desktop stays nonmodal`, async t => {
     const page = await fixture(t, 'floating', width, theme);
     const surface = page.locator('#floating-whatsapp-chat');
@@ -51,8 +51,12 @@ for (const width of [320, 390, 1440]) for (const theme of ['light', 'dark']) {
       assert.equal(await surface.getAttribute('aria-modal'), null);
       assert.equal(await before.getAttribute('aria-hidden'), null);
       await before.focus(); await expect(before).toBeFocused();
-      await expect(surface).toHaveCSS('border-radius', '8px');
+      await expect(surface).toHaveCSS('border-radius', '8px 0px 0px 8px');
     }
+    const { height } = page.viewportSize();
+    assert.deepEqual(await surface.boundingBox(), width < 768
+      ? { x: 0, y: 0, width, height }
+      : { x: width - 420, y: 0, width: 420, height });
     const text = surface.locator('[data-message-text]');
     await expect(text).toHaveCSS('font-size', '12px'); await expect(text).toHaveCSS('font-weight', '200');
     if (proof) {

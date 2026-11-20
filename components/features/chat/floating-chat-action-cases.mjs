@@ -104,7 +104,7 @@ export function syncActiveMetadata() {
   const initial = { id: 'c', lead_id: 'l', lead: { id: 'l', name: 'Old' }, unread_count: 2 };
   const refreshed = { ...initial, lead: { ...initial.lead, name: 'New' }, last_message: 'new message' };
   const opened = [], ref = { current: null };
-  const base = { activeConversationId: 'c', activeConversation: initial, conversations: [refreshed], pendingConversationLinkRef: ref, intentTenantKey: 'actor:org', intentGeneration: 3, preserveWhatsAppConversationCardSnapshot, openConversation: (...args) => opened.push(args) };
+  const base = { activeConversationId: 'c', activeConversation: initial, activeSupervisoryView: false, conversations: [refreshed], pendingConversationLinkRef: ref, intentTenantKey: 'actor:org', intentGeneration: 3, preserveWhatsAppConversationCardSnapshot, openConversation: (...args) => opened.push(args) };
   const run = patch => evaluate(synchronize.getText(), { ...base, ...patch })();
   run({}); assert.equal(opened[0][0], refreshed); assert.deepEqual(opened[0][1], { tenantKey: 'actor:org', generation: 3 });
   opened.length = 0; run({ activeConversation: refreshed }); assert.equal(opened.length, 0, 'same snapshot is not reopened in a loop');

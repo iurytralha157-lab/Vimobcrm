@@ -524,6 +524,7 @@ export function OnlineUsersPanel() {
         />
       ) : null}
       <aside
+        data-team-presence-panel=""
         id={panelId}
         aria-labelledby={headingId}
         aria-hidden={!open}
