@@ -46,6 +46,7 @@ func TestFutureOnlyWhatsAppLeadCreateAndReentryLocalPostgres(t *testing.T) {
 		defer stop()
 		for _, statement := range []string{
 			`delete from public.whatsapp_messages where organization_id=$1::uuid`,
+			`delete from public.whatsapp_attendance_entries where organization_id=$1::uuid`,
 			`delete from public.whatsapp_conversation_lead_bindings where organization_id=$1::uuid`,
 			`delete from public.whatsapp_conversations where organization_id=$1::uuid`,
 			`delete from public.whatsapp_sessions where organization_id=$1::uuid`,
