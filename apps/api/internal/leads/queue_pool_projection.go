@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -49,6 +50,11 @@ func isQueuePoolSnapshot(current leadSnapshot) bool {
 	return value
 }
 
+const queuePoolProjectionsSQL = `select l.id::text,
+	private.queue_pool_read_access(l.organization_id,l.id,$2::uuid),
+	private.queue_pool_metadata(l.organization_id,l.id,$2::uuid)
+	from public.leads l where l.organization_id=$1::uuid and l.id=any($3::uuid[])`
+
 // One bounded enrichment query per page, without a query per card. The same
 // database functions serve HTTP scope, RLS and claim authorization.
 func loadQueuePoolProjections(ctx context.Context, queryer notificationRowsQueryer, actor tenant.Context, ids []string) (map[string]queuePoolProjection, error) {
@@ -56,41 +62,44 @@ func loadQueuePoolProjections(ctx context.Context, queryer notificationRowsQuery
 	if len(ids) == 0 {
 		return result, nil
 	}
-	rows, err := queryer.Query(ctx, `select l.id::text,
-		private.queue_pool_read_access(l.organization_id,l.id,$2::uuid),
-		private.queue_pool_metadata(l.organization_id,l.id,$2::uuid)
-		from public.leads l where l.organization_id=$1::uuid and l.id=any($3::uuid[])`,
-		actor.OrganizationID, actor.UserID, ids)
+	rows, err := queryer.Query(ctx, queuePoolProjectionsSQL, actor.OrganizationID, actor.UserID, ids)
 	if err != nil {
 		return nil, fmt.Errorf("load queue pool projection: %w", err)
 	}
 	defer rows.Close()
+	if err := collectQueuePoolProjections(rows, ids, result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func collectQueuePoolProjections(rows pgx.Rows, ids []string, result map[string]queuePoolProjection) error {
 	for rows.Next() {
 		var id string
 		var projection queuePoolProjection
 		var raw []byte
 		if err := rows.Scan(&id, &projection.Access, &raw); err != nil {
-			return nil, err
+			return err
 		}
 		if projection.Access != nil && !*projection.Access {
-			return nil, ErrLeadNotFound
+			return ErrLeadNotFound
 		}
 		if len(raw) > 0 && string(raw) != "null" {
 			if err := json.Unmarshal(raw, &projection.Metadata); err != nil {
-				return nil, fmt.Errorf("decode queue pool projection: %w", err)
+				return fmt.Errorf("decode queue pool projection: %w", err)
 			}
 		}
 		result[id] = projection
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return err
 	}
 	for _, id := range ids {
 		if _, present := result[id]; !present {
-			return nil, ErrLeadNotFound
+			return ErrLeadNotFound
 		}
 	}
-	return result, nil
+	return nil
 }
 
 func hydrateQueuePoolLeads(ctx context.Context, queryer notificationRowsQueryer, actor tenant.Context, leads []Lead) error {
@@ -128,24 +137,5 @@ func hydrateQueuePoolLead(ctx context.Context, queryer leadTeamQueryer, actor te
 		}
 	}
 	*lead = withLeadOperationCapability(actor, *lead)
-	return nil
-}
-
-func hydrateQueuePoolBoard(ctx context.Context, queryer notificationRowsQueryer, actor tenant.Context, leads []*PipelineBoardLead) error {
-	ids := make([]string, 0, len(leads))
-	for _, lead := range leads {
-		ids = append(ids, lead.ID)
-	}
-	projections, err := loadQueuePoolProjections(ctx, queryer, actor, ids)
-	if err != nil {
-		return err
-	}
-	for _, lead := range leads {
-		projection := projections[lead.ID]
-		lead.QueuePool = projection.Metadata
-		if projection.Access != nil {
-			lead.CanOperate = false
-		}
-	}
 	return nil
 }

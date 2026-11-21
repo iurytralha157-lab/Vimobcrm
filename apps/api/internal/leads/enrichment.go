@@ -23,6 +23,10 @@ func (repo Repository) ListEnrichments(ctx context.Context, tenantContext tenant
 	if err != nil {
 		return nil, err
 	}
+	return repo.enrichLeadSeeds(ctx, tenantContext, seeds, nil)
+}
+
+func (repo Repository) enrichLeadSeeds(ctx context.Context, tenantContext tenant.Context, seeds []visibleLeadEnrichmentSeed, queuePools map[string]queuePoolProjection) ([]LeadEnrichment, error) {
 	if len(seeds) == 0 {
 		return []LeadEnrichment{}, nil
 	}
@@ -61,6 +65,7 @@ func (repo Repository) ListEnrichments(ctx context.Context, tenantContext tenant
 		propertyIDs,
 		propertyByLead,
 		enrichmentsByLead,
+		queuePools,
 	); err != nil {
 		return nil, err
 	}
@@ -133,6 +138,7 @@ func (repo Repository) attachLeadEnrichmentsBatch(
 	propertyIDs []string,
 	propertyByLead map[string]string,
 	enrichments map[string]*LeadEnrichment,
+	queuePools map[string]queuePoolProjection,
 ) error {
 	batch := &pgx.Batch{}
 
@@ -334,6 +340,13 @@ func (repo Repository) attachLeadEnrichmentsBatch(
 				}
 			}
 			return nil
+		})
+	}
+
+	if queuePools != nil {
+		// Keep the queue audience check as the last SQL read of the batch.
+		batch.Queue(queuePoolProjectionsSQL, tenantContext.OrganizationID, tenantContext.UserID, leadIDs).Query(func(rows pgx.Rows) error {
+			return collectQueuePoolProjections(rows, leadIDs, queuePools)
 		})
 	}
 

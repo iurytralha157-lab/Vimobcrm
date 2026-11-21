@@ -63,8 +63,8 @@ func TestQueuePoolProjectionDenialAfterInitialReadFailsClosed(t *testing.T) {
 	if err := hydrateQueuePoolLeads(context.Background(), queryer, actor, []Lead{lead}); !errors.Is(err, ErrLeadNotFound) {
 		t.Fatalf("list must not serialize rows after a newer denial, got %v", err)
 	}
-	board := &PipelineBoardLead{ID: "lead", Name: "private name"}
-	if err := hydrateQueuePoolBoard(context.Background(), queryer, actor, []*PipelineBoardLead{board}); !errors.Is(err, ErrLeadNotFound) {
+	rows := &poolProjectionRows{access: &denied}
+	if err := collectQueuePoolProjections(rows, []string{"lead"}, make(map[string]queuePoolProjection)); !errors.Is(err, ErrLeadNotFound) {
 		t.Fatalf("board must not serialize a card after a newer denial, got %v", err)
 	}
 }

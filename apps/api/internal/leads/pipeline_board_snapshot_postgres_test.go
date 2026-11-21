@@ -2,8 +2,8 @@ package leads
 
 import (
 	"context"
+	"errors"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -11,25 +11,19 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
-// The wrapper observes actual pgx rows; it neither replaces SQL nor manufactures
-// query results. The second connection commits only after the card rows close.
+// The wrapper observes the actual pgx batch. The second connection commits
+// after the read snapshot is established and before either query is sent.
 type boardSnapshotBarrier struct {
-	beginner   pipelineBoardReadBeginner
-	afterCards func() error
-	options    pgx.TxOptions
-	queries    []string
-	err        error
-	barriers   int
+	beginner    pipelineBoardReadBeginner
+	beforeBatch func() error
+	options     pgx.TxOptions
+	queries     []string
+	err         error
+	batches     int
 }
 
 type boardSnapshotBarrierTx struct {
 	pgx.Tx
-	barrier *boardSnapshotBarrier
-}
-
-type boardSnapshotBarrierRows struct {
-	pgx.Rows
-	once    sync.Once
 	barrier *boardSnapshotBarrier
 }
 
@@ -42,26 +36,13 @@ func (fixture *boardSnapshotBarrier) BeginTx(ctx context.Context, options pgx.Tx
 	return &boardSnapshotBarrierTx{Tx: tx, barrier: fixture}, nil
 }
 
-func (tx *boardSnapshotBarrierTx) Query(ctx context.Context, query string, args ...any) (pgx.Rows, error) {
-	if tx.barrier.err != nil {
-		return nil, tx.barrier.err
+func (tx *boardSnapshotBarrierTx) SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResults {
+	tx.barrier.batches++
+	for _, query := range batch.QueuedQueries {
+		tx.barrier.queries = append(tx.barrier.queries, query.SQL)
 	}
-	tx.barrier.queries = append(tx.barrier.queries, query)
-	rows, err := tx.Tx.Query(ctx, query, args...)
-	if err == nil && strings.Contains(query, "with requested_stages(stage_id)") {
-		return &boardSnapshotBarrierRows{Rows: rows, barrier: tx.barrier}, nil
-	}
-	return rows, err
-}
-
-func (rows *boardSnapshotBarrierRows) Close() {
-	rows.Rows.Close()
-	rows.once.Do(func() {
-		rows.barrier.barriers++
-		if rows.barrier.afterCards != nil {
-			rows.barrier.err = rows.barrier.afterCards()
-		}
-	})
+	tx.barrier.err = tx.barrier.beforeBatch()
+	return tx.Tx.SendBatch(ctx, batch)
 }
 
 func TestPipelineBoardSnapshotTwoConnectionsKeepCardsAndMetricsCoherent(t *testing.T) {
@@ -79,12 +60,41 @@ func TestPipelineBoardSnapshotTwoConnectionsKeepCardsAndMetricsCoherent(t *testi
 	pipelinePostgresExec(t, ctx, writer, `insert into public.stages(id,organization_id,pipeline_id,name,stage_key,position,created_at,updated_at) values($1,$2,$3,'A','a',0,$5,$5),($4,$2,$3,'B','b',1,$5,$5)`, stageA, org, pipeline, stageB, at)
 	viewer := tenant.Context{OrganizationID: org, UserID: actor, MemberRole: "admin"}
 	filter := PipelineBoardFilter{PipelineID: pipeline, Limit: 1}
+	fallbackPipeline, emptyPipeline, foreignPipeline := pipelinePostgresID(12), pipelinePostgresID(13), pipelinePostgresID(14)
+	fallbackStage, inactiveStage, inconsistentForeignStage := pipelinePostgresID(15), pipelinePostgresID(16), pipelinePostgresID(17)
+	pipelinePostgresExec(t, ctx, writer, `insert into public.pipelines(id,organization_id,is_default,position,created_at)
+		values($1,$4,null,-1,$6),($2,$4,false,1,$6),($3,$5,true,-2,$6)`, fallbackPipeline, emptyPipeline, foreignPipeline, org, foreignOrg, at)
+	pipelinePostgresExec(t, ctx, writer, `insert into public.stages(id,organization_id,pipeline_id,name,position,is_active,created_at,updated_at)
+		values($1,$7,$4,'Fallback',0,true,$8,$8),($2,$7,$5,'Archived',0,false,$8,$8),($3,$7,$6,'Foreign pipeline',0,true,$8,$8)`,
+		fallbackStage, inactiveStage, inconsistentForeignStage, fallbackPipeline, emptyPipeline, foreignPipeline, org, at)
+
+	t.Run("implicit default then legacy fallback", func(t *testing.T) {
+		board, err := repo.readPipelineBoardSnapshot(ctx, repo.db.Pool(), viewer, PipelineBoardFilter{Limit: 1})
+		if err != nil || len(board) != 2 || board[0].ID != stageA || board[1].ID != stageB {
+			t.Fatalf("implicit default pipeline changed: %v, %v", board, err)
+		}
+		pipelinePostgresExec(t, ctx, writer, `update public.pipelines set is_default=false where id=$1`, pipeline)
+		board, err = repo.readPipelineBoardSnapshot(ctx, repo.db.Pool(), viewer, PipelineBoardFilter{Limit: 1})
+		if err != nil || len(board) != 1 || board[0].ID != fallbackStage || board[0].PipelineID != fallbackPipeline {
+			t.Fatalf("implicit fallback pipeline changed: %v, %v", board, err)
+		}
+	})
+	t.Run("explicit empty and foreign pipeline", func(t *testing.T) {
+		board, err := repo.readPipelineBoardSnapshot(ctx, repo.db.Pool(), viewer, PipelineBoardFilter{PipelineID: emptyPipeline})
+		if err != nil || board == nil || len(board) != 0 {
+			t.Fatalf("valid empty pipeline changed: %v, %v", board, err)
+		}
+		board, err = repo.readPipelineBoardSnapshot(ctx, repo.db.Pool(), viewer, PipelineBoardFilter{PipelineID: foreignPipeline})
+		if !errors.Is(err, ErrInvalidReference) || board != nil {
+			t.Fatalf("foreign pipeline reached board: %v, %v", board, err)
+		}
+	})
 
 	for _, action := range []string{"move A to B", "insert into A", "delete last A"} {
 		t.Run(action, func(t *testing.T) {
 			pipelinePostgresExec(t, ctx, writer, `truncate public.leads`)
 			pipelinePostgresExec(t, ctx, writer, `insert into public.leads(id,organization_id,name,stage_id,pipeline_id,assigned_user_id,valor_interesse,created_at,updated_at,board_order_at) values($1,$2,'Owned lead',$3,$4,$5,100,$6,$6,$6),($7,$8,'Foreign lead',$3,$4,$5,999,$6,$6,$6)`, lead, org, stageA, pipeline, actor, at, pipelinePostgresID(8), foreignOrg)
-			barrier := &boardSnapshotBarrier{beginner: repo.db.Pool(), afterCards: func() error {
+			barrier := &boardSnapshotBarrier{beginner: repo.db.Pool(), beforeBatch: func() error {
 				switch action {
 				case "move A to B":
 					_, err := writer.Exec(ctx, `update public.leads set stage_id=$2 where id=$1`, lead, stageB)
@@ -101,7 +111,9 @@ func TestPipelineBoardSnapshotTwoConnectionsKeepCardsAndMetricsCoherent(t *testi
 			if err != nil {
 				t.Fatal(err)
 			}
-			if barrier.barriers != 1 || barrier.err != nil || len(barrier.queries) != 3 {
+			if barrier.batches != 1 || barrier.err != nil || len(barrier.queries) != 2 ||
+				!strings.Contains(barrier.queries[0], "with requested_stages(stage_id)") ||
+				!strings.Contains(barrier.queries[1], "group by l.stage_id") {
 				t.Fatalf("actual cards/metrics barrier was not crossed once: %+v", barrier)
 			}
 			assertBoardSnapshot(t, before, stageA, stageB, lead, 1, 0, 100, 0)

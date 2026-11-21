@@ -128,6 +128,22 @@ func (repo Repository) resolveFull(ctx context.Context, userID string, requested
 		organizationID = resolvedOrganizationID
 	}
 
+	if requestedOrganizationID != "" && repo.transaction == nil {
+		resolved, err := repo.readMemberContext(ctx, userID, organizationID, true)
+		switch {
+		case err == nil:
+			resolved.UserRole = profile.Role
+			repo.storeCachedContext(cacheKey, resolved)
+			return resolved, nil
+		case errors.Is(err, pgx.ErrNoRows):
+			return Context{}, ErrOrganizationAccessDenied
+		case !isUndefinedSchemaError(err) && !errors.Is(err, errMemberContextNeedsLegacyOverrides):
+			return Context{}, fmt.Errorf("%w: %v", ErrTenantResolutionUnhealthy, err)
+		}
+		// Older schemas and conflicting legacy override aliases use the
+		// original resolution path, including its compatibility fallbacks.
+	}
+
 	resolved, err := repo.getActiveMembership(ctx, userID, organizationID)
 	if errors.Is(err, ErrOrganizationAccessDenied) && requestedOrganizationID == "" && profile.OrganizationID != "" {
 		if resolvedOrganizationID, fallbackErr := repo.defaultActiveOrganizationID(ctx, userID); fallbackErr == nil && resolvedOrganizationID != organizationID {
@@ -252,10 +268,33 @@ func (repo Repository) refreshCachedContext(ctx context.Context, tenantContext *
 		return err == nil && active
 	}
 
-	var memberRole string
+	current, err := repo.readMemberContext(ctx, tenantContext.UserID, tenantContext.OrganizationID, false)
+	if err != nil || normalizeRole(current.MemberRole) != normalizeRole(tenantContext.MemberRole) {
+		return false
+	}
+	tenantContext.IsTeamLeader = current.IsTeamLeader
+	tenantContext.LedTeamIDs = current.LedTeamIDs
+	tenantContext.LedUserIDs = current.LedUserIDs
+	tenantContext.LedPipelineIDs = current.LedPipelineIDs
+	tenantContext.Permissions = current.Permissions
+	tenantContext.SubscriptionStatus = current.SubscriptionStatus
+	tenantContext.SubscriptionType = current.SubscriptionType
+	tenantContext.TrialEndsAt = current.TrialEndsAt
+	tenantContext.BillingGraceUntil = current.BillingGraceUntil
+	return true
+}
+
+var errMemberContextNeedsLegacyOverrides = errors.New("member context requires legacy override resolution")
+
+// A member's current grants, billing and leadership share the active-member
+// predicate. A cold explicit lookup can also take its org metadata and enabled
+// modules from that snapshot without separate network round trips.
+func (repo Repository) readMemberContext(ctx context.Context, userID, organizationID string, includeOrganization bool) (Context, error) {
+	resolved := Context{UserID: userID, OrganizationID: organizationID}
 	var billing billingSnapshot
 	var roleGrantsCSV, overridesJSON string
-	var ledTeamIDs, ledUserIDs, ledPipelineIDs []string
+	var organizationName, logoURL pgtype.Text
+	var modules []string
 	err := repo.queries().QueryRow(ctx, `
 		with led_teams as (
 			select distinct tm.team_id
@@ -324,7 +363,15 @@ func (repo Repository) refreshCachedContext(ctx context.Context, tenantContext *
 			), '{}'),
 			array(select team_id::text from led_teams order by team_id),
 			array(select user_id::text from led_users order by user_id),
-			array(select pipeline_id::text from led_pipelines order by pipeline_id)
+			array(select pipeline_id::text from led_pipelines order by pipeline_id),
+			case when $3::boolean then o.name end,
+			case when $3::boolean then o.logo_url end,
+			case when $3::boolean then array(
+				select lower(trim(module_name))
+				from public.organization_modules
+				where organization_id = o.id and coalesce(is_enabled, false) = true
+				order by lower(trim(module_name))
+			) end
 		from public.organization_members om
 		join public.users u on u.id = om.user_id
 		join public.organizations o on o.id = om.organization_id
@@ -335,37 +382,59 @@ func (repo Repository) refreshCachedContext(ctx context.Context, tenantContext *
 		  and coalesce(u.is_active, false) = true
 		  and coalesce(o.is_active, true) = true
 		limit 1
-	`, tenantContext.UserID, tenantContext.OrganizationID).Scan(
-		&memberRole,
+	`, userID, organizationID, includeOrganization).Scan(
+		&resolved.MemberRole,
 		&billing.Status,
 		&billing.Type,
 		&billing.TrialEndsAt,
 		&billing.GraceUntil,
 		&roleGrantsCSV,
 		&overridesJSON,
-		&ledTeamIDs,
-		&ledUserIDs,
-		&ledPipelineIDs,
+		&resolved.LedTeamIDs,
+		&resolved.LedUserIDs,
+		&resolved.LedPipelineIDs,
+		&organizationName,
+		&logoURL,
+		&modules,
 	)
-	if err != nil || normalizeRole(memberRole) != normalizeRole(tenantContext.MemberRole) {
-		return false
+	if err != nil {
+		return Context{}, err
 	}
 	var overrides map[string]bool
 	if err := json.Unmarshal([]byte(overridesJSON), &overrides); err != nil {
-		return false
+		return Context{}, err
 	}
 	roleGrants := []string{}
 	if roleGrantsCSV != "" {
 		roleGrants = strings.Split(roleGrantsCSV, ",")
 	}
-	tenantContext.IsTeamLeader = len(ledTeamIDs) > 0
-	tenantContext.LedTeamIDs = ledTeamIDs
-	tenantContext.LedUserIDs = ledUserIDs
-	tenantContext.LedPipelineIDs = ledPipelineIDs
-	tenantContext.Permissions = permissions.Resolve(memberRole, tenantContext.IsTeamLeader, roleGrants, overrides)
+	if includeOrganization {
+		if !organizationName.Valid {
+			return Context{}, errors.New("active organization has no name")
+		}
+		resolved.OrganizationName = organizationName.String
+		resolved.OrganizationLogo = logoURL.String
+		resolved.EnabledModules = []string{}
+		for _, module := range modules {
+			if name := strings.TrimSpace(module); name != "" {
+				resolved.EnabledModules = appendUniqueString(resolved.EnabledModules, name)
+			}
+		}
+		canonicalOverrides := make(map[string]bool, len(overrides))
+		for key, allowed := range overrides {
+			key = permissions.CanonicalKey(key)
+			if existing, exists := canonicalOverrides[key]; exists && existing != allowed {
+				return Context{}, errMemberContextNeedsLegacyOverrides
+			}
+			canonicalOverrides[key] = allowed
+		}
+		overrides = canonicalOverrides
+	}
 
-	billing.applyToContext(tenantContext)
-	return true
+	resolved.IsTeamLeader = len(resolved.LedTeamIDs) > 0
+	resolved.Permissions = permissions.Resolve(resolved.MemberRole, resolved.IsTeamLeader, roleGrants, overrides)
+	billing.applyToContext(&resolved)
+	return resolved, nil
 }
 
 func (repo Repository) storeCachedContext(key string, tenantContext Context) {

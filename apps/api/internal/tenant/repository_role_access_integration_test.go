@@ -7,6 +7,8 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -117,6 +119,86 @@ func TestRoleDeactivationRevalidatesCachedAccessAcrossOrganizations(t *testing.T
 		t.Fatalf("inactive membership A must be denied, got %v", err)
 	}
 	assertAccess(orgB, true)
+
+	assertColdParity := func(t *testing.T, actorID, organizationID string, wantErr error) (Context, int64) {
+		t.Helper()
+		coldRepo := NewRepository(database)
+		before := database.Pool().Stat().AcquireCount()
+		cold, coldErr := coldRepo.Resolve(ctx, actorID, organizationID)
+		acquires := database.Pool().Stat().AcquireCount() - before
+		tx, err := database.Pool().Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		inTx, inTxErr := coldRepo.ResolveInTx(ctx, tx, actorID, organizationID)
+		if !errors.Is(coldErr, wantErr) || !errors.Is(inTxErr, wantErr) {
+			t.Fatalf("cold error %v, in-transaction error %v, want %v", coldErr, inTxErr, wantErr)
+		}
+		if wantErr != nil {
+			return Context{}, acquires
+		}
+		normalizeScopes := func(resolved Context) Context {
+			resolved = cloneContext(resolved)
+			slices.Sort(resolved.LedTeamIDs)
+			slices.Sort(resolved.LedUserIDs)
+			slices.Sort(resolved.LedPipelineIDs)
+			return resolved
+		}
+		if !reflect.DeepEqual(normalizeScopes(cold), normalizeScopes(inTx)) {
+			t.Fatalf("cold context %#v differs from in-transaction context %#v", cold, inTx)
+		}
+		return cold, acquires
+	}
+	t.Run("cold explicit member snapshot matches transaction", func(t *testing.T) {
+		const (
+			teamID     = "66666666-6666-4666-8666-666666666666"
+			pipelineID = "77777777-7777-4777-8777-777777777777"
+			brokerID   = "88888888-8888-4888-8888-888888888888"
+		)
+		for _, statement := range []struct {
+			query string
+			args  []any
+		}{
+			{`update public.organizations set logo_url='https://example.invalid/logo', subscription_status='overdue', subscription_type='paid', billing_grace_until='2027-01-01T00:00:00Z' where id=$1`, []any{orgB}},
+			{`insert into public.organization_modules values ($1,' CRM ',true),($1,'crm',true),($1,'whatsapp',true),($1,'agenda',false),($2,'settings',true)`, []any{orgB, orgA}},
+			{`insert into public.user_permission_overrides values ($1,$2,'settings_users',false)`, []any{orgB, userID}},
+			{`insert into public.users (id,role,organization_id) values ($1,'user',$2)`, []any{brokerID, orgA}},
+			{`insert into public.organization_members (organization_id,user_id) values ($1,$2)`, []any{orgB, brokerID}},
+			{`insert into public.teams (id,organization_id) values ($1,$2)`, []any{teamID, orgB}},
+			{`insert into public.team_members (team_id,organization_id,user_id,is_leader) values ($1,$2,$3,true),($1,$2,$4,false)`, []any{teamID, orgB, userID, brokerID}},
+			{`insert into public.pipelines (id,organization_id) values ($1,$2)`, []any{pipelineID, orgB}},
+			{`insert into public.team_pipelines (team_id,organization_id,pipeline_id) values ($1,$2,$3)`, []any{teamID, orgB, pipelineID}},
+		} {
+			if _, err := database.Pool().Exec(ctx, statement.query, statement.args...); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cold, acquires := assertColdParity(t, userID, orgB, nil)
+		if acquires != 2 {
+			t.Fatalf("cold explicit resolution acquired %d connections, want two (profile and current membership)", acquires)
+		}
+		if !cold.IsTeamLeader || !slices.Contains(cold.LedUserIDs, brokerID) || !slices.Contains(cold.LedPipelineIDs, pipelineID) ||
+			!slices.Equal(cold.EnabledModules, []string{"crm", "whatsapp"}) || cold.HasPermission(permissions.UsersManage) || cold.BillingGraceUntil == nil {
+			t.Fatalf("fixture did not exercise current leadership, scoped modules, billing and override: %#v", cold)
+		}
+	})
+	t.Run("cold explicit member deny matches transaction", func(t *testing.T) {
+		assertColdParity(t, userID, orgA, ErrOrganizationAccessDenied)
+		assertColdParity(t, roleA, orgB, ErrUserProfileNotFound)
+	})
+	t.Run("older schema keeps the existing cold fallback", func(t *testing.T) {
+		if _, err := database.Pool().Exec(ctx, `alter table public.user_permission_overrides rename to synthetic_old_permission_overrides`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.readMemberContext(ctx, userID, orgB, true); !isUndefinedSchemaError(err) {
+			t.Fatalf("expected combined read to see the missing schema, got %v", err)
+		}
+		cold, _ := assertColdParity(t, userID, orgB, nil)
+		if !cold.HasPermission(permissions.UsersManage) {
+			t.Fatal("older schema lost the active role grant")
+		}
+	})
 }
 
 // Match the membership epoch columns required by both fresh and cached tenant

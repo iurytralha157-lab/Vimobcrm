@@ -706,23 +706,25 @@ func (repo Repository) listPipelineBoardStages(ctx context.Context, tenantContex
 	return listPipelineBoardStagesWithQueryer(ctx, repo.db.Pool(), tenantContext, pipelineID)
 }
 
+const pipelineBoardStageFields = `
+	s.id::text,
+	s.organization_id::text,
+	s.pipeline_id::text,
+	s.name,
+	s.color,
+	s.stage_key,
+	s.position,
+	s.is_won,
+	s.is_lost,
+	coalesce((to_jsonb(s)->>'is_qualified')::boolean, false),
+	s.sla_hours,
+	s.is_active,
+	s.created_at,
+	s.updated_at`
+
 func listPipelineBoardStagesWithQueryer(ctx context.Context, queryer pipelineBoardReadQueryer, tenantContext tenant.Context, pipelineID string) ([]PipelineBoardStage, error) {
 	rows, err := queryer.Query(ctx, `
-		select
-			id::text,
-			organization_id::text,
-			pipeline_id::text,
-			name,
-			color,
-			stage_key,
-			position,
-			is_won,
-			is_lost,
-			coalesce((to_jsonb(s)->>'is_qualified')::boolean, false),
-			sla_hours,
-			is_active,
-			created_at,
-			updated_at
+		select `+pipelineBoardStageFields+`
 		from public.stages as s
 		where s.organization_id = $1::uuid
 		  and s.pipeline_id = $2::uuid
@@ -732,6 +734,10 @@ func listPipelineBoardStagesWithQueryer(ctx context.Context, queryer pipelineBoa
 	if err != nil {
 		return nil, err
 	}
+	return scanPipelineBoardStages(rows)
+}
+
+func scanPipelineBoardStages(rows pgx.Rows) ([]PipelineBoardStage, error) {
 	defer rows.Close()
 
 	stages := []PipelineBoardStage{}
@@ -830,63 +836,29 @@ func (repo Repository) listInitialPipelineBoardLeadsByStage(ctx context.Context,
 }
 
 func listInitialPipelineBoardLeadsByStageWithQueryer(ctx context.Context, queryer pipelineBoardReadQueryer, tenantContext tenant.Context, filter PipelineBoardFilter) (map[string][]PipelineBoardLead, error) {
+	query, args, err := listInitialPipelineBoardLeadsByStageQuery(tenantContext, filter)
+	if err != nil {
+		return nil, err
+	}
+	if query == "" {
+		return scanInitialPipelineBoardLeadsByStage(nil, tenantContext, filter.StageIDs)
+	}
+	rows, err := queryer.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	return scanInitialPipelineBoardLeadsByStage(rows, tenantContext, filter.StageIDs)
+}
+
+func scanInitialPipelineBoardLeadsByStage(rows pgx.Rows, tenantContext tenant.Context, stageIDs []string) (map[string][]PipelineBoardLead, error) {
 	leadsByStage := map[string][]PipelineBoardLead{}
-	for _, stageID := range filter.StageIDs {
+	for _, stageID := range stageIDs {
 		leadsByStage[stageID] = []PipelineBoardLead{}
 	}
-	if strings.TrimSpace(filter.PipelineID) == "" || len(filter.StageIDs) == 0 {
+	if rows == nil {
 		return leadsByStage, nil
-	}
-
-	limit := filter.Limit
-	if limit <= 0 {
-		limit = defaultPipelineBoardLimit
-	}
-	where, args, err := buildPipelineLeadWhere(tenantContext, filter)
-	if err != nil {
-		return nil, err
-	}
-	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "visible_property")
-
-	requestedStageValues := make([]string, 0, len(filter.StageIDs))
-	for _, rawStageID := range filter.StageIDs {
-		stageID, ok := normalizeUUID(rawStageID)
-		if !ok {
-			continue
-		}
-		args = append(args, stageID)
-		requestedStageValues = append(requestedStageValues, fmt.Sprintf("($%d::uuid)", len(args)))
-	}
-	if len(requestedStageValues) == 0 {
-		return leadsByStage, nil
-	}
-	args = append(args, limit)
-	limitIndex := len(args)
-	boardSortExpression := pipelineBoardSortExpression("l")
-	outerBoardSortExpression := pipelineBoardSortExpression("stage_lead")
-
-	rows, err := queryer.Query(ctx, `
-		with requested_stages(stage_id) as (
-			values `+strings.Join(requestedStageValues, ", ")+`
-		)
-		select stage_lead.*
-		from requested_stages requested_stage
-		cross join lateral (
-			select
-				`+pipelineBoardLeadSelectFields(propertyVisibility)+`
-			from public.leads l
-			where `+strings.Join(where, " and ")+`
-			  and l.stage_id = requested_stage.stage_id
-			order by `+boardSortExpression+` desc, l.id desc
-			limit $`+fmt.Sprint(limitIndex)+`
-		) stage_lead
-		order by stage_lead.stage_id, `+outerBoardSortExpression+` desc, stage_lead.id desc
-	`, args...)
-	if err != nil {
-		return nil, err
 	}
 	defer rows.Close()
-
 	for rows.Next() {
 		lead, _, err := scanPipelineBoardLead(rows, false)
 		if err != nil {
@@ -901,8 +873,58 @@ func listInitialPipelineBoardLeadsByStageWithQueryer(ctx context.Context, querye
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-
 	return leadsByStage, nil
+}
+
+func listInitialPipelineBoardLeadsByStageQuery(tenantContext tenant.Context, filter PipelineBoardFilter) (string, []any, error) {
+	if strings.TrimSpace(filter.PipelineID) == "" || len(filter.StageIDs) == 0 {
+		return "", nil, nil
+	}
+
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = defaultPipelineBoardLimit
+	}
+	where, args, err := buildPipelineLeadWhere(tenantContext, filter)
+	if err != nil {
+		return "", nil, err
+	}
+	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "visible_property")
+
+	requestedStageValues := make([]string, 0, len(filter.StageIDs))
+	for _, rawStageID := range filter.StageIDs {
+		stageID, ok := normalizeUUID(rawStageID)
+		if !ok {
+			continue
+		}
+		args = append(args, stageID)
+		requestedStageValues = append(requestedStageValues, fmt.Sprintf("($%d::uuid)", len(args)))
+	}
+	if len(requestedStageValues) == 0 {
+		return "", nil, nil
+	}
+	args = append(args, limit)
+	limitIndex := len(args)
+	boardSortExpression := pipelineBoardSortExpression("l")
+	outerBoardSortExpression := pipelineBoardSortExpression("stage_lead")
+
+	return `
+		with requested_stages(stage_id) as (
+			values ` + strings.Join(requestedStageValues, ", ") + `
+		)
+		select stage_lead.*
+		from requested_stages requested_stage
+		cross join lateral (
+			select
+				` + pipelineBoardLeadSelectFields(propertyVisibility) + `
+			from public.leads l
+			where ` + strings.Join(where, " and ") + `
+			  and l.stage_id = requested_stage.stage_id
+			order by ` + boardSortExpression + ` desc, l.id desc
+			limit $` + fmt.Sprint(limitIndex) + `
+		) stage_lead
+		order by stage_lead.stage_id, ` + outerBoardSortExpression + ` desc, stage_lead.id desc
+	`, args, nil
 }
 
 type pipelineBoardStageMetric struct {
@@ -918,21 +940,55 @@ func (repo Repository) listPipelineBoardStageMetrics(ctx context.Context, tenant
 }
 
 func listPipelineBoardStageMetricsWithQueryer(ctx context.Context, queryer pipelineBoardReadQueryer, tenantContext tenant.Context, filter PipelineBoardFilter) (map[string]pipelineBoardStageMetric, error) {
+	query, args, err := listPipelineBoardStageMetricsQuery(tenantContext, filter)
+	if err != nil {
+		return nil, err
+	}
+	if query == "" {
+		return scanPipelineBoardStageMetrics(nil, filter.StageIDs)
+	}
+	rows, err := queryer.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	return scanPipelineBoardStageMetrics(rows, filter.StageIDs)
+}
+
+func scanPipelineBoardStageMetrics(rows pgx.Rows, stageIDs []string) (map[string]pipelineBoardStageMetric, error) {
 	metrics := map[string]pipelineBoardStageMetric{}
-	for _, stageID := range filter.StageIDs {
+	for _, stageID := range stageIDs {
 		metrics[stageID] = pipelineBoardStageMetric{}
 	}
-	if strings.TrimSpace(filter.PipelineID) == "" || len(filter.StageIDs) == 0 {
+	if rows == nil {
 		return metrics, nil
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var stageID string
+		var metric pipelineBoardStageMetric
+		if err := rows.Scan(&stageID, &metric.LeadCount, &metric.TotalValue); err != nil {
+			return nil, err
+		}
+		metrics[stageID] = metric
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return metrics, nil
+}
+
+func listPipelineBoardStageMetricsQuery(tenantContext tenant.Context, filter PipelineBoardFilter) (string, []any, error) {
+	if strings.TrimSpace(filter.PipelineID) == "" || len(filter.StageIDs) == 0 {
+		return "", nil, nil
 	}
 
 	where, args, err := buildPipelineLeadWhere(tenantContext, filter)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "p")
 
-	rows, err := queryer.Query(ctx, `
+	return `
 		select
 			l.stage_id::text,
 			count(*)::bigint as lead_count,
@@ -947,28 +1003,10 @@ func listPipelineBoardStageMetricsWithQueryer(ctx context.Context, queryer pipel
 		left join public.properties p
 		  on p.id = coalesce(l.interest_property_id, l.property_id)
 		 and p.organization_id = l.organization_id
-		 and `+propertyVisibility+`
-		where `+strings.Join(where, " and ")+`
+		 and ` + propertyVisibility + `
+		where ` + strings.Join(where, " and ") + `
 		group by l.stage_id
-	`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var stageID string
-		var metric pipelineBoardStageMetric
-		if err := rows.Scan(&stageID, &metric.LeadCount, &metric.TotalValue); err != nil {
-			return nil, err
-		}
-		metrics[stageID] = metric
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return metrics, nil
+	`, args, nil
 }
 
 func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFilter) ([]string, []any, error) {
@@ -1349,7 +1387,18 @@ func (repo Repository) attachPipelineBoardLeadEnrichments(ctx context.Context, t
 		leadIDs = append(leadIDs, lead.ID)
 	}
 
-	enrichments, err := repo.ListEnrichments(ctx, tenantContext, leadIDs)
+	seeds, err := repo.listVisibleLeadEnrichmentSeeds(ctx, tenantContext, leadIDs)
+	if err != nil {
+		return err
+	}
+	// Fail closed if a card vanished or left the actor's scope after the snapshot.
+	if len(seeds) != len(leadIDs) {
+		return ErrLeadNotFound
+	}
+	// Storage can wait on HTTP, so keep the final queue audience read after it.
+	repo.hydratePipelineBoardLeadAvatars(ctx, tenantContext.OrganizationID, leads)
+	queuePools := make(map[string]queuePoolProjection, len(leads))
+	enrichments, err := repo.enrichLeadSeeds(ctx, tenantContext, seeds, queuePools)
 	if err != nil {
 		return err
 	}
@@ -1359,6 +1408,11 @@ func (repo Repository) attachPipelineBoardLeadEnrichments(ctx context.Context, t
 	}
 
 	for _, lead := range leads {
+		projection := queuePools[lead.ID]
+		lead.QueuePool = projection.Metadata
+		if projection.Access != nil {
+			lead.CanOperate = false
+		}
 		enrichment, ok := enrichmentsByLead[lead.ID]
 		if !ok {
 			continue
@@ -1369,8 +1423,7 @@ func (repo Repository) attachPipelineBoardLeadEnrichments(ctx context.Context, t
 		lead.Tags = enrichment.Tags
 		lead.TasksCount = enrichment.TasksCount
 	}
-	repo.hydratePipelineBoardLeadAvatars(ctx, tenantContext.OrganizationID, leads)
-	return hydrateQueuePoolBoard(ctx, repo.db.Pool(), tenantContext, leads)
+	return nil
 }
 
 func firstNonEmpty(values ...string) string {
