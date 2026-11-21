@@ -1,15 +1,19 @@
-# Evolution Go 0.7.2 - Vimob hardening and WhatsApp Status ACK
+# Evolution Go 0.7.3/Vimob
 
-This image is built from the immutable upstream Evolution Go `0.7.2` commit
-`9337afc47e10b86cc896a6f432240e40fee95dd1` plus narrowly scoped patches for
-the Whatsmeow auth store, instance startup, and `POST /message/downloadmedia`.
+This image pins official Evolution Go [0.7.3](https://github.com/evolution-foundation/evolution-go/releases/tag/0.7.3) at commit `80d7c72c0727e091425d10f5654b7ccf07e01abe`.
+The build keeps Vimob's instance startup, handshake discovery, and download bounds patches.
 
-The Status ACK patch pins Whatsmeow to
-[`a2381054887e`](https://github.com/tulir/whatsmeow/commit/a2381054887e).
-This revision acknowledges incoming WhatsApp Status packets at the protocol
-layer and retains auth schema version 14. The prior revision missed that
-acknowledgment, which could cause periodic reconnects and delay incoming
-messages. The build verifies the pinned module and the linked Status handler.
+The upstream release pins Whatsmeow to
+[`54038813c47f`](https://github.com/tulir/whatsmeow/commit/54038813c47f).
+Its Status handler acknowledges incoming WhatsApp Status packets at the protocol
+layer. The upstream authentication store reuses the main database pool and bounds
+auth schema upgrades with a 60-second deadline. Its schema upgrades from v14 in
+the previous Vimob image to v16. Verify the upgrade and rollback on a separate
+authentication database before rollout.
+
+The upstream blocklist endpoints return `Items` with `LID`, `PN`, and `Active`
+plus `AddressingMode`. The `DHash` field remains available. Verify any clients
+using `/user/block`, `/user/unblock`, or `/user/blocklist`.
 
 The handshake-version patch discovers the current version through the pinned
 Whatsmeow library's `GetLatestVersion` request to `https://web.whatsapp.com`,
@@ -23,14 +27,6 @@ initialization without committing the obsolete library default, so a later
 explicit start can retry. The patch includes synthetic regression tests for
 the handshake version, automatic discovery, initialization reuse, cancellation,
 and recovery after a failed discovery.
-
-The auth-pool patch is the corrected upstream fix from
-[`f85ea1445373ea142bb12ba0c01dfc85879be212`](https://github.com/evolution-foundation/evolution-go/commit/f85ea1445373ea142bb12ba0c01dfc85879be212)
-(follow-up to
-[`4cc635dd460f70c36ba83285ecbb34589790572f`](https://github.com/evolution-foundation/evolution-go/commit/4cc635dd460f70c36ba83285ecbb34589790572f)).
-It reuses one sqlstore container, caps the Postgres pool at 20 open / 5 idle
-connections, expires connections, closes failed initialization attempts, and
-memoizes only a successful initialization.
 
 The startup patch makes `CONNECT_ON_STARTUP=false` a process-level, fail-closed
 barrier instead of only skipping the bulk-start call in `main.go`:
@@ -85,10 +81,17 @@ hard deadline if another caller is already holding that mutex.
 Keep `WEBHOOK_FILES=false`. Incoming webhooks retain the encrypted media
 metadata, while the Vimob API queue decides which files may be recovered.
 
-Builds must run the message, instance-repository, and Whatsmeow tests plus the
+Builds must run the config, message, instance, user, and Whatsmeow tests plus the
 startup-path vet checks. Production must pin the resulting image by immutable
 SHA/digest, not `latest`.
 
 All build stages are pinned by digest. The runtime uses Alpine 3.22.1 (matching
 the Go builder generation) instead of the upstream 3.19.1 runtime, which is
 end-of-life.
+
+The production Swarm service currently replaces its single task stop-first. A
+task replacement closes the existing WhatsApp sockets. With
+`CONNECT_ON_STARTUP=false`, the new process requires explicit lifecycle
+operations for sessions selected for recovery. Capture the connected cohort and
+validate reconnection and message delivery with a test account before any
+production change. Keep the previous image digest available for rollback.

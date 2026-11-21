@@ -1,9 +1,9 @@
-name: Evolution Go Status ACK Hotfix
+name: Evolution Go 0.7.3 Candidate
 
 on:
   push:
     branches:
-      - codex/evolution-go-status-ack-20261117
+      - codex/evolution-go-073-candidate
   workflow_dispatch:
 
 permissions:
@@ -15,7 +15,7 @@ env:
   EVOLUTION_IMAGE: ${{ github.repository_owner }}/vimob-evolution-go
 
 jobs:
-  evolution-hotfix:
+  evolution-candidate:
     name: Test, build, and publish Evolution Go only
     runs-on: ubuntu-latest
     steps:
@@ -49,7 +49,7 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: |
-            VERSION=0.7.2-vimob-status-ack.5
+            VERSION=0.7.3-vimob.1
           tags: ${{ steps.evolution-meta.outputs.tags }}
           labels: ${{ steps.evolution-meta.outputs.labels }}
           cache-from: type=gha,scope=evolution-go
@@ -69,7 +69,7 @@ jobs:
             --arg evolution "${REGISTRY}/${EVOLUTION_IMAGE}@${EVOLUTION_DIGEST}" \
             '{commit: $commit, images: {evolution: $evolution}}' > release-manifest.json
           {
-            echo "## Evolution Go Status ACK hotfix"
+            echo "## Evolution Go 0.7.3 candidate"
             echo
             echo "Image: \`${REGISTRY}/${EVOLUTION_IMAGE}@${EVOLUTION_DIGEST}\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -77,7 +77,7 @@ jobs:
       - name: Upload release manifest
         uses: actions/upload-artifact@v4
         with:
-          name: evolution-status-ack-release-${{ github.sha }}
+          name: evolution-073-candidate-${{ github.sha }}
           path: release-manifest.json
           if-no-files-found: error
           retention-days: 30
