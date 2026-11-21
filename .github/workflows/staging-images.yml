@@ -130,6 +130,12 @@ jobs:
       - name: Verify Supabase migration integrity
         run: node scripts/supabase/verify-migrations.mjs
 
+      - name: Verify OpenAPI router parity
+        run: node scripts/architecture/check-openapi-parity.mjs
+
+      - name: Test OpenAPI router parity
+        run: node --test scripts/architecture/openapi-parity.test.mjs
+
       - name: Verify Edge Function release manifest
         run: node scripts/supabase/verify-edge-functions.mjs
 

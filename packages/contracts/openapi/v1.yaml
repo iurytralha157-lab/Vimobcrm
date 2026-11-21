@@ -2216,6 +2216,98 @@ paths:
                       additionalProperties: true
         default:
           $ref: '#/components/responses/APIError'
+  /v1/automation-executions/summary:
+    get:
+      summary: List execution totals by automation
+      description: >-
+        Requires the automations module and automations_view permission.
+        Counts cover all execution records in scope, independently of the list page.
+        activeExecutionIds is a bounded sample and activeIdsTruncated reports additional IDs.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationIdHeader'
+      responses:
+        '200':
+          description: Execution counts and recent activity per automation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [automationId, total, queued, running, waiting, completed, failed, cancelled, activeExecutionIds, activeIdsTruncated, lastStartedAt]
+                      properties:
+                        automationId: {type: string, format: uuid}
+                        total: {type: integer, minimum: 0}
+                        queued: {type: integer, minimum: 0}
+                        running: {type: integer, minimum: 0}
+                        waiting: {type: integer, minimum: 0}
+                        completed: {type: integer, minimum: 0}
+                        failed: {type: integer, minimum: 0}
+                        cancelled: {type: integer, minimum: 0}
+                        activeExecutionIds:
+                          type: array
+                          maxItems: 100
+                          items: {type: string, format: uuid}
+                        activeIdsTruncated: {type: boolean}
+                        lastStartedAt:
+                          type: [string, 'null']
+                          description: Timestamp as returned by PostgreSQL text conversion.
+                          example: '2026-11-20 12:34:56.123456+00'
+        default:
+          $ref: '#/components/responses/APIError'
+  /v1/automation-executions/{id}/steps:
+    get:
+      summary: List steps of an automation execution
+      description: Requires the automations module and automations_view permission.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+        - name: offset
+          in: query
+          schema: {type: integer, minimum: 0, maximum: 10000, default: 0}
+      responses:
+        '200':
+          description: Paginated steps for an execution in the authenticated organization.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, execution_id, node_key, node_type, action_type, status, attempt, started_at, completed_at, error_message]
+                      properties:
+                        id: {type: string, format: uuid}
+                        execution_id: {type: string, format: uuid}
+                        node_key: {type: string}
+                        node_type: {type: string}
+                        action_type: {type: [string, 'null']}
+                        status: {type: string}
+                        attempt: {type: integer}
+                        started_at:
+                          type: string
+                          description: Timestamp as returned by PostgreSQL text conversion.
+                          example: '2026-11-20 12:34:56.123456+00'
+                        completed_at:
+                          type: [string, 'null']
+                          description: Timestamp as returned by PostgreSQL text conversion.
+                          example: '2026-11-20 12:35:02+00'
+                        error_message: {type: [string, 'null']}
+        default:
+          $ref: '#/components/responses/APIError'
   /v1/automation-media:
     get:
       summary: Search automation media before pagination

@@ -522,9 +522,9 @@ grandes (`roundrobin`, `leads`, `whatsapp`, `developments`, `automations`,
 
 **[Regra]**
 
-1. Rota nova entra no OpenAPI no mesmo PR. Conferir a paridade durante a revisão
-   e nos testes de contrato pertinentes; a comparação geral router × YAML ainda
-   é uma meta da CI (seção 13).
+1. Rota nova entra no OpenAPI no mesmo PR. A CI compara os métodos e caminhos
+   com o roteador Go. O [registro de paridade](packages/contracts/openapi/router-parity-baseline.json)
+   identifica a cobertura histórica e as operações privadas.
 2. Tipos do front de rota nova vêm do contrato ou de Zod, nunca duplicados à
    mão.
 3. Resposta de erro e envelope são únicos.
@@ -622,21 +622,23 @@ Os workflows geram/publicam imagens; não contêm etapa de atualização da stac
 Verificar o arquivo do workflow e a execução correspondente antes de declarar
 um gate aprovado.
 
+Os dois workflows executam a comparação de métodos e caminhos do roteador Go
+com o OpenAPI e os testes do verificador. A comparação usa a cobertura
+existente como base para detectar desvios novos.
+
 **[Estado] Fora dos gates gerais:** suíte completa `npm run test:e2e`, todos os
 testes SQL do repositório, todos os cenários Go que exigem banco, lint geral de
-fronteira, lint Go dedicado e comparação completa OpenAPI × router. A presença
-de jobs isolados não significa cobertura integral desses grupos.
+fronteira e lint Go dedicado. Os jobs isolados verificam cenários específicos.
 
 **[Meta] Gates adicionais, em ordem**
 
 1. Lint de fronteira com baseline congelado (seção 5).
-2. Comparação router × OpenAPI (falha em rota nova fora do contrato).
-3. Ampliar os jobs isolados já existentes para os testes de integração e SQL
+2. Ampliar os jobs isolados já existentes para os testes de integração e SQL
    ainda fora da CI.
-4. Lint Go (`golangci-lint`) com configuração versionada.
-5. Limite de tamanho de arquivo com allowlist dos existentes.
-6. E2E dos fluxos críticos em ambiente isolado.
-7. Validação de variáveis de ambiente obrigatórias (ver 14).
+3. Lint Go (`golangci-lint`) com configuração versionada.
+4. Limite de tamanho de arquivo com allowlist dos existentes.
+5. E2E dos fluxos críticos em ambiente isolado.
+6. Validação de variáveis de ambiente obrigatórias (ver 14).
 
 Esses gates provam o estado do código. Deploy, migração remota, dados reais,
 integrações externas e capacidade continuam sendo evidências separadas.
