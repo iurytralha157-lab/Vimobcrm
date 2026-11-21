@@ -133,7 +133,7 @@ func TestPropertySettingsEndpointIsStrictTenantScopedAndNarrow(t *testing.T) {
 		}
 	}
 
-	repositorySource, err := os.ReadFile("repository.go")
+	repositorySource, err := os.ReadFile("repository_profile.go")
 	if err != nil {
 		t.Fatalf("read settings repository: %v", err)
 	}

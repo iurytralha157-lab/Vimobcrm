@@ -110,7 +110,7 @@ func TestEveryWritablePropertyFieldHasAnExplicitResponsePrivacyClass(t *testing.
 func TestPropertyListIncludesRevisionAndAppliesRoleAwareProjection(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile("repository.go")
+	raw, err := os.ReadFile("repository_listing.go")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -24,7 +24,7 @@ before(async () => {
   const validation = path.join(directory, 'validation.ts');
   // Select the actual API's schemas without eagerly initializing unrelated SDKs
   // exported by the application's broad validation barrel.
-  await writeFile(validation, `export * from ${JSON.stringify(path.join(root, 'lib/validation/auxiliary.ts'))};export * from ${JSON.stringify(path.join(root, 'lib/validation/common.ts'))};export * from ${JSON.stringify(path.join(root, 'lib/validation/stage-automation-revision.ts'))};`);
+  await writeFile(validation, `export * from ${JSON.stringify(path.join(root, 'lib/validation/pipelines.ts'))};export * from ${JSON.stringify(path.join(root, 'lib/validation/common.ts'))};export { entityIdSchema } from ${JSON.stringify(path.join(root, 'lib/validation/shared-schema-values.ts'))};export * from ${JSON.stringify(path.join(root, 'lib/validation/stage-automation-revision.ts'))};`);
   await writeFile(stub, `import React,{createContext,useContext}from'react';
     import{VimobAPIError}from${JSON.stringify(path.join(root, 'lib/api/vimob-error.ts'))};export{VimobAPIError};
     export const Auth=createContext(null),useAuth=()=>useContext(Auth);

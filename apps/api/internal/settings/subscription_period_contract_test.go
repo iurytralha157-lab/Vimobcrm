@@ -16,7 +16,7 @@ func TestSubscriptionOverviewExposesContractedPeriodAndRenewalTotal(t *testing.T
 		t.Fatal("unable to resolve test source path")
 	}
 
-	repositoryPath := filepath.Join(filepath.Dir(sourceFile), "repository.go")
+	repositoryPath := filepath.Join(filepath.Dir(sourceFile), "repository_subscription.go")
 	payload, err := os.ReadFile(repositoryPath)
 	if err != nil {
 		t.Fatalf("read settings repository: %v", err)

@@ -238,7 +238,10 @@ func TestRescheduleEndpointIsAtomicAndRetrySafeByContract(t *testing.T) {
 
 func TestScheduleRepositoryAuditsFinalOutcomesAndDeepLinksNotifications(t *testing.T) {
 	root := scheduleRepositoryRoot(t)
-	repository := readScheduleContractFile(t, filepath.Join(root, "apps", "api", "internal", "schedule", "repository.go"))
+	scheduleDir := filepath.Join(root, "apps", "api", "internal", "schedule")
+	repository := readScheduleContractFile(t, filepath.Join(scheduleDir, "repository.go")) + "\n" +
+		readScheduleContractFile(t, filepath.Join(scheduleDir, "repository_effects.go")) + "\n" +
+		readScheduleContractFile(t, filepath.Join(scheduleDir, "repository_assignees.go"))
 
 	for _, fragment := range []string{
 		`insertTimelineEvent(ctx, tx, tenantContext, updated, "completed")`,
@@ -259,7 +262,7 @@ func TestScheduleRepositoryAuditsFinalOutcomesAndDeepLinksNotifications(t *testi
 
 func TestScheduleCapabilitiesExposeTheOrganizationTimeZone(t *testing.T) {
 	root := scheduleRepositoryRoot(t)
-	repository := readScheduleContractFile(t, filepath.Join(root, "apps", "api", "internal", "schedule", "repository.go"))
+	repository := readScheduleContractFile(t, filepath.Join(root, "apps", "api", "internal", "schedule", "repository_event_reads.go"))
 	typesSource := readScheduleContractFile(t, filepath.Join(root, "apps", "api", "internal", "schedule", "types.go"))
 
 	for _, fragment := range []string{

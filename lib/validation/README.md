@@ -28,15 +28,14 @@ Use o módulo do domínio ou fluxo que possui o dado. Exemplos:
 | `search-filters.ts` | Colunas permitidas e limites de filtros |
 
 `common.ts` mantém os primitivos e adaptadores gerais já públicos.
-`shared-schema-values.ts` é um detalhe interno dos contratos extraídos de
-`auxiliary.ts`: preserva as mesmas instâncias de valores compartilhados e não é
-reexportado pelo índice público.
+`shared-schema-values.ts` mantém as instâncias de valores compartilhados entre
+os módulos. O índice público reexporta os três primitivos já usados pelos
+consumidores.
 
 ## Compatibilidade de imports
 
-`auxiliary.ts` é uma fachada de compatibilidade: reexporta explicitamente os
-mesmos 113 nomes anteriores a esta organização. `index.ts` mantém a entrada
-pública existente, inclusive os imports legados de `@/lib/validation`.
+`index.ts` mantém a entrada pública `@/lib/validation` e reexporta diretamente
+dos módulos donos os 113 nomes que passavam pela antiga fachada `auxiliary.ts`.
 
 Para um contrato novo, escolha seu módulo dono:
 
@@ -44,9 +43,8 @@ Para um contrato novo, escolha seu módulo dono:
 import { leadTaskCreateInputSchema } from '@/lib/validation/lead-details'
 ```
 
-Não acrescente contratos de negócio à fachada `auxiliary.ts`. Não mova nem
-renomeie consumidores antigos incidentalmente. Os módulos de domínio não
-devem importar a fachada ou o índice que os reexporta, pois isso cria ciclos.
+Use o módulo dono para imports internos entre schemas. Importar o índice que
+reexporta o próprio módulo cria ciclos.
 
 ## Preservar o comportamento
 

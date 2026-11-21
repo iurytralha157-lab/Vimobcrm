@@ -27,7 +27,7 @@ func TestPaymentRefreshRouteKeepsBillingPermissionAndAccessRecovery(t *testing.T
 func TestPaymentHistoryProjectionIsTenantScopedAndClientSafe(t *testing.T) {
 	t.Parallel()
 
-	source, err := os.ReadFile("repository.go")
+	source, err := os.ReadFile("repository_payment_history.go")
 	if err != nil {
 		t.Fatalf("read settings repository: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestPaymentHistoryProjectionIsTenantScopedAndClientSafe(t *testing.T) {
 func TestPaymentRefreshUsesOrderedSnapshotAndSafeUnavailableState(t *testing.T) {
 	t.Parallel()
 
-	source, err := os.ReadFile("repository.go")
+	source, err := os.ReadFile("repository_payments.go")
 	if err != nil {
 		t.Fatalf("read settings repository: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestPaymentRefreshUsesOrderedSnapshotAndSafeUnavailableState(t *testing.T) 
 	if methodStart < 0 {
 		t.Fatal("payment refresh method contract was not found")
 	}
-	methodEnd := strings.Index(text[methodStart:], "func (repo Repository) UpdateSubscriptionBilling")
+	methodEnd := strings.Index(text[methodStart:], "func (repo Repository) getLocalPaymentIdentity")
 	if methodEnd < 0 {
 		t.Fatal("payment refresh method contract was not found")
 	}

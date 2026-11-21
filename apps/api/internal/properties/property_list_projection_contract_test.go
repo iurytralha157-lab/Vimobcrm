@@ -8,9 +8,9 @@ import (
 )
 
 func TestPropertyListProjectionRespectsPostgresFunctionArgumentLimit(t *testing.T) {
-	source, err := os.ReadFile("repository.go")
+	source, err := os.ReadFile("repository_listing.go")
 	if err != nil {
-		t.Fatalf("read repository.go: %v", err)
+		t.Fatalf("read property listing source: %v", err)
 	}
 
 	listStart := strings.Index(string(source), "func (repo Repository) List(")

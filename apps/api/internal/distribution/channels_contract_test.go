@@ -127,7 +127,7 @@ func TestCanonicalDistributionChannelContracts(t *testing.T) {
 		requireOrdered(t, persist, "distribution.Distribute(ctx, tx", "repo.insertLeadRedistributionJob")
 		requireAbsent(t, persist, "repo.insertRoundRobinLog")
 
-		resolver := goFunctionSource(t, filepath.Join("..", "meta", "repository.go"), "resolveRoundRobin")
+		resolver := goFunctionSource(t, filepath.Join("..", "meta", "repository_round_robin.go"), "resolveRoundRobin")
 		requireAbsent(t, resolver, "repo.selectRoundRobinMember", "for update")
 	})
 

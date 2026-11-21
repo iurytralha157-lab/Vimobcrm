@@ -97,7 +97,7 @@ export const NotificationsTab = () => {
         return;
       }
 
-      const { notificationService } = await import('@/services/NotificationService');
+      const { notificationService } = await import('@/lib/api/notification-service');
       const result = await notificationService.send({
         eventKey: 'test_push',
         organizationId,

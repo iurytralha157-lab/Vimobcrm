@@ -86,7 +86,7 @@ func TestAllLegacyRoundRobinSelectorsUseSharedAvailabilityContract(t *testing.T)
 		},
 		{
 			name:     "meta legacy fallback",
-			path:     filepath.Join("..", "meta", "repository.go"),
+			path:     filepath.Join("..", "meta", "repository_round_robin.go"),
 			function: "selectRoundRobinMember",
 		},
 		{

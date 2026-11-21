@@ -40,7 +40,7 @@ func TestPaymentHistoryFallbackIsReadOnlyTenantScopedAndClientSafe(t *testing.T)
 		}
 	}
 
-	source, err := os.ReadFile("repository.go")
+	source, err := os.ReadFile("repository_payment_history.go")
 	if err != nil {
 		t.Fatalf("read settings repository: %v", err)
 	}

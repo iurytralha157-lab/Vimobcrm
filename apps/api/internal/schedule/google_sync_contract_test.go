@@ -165,7 +165,7 @@ func TestScheduleGoogleDeletePreservesUnlinkedInFlightIntent(t *testing.T) {
 func TestAssigneeChangesEnqueueGoogleOnlyWhenTheyChangeTheEvent(t *testing.T) {
 	t.Parallel()
 
-	repository := mustReadScheduleContractFile(t, "repository.go")
+	repository := mustReadScheduleContractFile(t, "repository_assignees.go")
 	add := scheduleFunctionBody(t, repository, "AddAssignee")
 	if !strings.Contains(add, "assigneeAdded = tag.RowsAffected() > 0") ||
 		!strings.Contains(add, "if assigneeAdded {") ||

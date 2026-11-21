@@ -27,10 +27,14 @@ func main() {
 }
 
 func run() error {
-	if len(os.Args) != 2 {
-		return fmt.Errorf("usage: go-source-inventory <directory>")
+	if len(os.Args) != 3 || (os.Args[1] != "routes" && os.Args[1] != "imports") {
+		return fmt.Errorf("usage: go-source-inventory <routes|imports> <directory>")
 	}
-	directory := os.Args[1]
+	mode, directory := os.Args[1], os.Args[2]
+	var parseMode parser.Mode
+	if mode == "imports" {
+		parseMode = parser.ImportsOnly
+	}
 	facts := []sourceFact{}
 	err := filepath.WalkDir(directory, func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -44,7 +48,7 @@ func run() error {
 			return err
 		}
 		files := token.NewFileSet()
-		file, err := parser.ParseFile(files, name, nil, 0)
+		file, err := parser.ParseFile(files, name, nil, parseMode)
 		if err != nil {
 			return err
 		}
@@ -54,6 +58,14 @@ func run() error {
 				return fmt.Errorf("%s: expected a string literal", files.Position(literal.Pos()))
 			}
 			facts = append(facts, sourceFact{filepath.ToSlash(relative), files.Position(literal.Pos()).Line, value})
+			return nil
+		}
+		if mode == "imports" {
+			for _, spec := range file.Imports {
+				if err := add(spec.Path); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 		return collectRoutes(files, file, add)

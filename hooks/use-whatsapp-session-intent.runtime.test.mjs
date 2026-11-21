@@ -26,7 +26,7 @@ before(async () => {
   await mock('@/hooks/use-toast', 'export const toast=x=>window.h.toasts.push(x);export const useToast=()=>({toast});');
   await mock('sonner', 'export const toast={info:x=>window.h.toasts.push(x),loading:x=>{window.h.toasts.push(x);return 1},success:x=>window.h.toasts.push(x),error:x=>window.h.toasts.push(x),dismiss:()=>window.h.dismissed++,promise:()=>{}};');
   await mock('@/lib/api/whatsapp', 'export const whatsappAPI=new Proxy({}, {get:(_,name)=>(...args)=>window.h.request(name,args)});');
-  await mock('@/services/NotificationService', 'export const notificationService={send:(payload,intent)=>window.h.request("notification",[payload,intent])};');
+  await mock('@/lib/api/notification-service', 'export const notificationService={send:(payload,intent)=>window.h.request("notification",[payload,intent])};');
   if (process.env.WHATSAPP_MUTATION_INTENT_BASELINE) aliases['@/hooks/integrations/whatsapp/use-whatsapp-mutation-intent'] = process.env.WHATSAPP_MUTATION_INTENT_BASELINE;
   const loader = join(directory, 'loader.cjs'), entry = join(directory, 'entry.js');
   await writeFile(loader, `const ts=require(${JSON.stringify(require.resolve('typescript'))});module.exports=s=>ts.transpileModule(s,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.ESNext,jsx:ts.JsxEmit.ReactJSX}}).outputText;`);

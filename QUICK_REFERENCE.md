@@ -17,8 +17,8 @@ evidências históricas e metas, consultar [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Primeiro lote estrutural local
 
-- [Contratos de validação](lib/validation/README.md): módulos donos dos schemas
-  e fachada `auxiliary.ts` que preserva os imports existentes.
+- [Contratos de validação](lib/validation/README.md) mostra os módulos donos dos
+  schemas e a entrada pública `@/lib/validation`.
 - [Domínio Leads](apps/api/internal/leads/README.md): leitura e scanners
   separados dentro do mesmo pacote Go, preservando assinaturas e SQL.
 - [Runbook do lote de 18/11](docs/runbooks/architecture-refactor-2026-11-18.md):

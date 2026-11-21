@@ -1,17 +1,12 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
+import { readGoSource } from "./go-source-inventory.mjs";
 
 const methods = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"]);
-const scanner = fileURLToPath(new URL("./go-source-inventory.go", import.meta.url));
 
 export function readGoRoutePatterns(directory) {
-  return JSON.parse(execFileSync("go", ["run", scanner, directory], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  }));
+  return readGoSource("routes", directory);
 }
 
 function operationKey(method, path) {

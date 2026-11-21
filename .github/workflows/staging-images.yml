@@ -136,6 +136,12 @@ jobs:
       - name: Test OpenAPI router parity
         run: node --test scripts/architecture/openapi-parity.test.mjs
 
+      - name: Verify domain import boundaries
+        run: node scripts/architecture/check-import-boundaries.mjs
+
+      - name: Test domain import boundaries
+        run: node --test scripts/architecture/import-boundaries.test.mjs
+
       - name: Verify Edge Function release manifest
         run: node scripts/supabase/verify-edge-functions.mjs
 

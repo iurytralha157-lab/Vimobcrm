@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { stageAutomationInputSchema } from './auxiliary'
+import { stageAutomationInputSchema } from './pipelines'
 import { stageAutomationStatusInputSchema, stageAutomationUpdateInputSchema } from './stage-automation-revision'
 
 const revision = '2026-10-16T15:00:00.123456Z'

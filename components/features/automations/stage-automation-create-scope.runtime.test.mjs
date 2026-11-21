@@ -23,7 +23,7 @@ before(async () => {
   const entry = path.join(directory, 'fixture.tsx');
   const loader = path.join(directory, 'loader.cjs');
   const validation = path.join(directory, 'validation.ts');
-  await writeFile(validation, `export * from ${JSON.stringify(path.join(root, 'lib/validation/auxiliary.ts'))};export * from ${JSON.stringify(path.join(root, 'lib/validation/common.ts'))};export * from ${JSON.stringify(path.join(root, 'lib/validation/stage-automation-revision.ts'))};`);
+  await writeFile(validation, `export * from ${JSON.stringify(path.join(root, 'lib/validation/pipelines.ts'))};export * from ${JSON.stringify(path.join(root, 'lib/validation/common.ts'))};export * from ${JSON.stringify(path.join(root, 'lib/validation/stage-automation-revision.ts'))};`);
   await writeFile(stub, `import React,{createContext,useContext}from'react';
     export const Auth=createContext(null),useAuth=()=>useContext(Auth);
     export const toast=Object.fromEntries(['success','error'].map(kind=>[kind,message=>window.h.toasts.push({kind,message})]));

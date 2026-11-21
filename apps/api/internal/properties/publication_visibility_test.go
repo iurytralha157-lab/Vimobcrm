@@ -40,25 +40,28 @@ func TestPropertySitePublicationProjectionFollowsPublicSiteEligibility(t *testin
 func TestPropertyCatalogUsesCanonicalSiteProjectionWithoutExtraRequests(t *testing.T) {
 	t.Parallel()
 
-	source, err := os.ReadFile("repository.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	methods := string(source)
-	for _, boundary := range [][2]string{
-		{"func (repo Repository) List(", "func (repo Repository) Stats("},
-		{"func (repo Repository) Stats(", "func propertyStatusAliases("},
-		{"func (repo Repository) Get(", "func (repo Repository) Create("},
+	for _, boundary := range []struct{ file, start, next string }{
+		{"repository_listing.go", "func (repo Repository) List(", "func (repo Repository) Stats("},
+		{"repository_listing.go", "func (repo Repository) Stats(", ""},
+		{"repository_read.go", "func (repo Repository) Get(", "type jsonTextProperty "},
 	} {
-		start := strings.Index(methods, boundary[0])
-		end := strings.Index(methods, boundary[1])
+		source, err := os.ReadFile(boundary.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		methods := string(source)
+		start := strings.Index(methods, boundary.start)
+		end := len(methods)
+		if boundary.next != "" {
+			end = strings.Index(methods, boundary.next)
+		}
 		if start < 0 || end <= start {
-			t.Fatalf("missing method boundary %s", boundary[0])
+			t.Fatalf("missing method boundary %s", boundary.start)
 		}
 		method := methods[start:end]
 		if !strings.Contains(method, "propertySitePublicationJoinSQL(\"p\", \"site_publication\")") ||
 			!strings.Contains(method, "propertyPublishedOnSiteSQL(\"p\", \"site_publication\")") {
-			t.Fatalf("%s does not project the canonical Site state in its SQL", boundary[0])
+			t.Fatalf("%s does not project the canonical Site state in its SQL", boundary.start)
 		}
 	}
 }

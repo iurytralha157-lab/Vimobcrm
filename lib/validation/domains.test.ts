@@ -104,7 +104,7 @@ import {
   searchFilterColumnsSchema,
   siteReorderInputSchema,
   webhookCreateInputSchema,
-} from "./auxiliary";
+} from "./index";
 import { apiMeProfileResponseSchema } from "./auth-context";
 import { userActivitySessionMutationInputSchema } from "./presence";
 

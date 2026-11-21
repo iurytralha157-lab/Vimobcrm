@@ -186,7 +186,7 @@ func TestAggregateResultsDefersIncompleteIdentityWithoutCountingALead(t *testing
 func TestDeferredMetaLeadRetriesQuicklyBeforeLongBackoff(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile("repository.go")
+	raw, err := os.ReadFile("repository_webhook.go")
 	if err != nil {
 		t.Fatal(err)
 	}

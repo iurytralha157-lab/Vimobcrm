@@ -132,7 +132,6 @@ docs/                   audits, integrations, runbooks
 tests/                  cenários E2E, fixtures e runners locais
 config/                 configuração e constantes do frontend
 i18n/                   traduções
-services/               fachadas de notificações/gamificação sobre lib/api
 public/                 assets estáticos
 proxy.ts                proteção de rotas do Next (substitui middleware.ts)
 ```
@@ -152,7 +151,7 @@ responsabilidades isoladas nem cobertura de testes.
 
 **[Regra]** Cada pasta de topo tem um README de uma página dizendo: o que mora
 ali, quem pode importar dela, o que nunca entra. O guia anterior não reúne a
-descrição de `config/`, `services/`, `i18n/` e `tests/`; há documentação dispersa
+descrição de `config/`, `i18n/` e `tests/`; há documentação dispersa
 no repositório, inclusive em `tests/e2e/README.md`.
 
 ### Primeiro lote estrutural local de 18/11
@@ -165,6 +164,10 @@ e as interfaces existentes:
   preservados, com os contratos distribuídos entre os módulos donos. O mapa
   desses contratos e a regra de imports ficam em
   [lib/validation/README.md](lib/validation/README.md).
+- Na Fase 5, os 113 exports passaram diretamente dos módulos donos para
+  `lib/validation/index.ts`. O cliente de notificações passou a
+  `lib/api/notification-service.ts` e a fachada de gamificação sem consumidores
+  foi removida.
 - A leitura de leads foi extraída para `repository_read.go` (222 linhas), e
   os scanners/conversores, para `repository_scan.go` (296 linhas), dentro do
   mesmo pacote `leads`. Assinaturas e SQL permanecem os mesmos. As
@@ -287,20 +290,15 @@ a tabela não é um inventário atualizado de todos os imports.
 | `publications` | `grupoolx` |
 | `developments` | `properties` |
 
-Esta tabela resume dependências existentes; ainda não é uma allowlist executada
-pela CI. Novos imports entre domínios exigem revisão manual até existir o gate
-da seção 5.3.
+Esta tabela é histórica. O registro que a CI usa está na seção 5.3.
 
 ### 5.3 Enforcement
 
-**[Estado]** Não existe regra geral de fronteira na CI (sem `eslint-plugin-boundaries`,
-`dependency-cruiser`, `depguard` ou `go-arch-lint`). Há verificações pontuais,
-como `lib/access/api-boundary.test.ts` e os contratos de funções Edge
-aposentadas; elas não formam uma regra geral de imports entre os domínios.
-
-**[Meta]** Criar um **baseline exato por arquivo/pacote** das violações atuais e
-automatizar na CI a rejeição de novas violações. Reduzir o baseline
-gradualmente, sem exigir a refatoração de todos os domínios de uma vez.
+Os workflows de imagens executam a verificação de fronteira com AST TypeScript
+e Go. O registro congelado da base `36885bb7` contém 196 imports por arquivo
+no frontend e 65 dependências por pacote no Go. O gate rejeita desvios novos
+e pede a retirada de entradas superadas. Os testes especializados de acesso
+e funções Edge continuam ativos. [Escopo e comandos](scripts/architecture/README.md)
 
 ---
 
@@ -313,7 +311,7 @@ gradualmente, sem exigir a refatoração de todos os domínios de uma vez.
   e devem ser finos. Lógica de negócio nova vai para a API Go. Cada handler
   define seu acesso: autenticação, credencial/assinatura ou exceção pública
   documentada com validação e limite de uso. Registrar o dono no domínio e,
-  quando existir, em `docs/domains.md`.
+  quando existir, em `docs/domains.md`. [Matriz das 12 rotas](docs/runbooks/architecture-phase5-next-api-audit-2026-11-20.md)
 - `proxy.ts` (raiz) protege rotas. Não existe `middleware.ts`.
 - `components/features/{dominio}`: UI do domínio. `components/shared`: usado por
   dois ou mais domínios. `components/ui`: primitivas.
@@ -509,12 +507,11 @@ grandes (`roundrobin`, `leads`, `whatsapp`, `developments`, `automations`,
 ## 10. Contratos e tipos
 
 - Contrato público: `packages/contracts/openapi/v1.yaml`.
-- **[Estado na base `05ff562c`]** O YAML declara **232 paths e 301 operações
-  HTTP** e se identifica como contrato parcial. Não é o inventário completo
-  do router. A porcentagem histórica de 37% não é uma medição atual; calcular
-  cobertura exige comparar métodos e caminhos do código e do YAML na mesma
-  revisão. O catálogo `docs/catalogo-contratos-backend.md` também é um registro
-  datado, não a fonte do contrato.
+- **[Estado na Fase 5]** O contrato parcial declara 235 paths e 304 operações.
+  O gate compara essas operações às 621 rotas registradas no Go e registra
+  315 lacunas legadas e dois comandos operacionais privados explícitos.
+  O catálogo `docs/catalogo-contratos-backend.md` é um registro datado.
+  [Registro de paridade](packages/contracts/openapi/router-parity-baseline.json)
 - Tipos HTTP do front são em parte escritos à mão (`lib/api/leads.ts`,
   `lib/api/whatsapp.ts`); a geração de tipos a partir do OpenAPI ainda é
   próximo passo.
@@ -522,9 +519,9 @@ grandes (`roundrobin`, `leads`, `whatsapp`, `developments`, `automations`,
 
 **[Regra]**
 
-1. Rota nova entra no OpenAPI no mesmo PR. A CI compara os métodos e caminhos
-   com o roteador Go. O [registro de paridade](packages/contracts/openapi/router-parity-baseline.json)
-   identifica a cobertura histórica e as operações privadas.
+1. Rota pública nova entra no OpenAPI no mesmo PR. Comando operacional privado
+   exige exceção explícita por método e caminho, com motivo. A CI compara o
+   registro do router e o YAML nos dois sentidos.
 2. Tipos do front de rota nova vêm do contrato ou de Zod, nunca duplicados à
    mão.
 3. Resposta de erro e envelope são únicos.
@@ -608,7 +605,8 @@ criar lead, distribuição, enviar WhatsApp, troca de organização, checkout).
 
 - `docker-images.yml`: atende push/PR da `main` e execução manual. Os gates
   estáticos executam `npm ci`, audit de dependências, `audit:check`, validação,
-  testes de contrato, typecheck, ESLint, verificadores de migrations/Edge e
+  testes de contrato, paridade do router, fronteira de imports, typecheck,
+  ESLint, verificadores de migrations/Edge e
   `go test ./apps/api/... ./packages/auth/... ./packages/db/...`.
 - Esse workflow também tem jobs de PostgreSQL descartável para convites e
   acesso de membros. O job `whatsapp-contracts` instala PostgreSQL 17, pgTAP e
@@ -622,23 +620,19 @@ Os workflows geram/publicam imagens; não contêm etapa de atualização da stac
 Verificar o arquivo do workflow e a execução correspondente antes de declarar
 um gate aprovado.
 
-Os dois workflows executam a comparação de métodos e caminhos do roteador Go
-com o OpenAPI e os testes do verificador. A comparação usa a cobertura
-existente como base para detectar desvios novos.
-
 **[Estado] Fora dos gates gerais:** suíte completa `npm run test:e2e`, todos os
-testes SQL do repositório, todos os cenários Go que exigem banco, lint geral de
-fronteira e lint Go dedicado. Os jobs isolados verificam cenários específicos.
+testes SQL do repositório, todos os cenários Go que exigem banco e lint Go
+dedicado. A presença de jobs isolados não significa cobertura integral desses
+grupos.
 
 **[Meta] Gates adicionais, em ordem**
 
-1. Lint de fronteira com baseline congelado (seção 5).
-2. Ampliar os jobs isolados já existentes para os testes de integração e SQL
+1. Ampliar os jobs isolados já existentes para os testes de integração e SQL
    ainda fora da CI.
-3. Lint Go (`golangci-lint`) com configuração versionada.
-4. Limite de tamanho de arquivo com allowlist dos existentes.
-5. E2E dos fluxos críticos em ambiente isolado.
-6. Validação de variáveis de ambiente obrigatórias (ver 14).
+2. Lint Go (`golangci-lint`) com configuração versionada.
+3. Limite de tamanho de arquivo com allowlist dos existentes.
+4. E2E dos fluxos críticos em ambiente isolado.
+5. Validação de variáveis de ambiente obrigatórias (ver 14).
 
 Esses gates provam o estado do código. Deploy, migração remota, dados reais,
 integrações externas e capacidade continuam sendo evidências separadas.
@@ -844,8 +838,7 @@ justificativa por um gate futuro da CI.
 | `components/features/properties/PropertyFormScreen.tsx` | 2.000 |
 | `hooks/use-whatsapp-conversations.ts` | 2.150 |
 
-**Arquivos de validação que misturam assuntos:** `lib/validation/auxiliary.ts`
-(auditoria, anexos, pagamento, imóveis, site, Realtime), `final-domains.ts`
+**Arquivos de validação que misturam assuntos:** `final-domains.ts`
 (admin, IA, gamificação, dashboard), `schemas.ts` (auth, planos, leads, Meta).
 **[Regra]** um arquivo de validação por domínio.
 
@@ -894,11 +887,11 @@ além de runbooks em `docs/runbooks/`, README, QUICK_REFERENCE, INDEX e AGENTS.
 ## 20. Checklist de pull request
 
 - [ ] Muda **um** domínio (ou explica por que mais de um).
-- [ ] Imports novos entre domínios revisados e justificados manualmente; o gate
-      automático de fronteira ainda é meta (seção 5.3).
+- [ ] Imports novos entre domínios revisados e conformes ao gate de fronteira
+      (seção 5.3).
 - [ ] Teste novo cobrindo a mudança; bug corrigido tem teste que falhava antes.
 - [ ] Regra de tenant/autorização com teste de duas organizações quando aplicável.
-- [ ] Rota nova ou alterada está no OpenAPI.
+- [ ] Rota nova ou alterada tem contrato OpenAPI ou exceção operacional explícita.
 - [ ] Migração nova: arquivo novo, plano de volta e compatibilidade verificados;
       `lock_timeout` definido quando a operação puder segurar locks relevantes.
 - [ ] Tabela nova de tenant: exposição à Data API, grants, RLS e isolamento entre
@@ -937,9 +930,9 @@ entrega. Elas existem porque uma correção pontual pode afetar fluxos vizinhos.
 6. **Não rodar** script com efeito colateral, migração, limpeza ou carga contra
    host remoto sem autorização da tarefa e verificação do alvo.
 7. **Nunca** usar produção como alvo padrão; nunca imprimir segredos.
-8. **Fronteiras:** dependência entre domínios só pela API pública; se parecer
-   precisar de import interno, propor a interface. Até existir o gate da seção
-   5.3, conferir novos imports manualmente.
+8. **Fronteiras:** dependência entre domínios só pela API pública. Se parecer
+   precisar de import interno, propor a interface e verificar o gate da seção
+   5.3.
 9. **Tenant:** toda query, chave de cache, job e evento de tenant leva
    `organization_id`. Se o navegador acessa a Data API, revisar grants e RLS;
    o middleware da API Go não protege esse caminho direto.
@@ -968,8 +961,8 @@ Cada item tem um estado. Só "provado" conta.
 | `/readyz` reflete fila e supervisor | não; verifica banco e retorna 503 se o ping falhar |
 | Panic de worker não derruba a API | sem recover local nos starters; efeito em produção não verificado |
 | Worker separado da API | não (README apenas) |
-| Contrato OpenAPI | 37% das rotas |
-| Lint de fronteira na CI | não |
+| Contrato OpenAPI | 304 de 621 rotas do Go documentadas, com gate de paridade |
+| Fronteiras de imports na CI | baseline congelado para Go e frontend |
 | E2E, testes SQL e integração com banco na CI | não |
 | Política de retenção das tabelas grandes | parcial (WhatsApp em definição) |
 | Rotação confirmada de segredos | não comprovado |
@@ -983,10 +976,10 @@ Cada item tem um estado. Só "provado" conta.
    críticas para readiness e criar alertas próprios, recover de panic nos
    workers.
 2. **Proteção do que existe (baratas e de alto retorno):** `docs/domains.md`,
-   lint de fronteira com baseline, `.env.example` por app e
+   reduzir gradualmente o baseline de fronteiras, `.env.example` por app e
    validação de configuração, remover fallback para `localhost`.
 3. **Prova:** Postgres de teste na CI, testes SQL e de integração, teste de
-   isolamento entre organizações, comparação router × OpenAPI.
+   isolamento entre organizações, ampliação do contrato OpenAPI.
 4. **Escala:** staging, teste de carga, política de retenção, orçamento de consultas
    periódicas, pool de conexões.
 5. **Estrutura:** dividir `PipelinesScreen` (piloto), depois Dashboard, chat e

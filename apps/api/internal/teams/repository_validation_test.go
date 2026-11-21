@@ -3,6 +3,7 @@ package teams
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -58,11 +59,23 @@ func TestUpdateRequiresAnActualMutationField(t *testing.T) {
 }
 
 func TestTeamWritesDoNotRecreateUnchangedSchedules(t *testing.T) {
-	source, err := os.ReadFile("repository.go")
+	paths, err := filepath.Glob("repository*.go")
 	if err != nil {
-		t.Fatalf("read repository source: %v", err)
+		t.Fatalf("list repository sources: %v", err)
 	}
-	normalized := strings.ToLower(string(source))
+	var source strings.Builder
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		source.Write(content)
+		source.WriteByte('\n')
+	}
+	normalized := strings.ToLower(source.String())
 	if strings.Contains(normalized, "delete from public.member_availability") {
 		t.Fatal("complete schedule writes must upsert days instead of delete/recreate")
 	}

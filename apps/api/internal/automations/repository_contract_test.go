@@ -9,13 +9,16 @@ import (
 func TestAutomationConnectionWritesDefaultMissingBranches(t *testing.T) {
 	t.Parallel()
 
-	source, err := os.ReadFile("repository.go")
-	if err != nil {
-		t.Fatalf("read repository.go: %v", err)
-	}
-
 	const defaultedBranch = "coalesce($5, 'default')"
-	if got := strings.Count(string(source), defaultedBranch); got != 3 {
+	var got int
+	for _, path := range []string{"repository_mutations.go", "repository_duplicate.go", "repository_flow.go"} {
+		source, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		got += strings.Count(string(source), defaultedBranch)
+	}
+	if got != 3 {
 		t.Fatalf(
 			"automation connection writes using %q = %d, want 3 (create, duplicate and save flow)",
 			defaultedBranch,
@@ -27,9 +30,9 @@ func TestAutomationConnectionWritesDefaultMissingBranches(t *testing.T) {
 func TestFailedWhatsAppEffectRetryIsFencedByCurrentLeadBinding(t *testing.T) {
 	t.Parallel()
 
-	source, err := os.ReadFile("repository.go")
+	source, err := os.ReadFile("repository_runtime_retry.go")
 	if err != nil {
-		t.Fatalf("read repository.go: %v", err)
+		t.Fatalf("read runtime retry source: %v", err)
 	}
 
 	retryStart := strings.Index(string(source), "with locked_conversation as materialized")
@@ -67,9 +70,9 @@ func TestFailedWhatsAppEffectRetryIsFencedByCurrentLeadBinding(t *testing.T) {
 func TestConversationAutomationEventRetryIsFencedByBindingEpoch(t *testing.T) {
 	t.Parallel()
 
-	source, err := os.ReadFile("repository.go")
+	source, err := os.ReadFile("repository_runtime_retry.go")
 	if err != nil {
-		t.Fatalf("read repository.go: %v", err)
+		t.Fatalf("read runtime retry source: %v", err)
 	}
 
 	retryStart := strings.Index(string(source), "with event_route as materialized")

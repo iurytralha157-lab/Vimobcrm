@@ -523,7 +523,7 @@ export function useLogoutSession() {
 
       intent.assertCurrent();
       try {
-        const { notificationService } = await import("@/services/NotificationService");
+        const { notificationService } = await import("@/lib/api/notification-service");
         intent.assertCurrent();
         await notificationService.send({
           eventKey: "whatsapp_disconnected",

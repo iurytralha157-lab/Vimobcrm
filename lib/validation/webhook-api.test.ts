@@ -6,7 +6,7 @@ import {
   publicAPILeadInputSchema,
   webhookCreateInputSchema,
   webhookUpdateInputSchema,
-} from "./auxiliary";
+} from "./webhooks";
 
 test("webhook de saida exige HTTPS e eventos permitidos sem duplicacao", () => {
   const valid = {

@@ -89,7 +89,8 @@ func TestCompleteRequestAcceptsGenericActivityOutcome(t *testing.T) {
 
 func TestPerformedByRequiresAssignableEventParticipantByContract(t *testing.T) {
 	root := scheduleRepositoryRoot(t)
-	source := readScheduleContractFile(t, root+"/apps/api/internal/schedule/repository.go")
+	source := readScheduleContractFile(t, root+"/apps/api/internal/schedule/repository.go") + "\n" +
+		readScheduleContractFile(t, root+"/apps/api/internal/schedule/repository_access.go")
 
 	for _, fragment := range []string{
 		"repo.ensureEventPerformer(",

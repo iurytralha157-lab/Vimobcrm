@@ -46,8 +46,9 @@ acima: `next dev` o atualiza entre os marcadores sem alterar este texto.
   necessidade demonstrada.
 - Novas dependências entre domínios devem passar pela interface pública do
   domínio dono. Há imports internos legados; não aumente esse acoplamento sem
-  justificativa. Confira novos imports manualmente, pois não há gate geral de
-  fronteira na CI.
+  justificativa. O gate de fronteira na CI compara os imports com o registro
+  legado congelado. Confira seu escopo em
+  [scripts/architecture/README.md](scripts/architecture/README.md).
 - Para dados de tenant, carregue `organization_id` na autorização e nos filtros
   de dados, chaves de cache, eventos e jobs pertinentes. Uma rota ou trabalho
   realmente global deve ter a exceção explícita. O browser não decide sozinho

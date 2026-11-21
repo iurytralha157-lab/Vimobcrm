@@ -13,7 +13,7 @@ import (
 func TestMetaIntakeNeverMaterializesFallbackBeforeProviderIdentity(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile("repository.go")
+	raw, err := os.ReadFile("repository_leadgen.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,11 +174,7 @@ func TestLegacyPendingLeadCleanupIsValidatedThenDiscardedAtomically(t *testing.T
 func TestMetaProviderIdentityPrecedesRolloutAwarePhoneIdentity(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile("repository.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(raw)
+	source := readMetaContractSource(t, "repository.go", "repository_lead_identity.go")
 	start := strings.Index(source, "func (repo Repository) persistLead")
 	if start < 0 {
 		t.Fatal("persistLead source was not found")
@@ -291,7 +287,7 @@ func TestStoredMetaLeadIntakeIdentityPrefersValidatedQueueEvidence(t *testing.T)
 func TestPendingMetaIdentityNeverUsesMutableFormRouting(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile("repository.go")
+	raw, err := os.ReadFile("repository_lead_identity.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,11 +331,7 @@ func TestPendingMetaIdentityNeverUsesMutableFormRouting(t *testing.T) {
 func TestMetaPhoneConflictRetryKeepsPreparedIntakeIdentity(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile("repository.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(raw)
+	source := readMetaContractSource(t, "repository.go", "repository_destination.go", "repository_round_robin.go")
 	start := strings.Index(source, "func (repo Repository) persistLead")
 	end := strings.Index(source[start:], "func (repo Repository) persistLeadWithIdentityMode")
 	if start < 0 || end < 0 {
@@ -406,6 +398,21 @@ func TestMetaPhoneConflictRetryKeepsPreparedIntakeIdentity(t *testing.T) {
 			t.Fatalf("tombstoned Meta intake destination is missing %q", required)
 		}
 	}
+}
+
+func readMetaContractSource(t *testing.T, paths ...string) string {
+	t.Helper()
+
+	var source strings.Builder
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source.Write(raw)
+		source.WriteByte('\n')
+	}
+	return source.String()
 }
 
 func TestMetaAutomaticIntakeScopesQueueIdentityAndReentryBehavior(t *testing.T) {

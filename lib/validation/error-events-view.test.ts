@@ -9,10 +9,7 @@ import {
   groupErrorEvents,
   type GroupableErrorEvent,
 } from "../admin/error-events-view";
-import {
-  apiErrorEventResponseSchema,
-  errorEventFiltersSchema,
-} from "./auxiliary";
+import { apiErrorEventResponseSchema, errorEventFiltersSchema } from "./error-events";
 
 const FIRST_ID = "11111111-1111-4111-8111-111111111111";
 const SECOND_ID = "22222222-2222-4222-8222-222222222222";

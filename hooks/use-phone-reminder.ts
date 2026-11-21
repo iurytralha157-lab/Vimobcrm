@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { notificationService } from '@/services/NotificationService';
+import { notificationService } from '@/lib/api/notification-service';
 
 const phoneReminderRequestsInFlight = new Set<string>();
 

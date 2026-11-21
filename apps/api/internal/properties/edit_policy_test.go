@@ -202,9 +202,9 @@ func TestPropertyUpdateAuthorizationLookupIsTenantScoped(t *testing.T) {
 func TestPropertyUpdateUsesAuthorizationAndRedactsProtectedResponse(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile("repository.go")
+	raw, err := os.ReadFile("repository_update.go")
 	if err != nil {
-		t.Fatalf("read repository.go: %v", err)
+		t.Fatalf("read property update source: %v", err)
 	}
 	source := string(raw)
 	start := strings.Index(source, "func (repo Repository) Update(")
@@ -259,13 +259,13 @@ func TestPropertyListDisablesSharedCachingOfRoleDependentProjection(t *testing.T
 func TestPropertyShowUsesTheSharedWorkspaceAllowlist(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile("repository.go")
+	raw, err := os.ReadFile("repository_read.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := string(raw)
 	start := strings.Index(source, "func (repo Repository) Get(")
-	end := strings.Index(source, "func (repo Repository) Create(")
+	end := strings.Index(source, "type jsonTextProperty ")
 	if start < 0 || end <= start {
 		t.Fatal("property Get method was not found")
 	}

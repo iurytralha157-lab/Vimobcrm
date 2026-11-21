@@ -129,7 +129,7 @@ func TestAutomationEdgeRuntimeSecurityContract(t *testing.T) {
 }
 
 func TestAutomationManualStartUsesDurableCoalescedRuntimeWake(t *testing.T) {
-	repositoryRaw, err := os.ReadFile("repository.go")
+	repositoryRaw, err := os.ReadFile("repository_start.go")
 	if err != nil {
 		t.Fatalf("read repository: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestAutomationManualStartUsesDurableCoalescedRuntimeWake(t *testing.T) {
 	if startOffset < 0 {
 		t.Fatal("could not find automation Start implementation")
 	}
-	endOffset := strings.Index(repository[startOffset:], "func publishedFlowMetadata(")
+	endOffset := strings.Index(repository[startOffset:], "func (repo Repository) firstActionNodeID(")
 	if endOffset < 0 {
 		t.Fatal("could not isolate automation Start implementation")
 	}

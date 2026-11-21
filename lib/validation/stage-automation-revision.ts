@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { stageAutomationInputSchema } from '@/lib/validation/auxiliary'
+import { stageAutomationInputSchema } from '@/lib/validation/pipelines'
 
 // Keep the original server text: Date would truncate PostgreSQL microseconds.
 const originalAutomationRevisionSchema = z.string().min(1).datetime({ offset: true })

@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import { apiOrganizationSiteResponseSchema, organizationSiteMutationSchema } from "./auxiliary";
+import { apiOrganizationSiteResponseSchema, organizationSiteMutationSchema } from "./organization-sites";
 
 import {
   INTEGRATION_BRAND_ASSETS,
