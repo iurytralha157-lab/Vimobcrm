@@ -984,9 +984,11 @@ export function IntegrationsTab({
               ? `${effectiveActiveIntegration}-integration-dialog`
               : undefined
           }
-          className="max-w-[96vw] lg:max-w-6xl max-h-[90vh] overflow-y-auto"
+          className={effectiveActiveIntegration === "google-calendar"
+            ? "max-h-[90dvh] w-[calc(100vw-16px)] max-w-md overflow-y-auto p-4 sm:p-5"
+            : "max-w-[96vw] lg:max-w-6xl max-h-[90vh] overflow-y-auto"}
         >
-          <DialogHeader>
+          <DialogHeader className={effectiveActiveIntegration === "google-calendar" ? "sr-only" : undefined}>
             <DialogTitle>
               {activeTitle ? `Integração com ${activeTitle}` : "Integração"}
             </DialogTitle>

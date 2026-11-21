@@ -33,6 +33,8 @@ import {
   grupoOLXPublicationSchema,
   grupoOLXPublicationsInputSchema,
   googleAnalyticsMeasurementIdSchema,
+  googleCalendarAuthorizationOptionsSchema,
+  googleCalendarTasksStatusSchema,
   googleSearchConsoleVerificationTokenSchema,
   googleTagManagerContainerIdSchema,
   metaAdAccountsActionResponseSchema,
@@ -69,6 +71,21 @@ test("identificadores Google sao normalizados e validados por provedor", () => {
     googleTagManagerContainerIdSchema.safeParse("G-ABC1234567").success,
     false,
   );
+});
+
+test("Google Tasks capabilities remain optional for old servers and reject malformed grants", () => {
+  assert.equal(googleCalendarTasksStatusSchema.safeParse({ connection: { calendar_id: "primary" } }).success, true);
+  const status = googleCalendarTasksStatusSchema.parse({ connection: {
+    tasks_authorized: false, routing_v2: false, tasks_list_id: null,
+  }, tasks_available: true });
+  assert.equal(status.connection?.tasks_authorized, false);
+  assert.equal(status.tasks_available, true);
+  for (const connection of [{ tasks_authorized: "true" }, { routing_v2: 1 }, { tasks_list_id: [] }]) {
+    assert.equal(googleCalendarTasksStatusSchema.safeParse({ connection }).success, false);
+  }
+  assert.deepEqual(googleCalendarAuthorizationOptionsSchema.parse({ enableTasks: true }), { enableTasks: true });
+  assert.equal(googleCalendarAuthorizationOptionsSchema.safeParse({ enableTasks: "true" }).success, false);
+  assert.equal(googleCalendarAuthorizationOptionsSchema.safeParse({ provider: "tasks" }).success, false);
 });
 
 test("Search Console aceita token ou meta tag oficial sem aceitar HTML arbitrario", () => {

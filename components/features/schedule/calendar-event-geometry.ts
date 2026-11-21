@@ -1,4 +1,5 @@
 import type { ScheduleEventDaySegment } from "@/lib/schedule-event-segments";
+import { isAttendanceScheduleType } from "@/lib/schedule-outcome";
 import {
   getScheduleCivilDateKey,
   getScheduleZonedClockMinutes,
@@ -9,6 +10,8 @@ type CalendarGeometryEvent = {
   start_time: string;
   end_time: string;
   is_all_day?: boolean | null;
+  event_type?: string | null;
+  is_masked?: boolean | null;
 };
 
 export type ScheduleCalendarSegmentGeometry = {
@@ -17,7 +20,7 @@ export type ScheduleCalendarSegmentGeometry = {
   durationMinutes: number;
 };
 
-export type ScheduleCalendarSegmentLayout<
+type ScheduleCalendarSegmentLayout<
   TEvent extends CalendarGeometryEvent,
 > = {
   segment: ScheduleEventDaySegment<TEvent>;
@@ -25,6 +28,13 @@ export type ScheduleCalendarSegmentLayout<
   column: number;
   totalColumns: number;
 };
+
+export const CALENDAR_OVERFLOW_MINUTES = 30;
+
+function getDisplayPriority(event: CalendarGeometryEvent) {
+  if (event.is_masked || event.event_type === "task") return 2;
+  return isAttendanceScheduleType(event.event_type) ? 0 : 1;
+}
 
 export function getScheduleCalendarSegmentGeometry<
   TEvent extends CalendarGeometryEvent,
@@ -67,7 +77,8 @@ export function layoutScheduleCalendarSegments<
 >(
   daySegments: ScheduleEventDaySegment<TEvent>[],
   timeZone: string,
-): ScheduleCalendarSegmentLayout<TEvent>[] {
+  maxColumns: number,
+) {
   const entries = daySegments
     .map((segment) => ({
       segment,
@@ -79,39 +90,59 @@ export function layoutScheduleCalendarSegments<
         right.geometry.durationMinutes - left.geometry.durationMinutes ||
         left.segment.start.getTime() - right.segment.start.getTime(),
     );
-  if (entries.length === 0) return [];
-
-  const layouts: ScheduleCalendarSegmentLayout<TEvent>[] = [];
+  const cards: ScheduleCalendarSegmentLayout<TEvent>[] = [];
+  const overflow: Array<{
+    startMinutes: number;
+    segments: ScheduleEventDaySegment<TEvent>[];
+  }> = [];
   let currentCluster: typeof entries = [];
   let clusterMaxEnd = 0;
 
   const processCluster = (cluster: typeof entries) => {
-    if (cluster.length === 0) return;
-    const columns: Array<typeof entries> = [];
+    const columnEnds: number[] = [];
+    const assigned = new Map<(typeof entries)[number], number>();
+    for (const entry of cluster) {
+      const freeColumn = columnEnds.findIndex((end) => end <= entry.geometry.startMinutes);
+      const column = freeColumn === -1 ? columnEnds.length : freeColumn;
+      if (column === maxColumns) break;
+      columnEnds[column] = entry.geometry.endMinutes;
+      assigned.set(entry, column);
+    }
 
-    cluster.forEach((entry) => {
-      const column = columns.findIndex((items) => {
-        const previous = items.at(-1);
-        return (
-          previous &&
-          entry.geometry.startMinutes >= previous.geometry.endMinutes
-        );
-      });
-      const targetColumn = column >= 0 ? column : columns.length;
-      if (column >= 0) columns[column]!.push(entry);
-      else columns.push([entry]);
-      layouts.push({
-        ...entry,
-        column: targetColumn,
-        totalColumns: 0,
-      });
-    });
+    let totalColumns = columnEnds.length;
+    if (assigned.size < cluster.length) {
+      assigned.clear();
+      totalColumns = maxColumns - 1;
+      const columns = Array.from({ length: totalColumns }, () => [] as typeof entries);
+      const preferred = [...cluster].sort((left, right) =>
+        getDisplayPriority(left.segment.event) - getDisplayPriority(right.segment.event),
+      );
+      for (const entry of preferred) {
+        const column = columns.findIndex((items) => !items.some(({ geometry }) =>
+          geometry.startMinutes < entry.geometry.endMinutes &&
+          entry.geometry.startMinutes < geometry.endMinutes,
+        ));
+        if (column === -1) continue;
+        columns[column].push(entry);
+        assigned.set(entry, column);
+      }
+    }
 
-    const totalColumns = columns.length;
-    cluster.forEach(({ segment }) => {
-      const layout = layouts.find((item) => item.segment.key === segment.key);
-      if (layout) layout.totalColumns = totalColumns;
-    });
+    for (const entry of cluster) {
+      const column = assigned.get(entry);
+      if (column !== undefined) {
+        cards.push({ ...entry, column, totalColumns });
+        continue;
+      }
+
+      const startMinutes = Math.min(entry.geometry.startMinutes, 24 * 60 - CALENDAR_OVERFLOW_MINUTES);
+      const previous = overflow.at(-1);
+      if (previous && startMinutes < previous.startMinutes + CALENDAR_OVERFLOW_MINUTES) {
+        previous.segments.push(entry.segment);
+      } else {
+        overflow.push({ startMinutes, segments: [entry.segment] });
+      }
+    }
   };
 
   entries.forEach((entry) => {
@@ -128,5 +159,5 @@ export function layoutScheduleCalendarSegments<
   });
   processCluster(currentCluster);
 
-  return layouts;
+  return { cards, overflow };
 }

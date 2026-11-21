@@ -33,6 +33,11 @@ create table if not exists public.leads (
   id uuid primary key default gen_random_uuid(), organization_id uuid references public.organizations(id) on delete cascade,
   name text, phone text, source text, assigned_user_id uuid, team_id uuid
 );
+create table if not exists public.stages (
+  id uuid primary key default gen_random_uuid(), organization_id uuid references public.organizations(id) on delete cascade,
+  name text
+);
+alter table public.leads add column if not exists stage_id uuid references public.stages(id);
 create table if not exists public.properties (
   id uuid primary key default gen_random_uuid(), organization_id uuid references public.organizations(id) on delete cascade,
   title text, code text, responsible_user_id uuid, created_by uuid
@@ -46,6 +51,7 @@ create table if not exists public.schedule_events (
   reminder_minutes integer default 30, recurrence_parent_id uuid references public.schedule_events(id) on delete set null,
   recurrence_rule text, recurrence_until timestamptz, recurrence_count integer,
   google_event_id text, google_sync_status text, google_sync_error text, google_calendar_connection_id uuid, google_calendar_id text,
+  google_sync_target text, google_task_id text,
   completed_by uuid, completed_at timestamptz, outcome text, outcome_notes text, performed_by uuid, outcome_recorded_at timestamptz,
   rescheduled_from_event_id uuid references public.schedule_events(id), rescheduled_to_event_id uuid references public.schedule_events(id),
   created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
@@ -87,7 +93,7 @@ create table if not exists public.activities (
 );
 create table if not exists public.google_calendar_tokens (
   id uuid primary key default gen_random_uuid(), organization_id uuid references public.organizations(id) on delete cascade,
-  user_id uuid, disconnected_at timestamptz
+  user_id uuid, disconnected_at timestamptz, routing_v2 boolean default false
 );
 create table if not exists public.google_calendar_sync_jobs (
   id uuid primary key default gen_random_uuid(), organization_id uuid references public.organizations(id) on delete cascade,
@@ -96,5 +102,10 @@ create table if not exists public.google_calendar_sync_jobs (
 );
 create table if not exists public.google_calendar_event_links (
   id uuid primary key default gen_random_uuid(), organization_id uuid references public.organizations(id) on delete cascade,
+  schedule_event_id uuid references public.schedule_events(id) on delete set null, deleted_at timestamptz
+);
+create table if not exists public.google_tasks_links (
+  id uuid primary key default gen_random_uuid(), organization_id uuid references public.organizations(id) on delete cascade,
+  connection_id uuid, vimob_event_id uuid not null,
   schedule_event_id uuid references public.schedule_events(id) on delete set null, deleted_at timestamptz
 );

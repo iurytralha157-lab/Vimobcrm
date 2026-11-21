@@ -32,6 +32,10 @@ test("enumera apenas OAuth e envio da Agenda, sem webhook", () => {
     "supabase/functions/_shared/google-calendar-pilot.ts",
     "supabase/functions/_shared/google-calendar-time.ts",
     "supabase/functions/_shared/google-calendar.ts",
+    "supabase/functions/_shared/google-calendar-oauth-token.ts",
+    "supabase/functions/_shared/google-tasks-api.ts",
+    "supabase/functions/_shared/google-tasks-delivery.ts",
+    "supabase/functions/_shared/google-tasks-runtime.ts",
   ]) {
     assert.ok(plan.shared_files.includes(dependency), `${dependency} ausente do plano`);
   }
@@ -47,8 +51,16 @@ test("enumera apenas OAuth e envio da Agenda, sem webhook", () => {
   assert.equal(plan.access_policy.google_cloud_oauth_audience_verified, false);
   assert.equal(
     plan.database_prerequisite.rpc,
-    "public.google_calendar_claim_outbound_sync_jobs_v2(integer, text)",
+    "public.google_calendar_claim_outbound_sync_jobs_v3(integer, text)",
   );
+  assert.deepEqual(plan.database_prerequisite.migrations.map(file => path.basename(file)), [
+    "20261012212128_harden_google_calendar_outbound_protocol.sql",
+    "20261013000127_harden_google_calendar_activation_status_and_export.sql",
+    "20261104085409_add_google_tasks_outbound_foundation.sql",
+    "20261104085443_add_google_tasks_fenced_delivery.sql",
+    "20261104093438_add_google_tasks_schedule_fk_index.sql",
+  ]);
+  assert.equal(plan.database_prerequisite.tasksForeignKeyIndex, "public.google_tasks_links_schedule_event_fk_idx");
   assert.equal(plan.database_prerequisite.required_before_sync_worker, true);
   assert.equal(plan.database_prerequisite.runtime_verified, false);
   assert.equal(plan.database_prerequisite.old_edge_workers_must_be_stopped_and_drained, true);

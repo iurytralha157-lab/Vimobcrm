@@ -111,7 +111,7 @@ func TestScheduleGoogleRecurrenceEnqueuesEveryOccurrenceBeforeCommit(t *testing.
 		"event.recurrence_parent_id = $5::uuid",
 		"event.user_id = $4::uuid",
 		"from recurring_events event",
-		"jsonb_build_object('event_id', event.id::text, 'owner_user_id', $4::text)",
+		"jsonb_build_object('protocol_version', 2, 'event_id', event.id::text, 'owner_user_id', $4::text,",
 		"when exists (select 1 from upsert_jobs job where job.schedule_event_id = event.id) then 'pending'",
 	} {
 		if !strings.Contains(enqueueScheduleGoogleRecurringCreatesSQL, fragment) {

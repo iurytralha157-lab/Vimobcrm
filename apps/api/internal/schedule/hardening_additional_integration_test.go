@@ -103,6 +103,44 @@ func runScheduleHardeningAdditionalChecks(t *testing.T, f scheduleHardeningFixtu
 			t.Fatalf("unknown result received an invented completion date: %#v", report.DataQuality)
 		}
 	})
+	t.Run("dashboard ranks recorded creators only in the authorized roster", func(t *testing.T) {
+		day := time.Date(2037, time.March, 4, 0, 0, 0, 0, time.UTC)
+		start := day.Add(16 * time.Hour)
+		for _, row := range []struct{ org, user, creator, visibility string }{
+			{f.org, f.owner, f.owner, "private"},
+			{f.org, f.owner, f.owner, "private"},
+			{f.org, f.owner, f.otherMember, "private"},
+			{f.org, f.owner, "", "private"},
+			{f.org, f.otherMember, f.otherMember, "private"},
+			{f.otherOrg, f.otherTenantUser, f.otherTenantUser, "public"},
+		} {
+			if _, err := f.pool.Exec(f.ctx, `insert into public.schedule_events
+				(organization_id,user_id,created_by,title,event_type,start_time,end_time,status,visibility)
+				values($1,$2,nullif($3,'')::uuid,'Synthetic assignment','meeting',$4,$5,'scheduled',$6)`,
+				row.org, row.user, row.creator, start, start.Add(time.Hour), row.visibility); err != nil {
+				t.Fatal(err)
+			}
+		}
+		filter := DashboardFilter{DateFrom: day, DateTo: day, DateBasis: DashboardDateBasisStartTime, UserID: f.owner}
+		report, err := f.repo.Dashboard(f.ctx, f.ownerActor, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.KPIs.Total != 4 || len(report.CreatorRanking) != 1 ||
+			report.CreatorRanking[0].UserID != f.owner || report.CreatorRanking[0].Total != 2 {
+			t.Fatalf("creator metrics expanded the broker's visibility: total=%d creators=%#v", report.KPIs.Total, report.CreatorRanking)
+		}
+
+		report, err = f.repo.Dashboard(f.ctx, f.admin, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.KPIs.Total != 4 || len(report.CreatorRanking) != 2 ||
+			report.CreatorRanking[0].UserID != f.owner || report.CreatorRanking[0].Total != 2 ||
+			report.CreatorRanking[1].UserID != f.otherMember || report.CreatorRanking[1].Total != 1 {
+			t.Fatalf("creator metrics ignored the event owner filter or lost delegation: total=%d creators=%#v", report.KPIs.Total, report.CreatorRanking)
+		}
+	})
 	t.Run("individual assignee endpoint enforces limit and preserves a duplicate no-op", func(t *testing.T) {
 		event := create(t, "task")
 		if _, err := f.pool.Exec(f.ctx, `with synthetic_users as (insert into public.users(organization_id,name) select $1,'Synthetic assignee' from generate_series(1,100) returning id), synthetic_members as (insert into public.organization_members(organization_id,user_id) select $1,id from synthetic_users returning user_id) insert into public.schedule_event_assignees(organization_id,event_id,user_id) select $1,$2,user_id from synthetic_members`, f.org, event.ID); err != nil {
@@ -154,4 +192,5 @@ func runScheduleHardeningAdditionalChecks(t *testing.T, f scheduleHardeningFixtu
 		}
 	})
 	runScheduleGoogleDisconnectRollbackChecks(t, f, create)
+	runScheduleGoogleTasksChecks(t, f)
 }

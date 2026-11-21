@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "df4ace41e058b6e0f2a33c37ff5f38306d45648c853ba9954c3c9f76ac1d2213",
+  "sourceDigestSha256": "2e978a0ee0059e3e3d762be15b1b789fc62d75e0aceadf203267691587eb3305",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -3491,10 +3491,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:2d838b1b8079a0b62f3f",
+          "id": "overlay:32b00c95f0b72ba60203",
           "column": 15,
           "file": "components/features/schedule/AgendaScreen.tsx",
-          "line": 547,
+          "line": 530,
           "owner": "AgendaCalendar",
           "routes": [
             "/agenda"
@@ -3502,10 +3502,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:ce6dbc09964016ade922",
+          "id": "overlay:0ef34926044ada10fd21",
           "column": 7,
           "file": "components/features/schedule/AgendaScreen.tsx",
-          "line": 790,
+          "line": 759,
           "owner": "AgendaCalendar",
           "routes": [
             "/agenda"
@@ -3513,11 +3513,11 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:d4848dcf2403cc8ed8f9",
-          "column": 21,
-          "file": "components/features/schedule/CalendarView.tsx",
-          "line": 806,
-          "owner": "renderMonthView",
+          "id": "overlay:d3253633725c62ec687d",
+          "column": 5,
+          "file": "components/features/schedule/CalendarEventOverflow.tsx",
+          "line": 40,
+          "owner": "CalendarEventOverflow",
           "routes": [
             "/agenda"
           ],
@@ -3546,10 +3546,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:a94a0840cee0d4a6ca18",
+          "id": "overlay:4f2ee8964e3cce0de571",
           "column": 11,
           "file": "components/features/schedule/event-sheet/EventAssigneesSection.tsx",
-          "line": 140,
+          "line": 150,
           "owner": "EventAssigneesSection",
           "routes": [
             "/agenda",
@@ -3774,10 +3774,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:2ff4a764684dd456e5bc",
+          "id": "overlay:251db126c7859ffa8c10",
           "column": 15,
           "file": "components/features/schedule/event-sheet/EventTimingSection.tsx",
-          "line": 110,
+          "line": 111,
           "owner": "EventTimingSection",
           "routes": [
             "/agenda",
@@ -3910,10 +3910,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:e14c3460a7fdbd14ba4a",
+          "id": "overlay:bed80f2fbdc0ed5b045a",
           "column": 15,
           "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 379,
+          "line": 306,
           "owner": "GoogleCalendarConnect",
           "routes": [
             "/agenda",
@@ -25963,10 +25963,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:378635b58c7446e85a60",
+          "id": "cta:bb33a00647220cafc345",
           "column": 15,
           "file": "components/features/schedule/AgendaScreen.tsx",
-          "line": 496,
+          "line": 480,
           "owner": "AgendaCalendar",
           "routes": [
             "/agenda"
@@ -25975,10 +25975,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:b49dc14f6a76ad7d545b",
+          "id": "cta:1607accd8381388670a6",
           "column": 15,
           "file": "components/features/schedule/AgendaScreen.tsx",
-          "line": 509,
+          "line": 493,
           "owner": "AgendaCalendar",
           "routes": [
             "/agenda"
@@ -25987,10 +25987,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:96c1d867ca9a697f8072",
+          "id": "cta:af9ab5e3e4d270e31811",
           "column": 15,
           "file": "components/features/schedule/AgendaScreen.tsx",
-          "line": 517,
+          "line": 501,
           "owner": "AgendaCalendar",
           "routes": [
             "/agenda"
@@ -25999,10 +25999,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:c7defa444f4e11fa6853",
+          "id": "cta:21eadcda505dc3e44de0",
           "column": 15,
           "file": "components/features/schedule/AgendaScreen.tsx",
-          "line": 531,
+          "line": 515,
           "owner": "AgendaCalendar",
           "routes": [
             "/agenda"
@@ -26011,10 +26011,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2f835db923beb2c79acd",
+          "id": "cta:aeedaf99b8c5465dd5ef",
           "column": 19,
           "file": "components/features/schedule/AgendaScreen.tsx",
-          "line": 549,
+          "line": 532,
           "owner": "AgendaCalendar",
           "routes": [
             "/agenda"
@@ -26023,10 +26023,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:de0930e0213787e70f68",
+          "id": "cta:54ea72dd8d89418be28d",
           "column": 31,
           "file": "components/features/schedule/AgendaScreen.tsx",
-          "line": 587,
+          "line": 570,
           "owner": "AgendaCalendar",
           "routes": [
             "/agenda"
@@ -26035,10 +26035,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:8ba1207ee8c3cdc31ce6",
+          "id": "cta:21d143a1eb2939f348bb",
           "column": 25,
           "file": "components/features/schedule/AgendaScreen.tsx",
-          "line": 611,
+          "line": 590,
           "owner": "AgendaCalendar",
           "routes": [
             "/agenda"
@@ -26047,10 +26047,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:bf5183d85136147d2716",
+          "id": "cta:05fad0f0fd4bc6feb6c3",
           "column": 29,
           "file": "components/features/schedule/AgendaScreen.tsx",
-          "line": 630,
+          "line": 604,
           "owner": "AgendaCalendar",
           "routes": [
             "/agenda"
@@ -26059,10 +26059,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:66385061d92d2c8a429b",
+          "id": "cta:70efe954eb7aec1d7ddc",
           "column": 25,
           "file": "components/features/schedule/AgendaScreen.tsx",
-          "line": 664,
+          "line": 633,
           "owner": "AgendaCalendar",
           "routes": [
             "/agenda"
@@ -26071,10 +26071,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:5c3218c3744570400258",
+          "id": "cta:f66eb86daa907066da2e",
           "column": 17,
           "file": "components/features/schedule/AgendaScreen.tsx",
-          "line": 682,
+          "line": 651,
           "owner": "AgendaCalendar",
           "routes": [
             "/agenda"
@@ -26083,10 +26083,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:42358ab972d5330257fc",
+          "id": "cta:c873c8de0e5cdd7ff654",
           "column": 17,
           "file": "components/features/schedule/AgendaScreen.tsx",
-          "line": 698,
+          "line": 667,
           "owner": "AgendaCalendar",
           "routes": [
             "/agenda"
@@ -26095,10 +26095,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ecb63ae3276afe5bcbb5",
+          "id": "cta:0f3208576074156e16d7",
           "column": 15,
           "file": "components/features/schedule/AgendaScreen.tsx",
-          "line": 702,
+          "line": 671,
           "owner": "AgendaCalendar",
           "routes": [
             "/agenda"
@@ -26107,10 +26107,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:8b9f14a11ede551c29e1",
+          "id": "cta:c9dd2047f2714ce7b94b",
           "column": 19,
           "file": "components/features/schedule/AgendaScreen.tsx",
-          "line": 716,
+          "line": 685,
           "owner": "AgendaCalendar",
           "routes": [
             "/agenda"
@@ -26119,10 +26119,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fe5c049c7ebf42eae79b",
+          "id": "cta:8f76096fd491285d7718",
           "column": 17,
           "file": "components/features/schedule/AgendaScreen.tsx",
-          "line": 735,
+          "line": 704,
           "owner": "AgendaCalendar",
           "routes": [
             "/agenda"
@@ -26131,10 +26131,34 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7b2c62e664b1742cc79d",
+          "id": "cta:cccb36826e25518061a2",
+          "column": 9,
+          "file": "components/features/schedule/CalendarEventOverflow.tsx",
+          "line": 42,
+          "owner": "CalendarEventOverflow",
+          "routes": [
+            "/agenda"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
+        },
+        {
+          "id": "cta:8401d1059e9a204886f9",
+          "column": 17,
+          "file": "components/features/schedule/CalendarEventOverflow.tsx",
+          "line": 77,
+          "owner": "CalendarEventOverflow",
+          "routes": [
+            "/agenda"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
+        },
+        {
+          "id": "cta:efdafd21ad5c3fbd5018",
           "column": 19,
           "file": "components/features/schedule/CalendarView.tsx",
-          "line": 743,
+          "line": 813,
           "owner": "renderMonthView",
           "routes": [
             "/agenda"
@@ -26143,10 +26167,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:bee74a4430d447155a7b",
+          "id": "cta:76b1b8c8c16c0b13b4cc",
           "column": 23,
           "file": "components/features/schedule/CalendarView.tsx",
-          "line": 773,
+          "line": 843,
           "owner": "renderMonthView",
           "routes": [
             "/agenda"
@@ -26155,34 +26179,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:233955571ab91f244363",
-          "column": 25,
-          "file": "components/features/schedule/CalendarView.tsx",
-          "line": 808,
-          "owner": "renderMonthView",
-          "routes": [
-            "/agenda"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:eeffcad0dc55ca70e31e",
-          "column": 31,
-          "file": "components/features/schedule/CalendarView.tsx",
-          "line": 832,
-          "owner": "renderMonthView",
-          "routes": [
-            "/agenda"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:f502091cc78ddab3866d",
+          "id": "cta:fd73478a8fbfdc8fa259",
           "column": 19,
           "file": "components/features/schedule/CalendarView.tsx",
-          "line": 1060,
+          "line": 1025,
           "owner": "renderWeekView",
           "routes": [
             "/agenda"
@@ -26249,10 +26249,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:4c4b9a0891fe5eb379ea",
+          "id": "cta:a319b0f528391e148ee2",
           "column": 11,
           "file": "components/features/schedule/dashboard/agenda-dashboard-ui.tsx",
-          "line": 105,
+          "line": 91,
           "owner": "AgendaKpiCard",
           "routes": [
             "/agenda"
@@ -26261,10 +26261,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:8a8ddbd3bd7079aeda0a",
+          "id": "cta:900a67a25354dd380b83",
           "column": 15,
           "file": "components/features/schedule/dashboard/AgendaDashboard.tsx",
-          "line": 636,
+          "line": 507,
           "owner": "AgendaTabs",
           "routes": [
             "/agenda"
@@ -26273,10 +26273,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:1998b3c64f24f8b0b6b2",
+          "id": "cta:219c72ae60ad10b0e772",
           "column": 7,
           "file": "components/features/schedule/dashboard/AgendaDashboard.tsx",
-          "line": 725,
+          "line": 585,
           "owner": "AgendaDashboardRefreshWarning",
           "routes": [
             "/agenda"
@@ -26285,10 +26285,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:29238a8db3ea37eedfd6",
+          "id": "cta:c8f2f9786f56e16152a7",
           "column": 7,
           "file": "components/features/schedule/dashboard/AgendaDashboard.tsx",
-          "line": 757,
+          "line": 617,
           "owner": "AgendaDashboardError",
           "routes": [
             "/agenda"
@@ -26333,10 +26333,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:cac97d00b3cd6c03a4eb",
+          "id": "cta:5d0399e7dfec1f3bc5f1",
           "column": 11,
           "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-          "line": 287,
+          "line": 293,
           "owner": "AgendaEventsPanel",
           "routes": [
             "/agenda"
@@ -26345,10 +26345,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:323ef81676d4e9eab200",
+          "id": "cta:6e767a33c80e76021eb2",
           "column": 13,
           "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-          "line": 305,
+          "line": 311,
           "owner": "AgendaEventsPanel",
           "routes": [
             "/agenda"
@@ -26357,10 +26357,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:8227b73f4e577f139cb9",
+          "id": "cta:d2b5552d299e8e1fe809",
           "column": 15,
           "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-          "line": 344,
+          "line": 350,
           "owner": "AgendaEventsPanel",
           "routes": [
             "/agenda"
@@ -26369,10 +26369,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:e76e57fb50f839e0d06c",
+          "id": "cta:558cc0f8703c5b678ff4",
           "column": 15,
           "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-          "line": 374,
+          "line": 381,
           "owner": "AgendaEventsPanel",
           "routes": [
             "/agenda"
@@ -26381,10 +26381,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:eaff18a169595b744733",
-          "column": 7,
+          "id": "cta:a3727bdbbd8250860292",
+          "column": 9,
           "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-          "line": 427,
+          "line": 437,
           "owner": "AgendaEventRow",
           "routes": [
             "/agenda"
@@ -26394,102 +26394,29 @@
           "tag": "Link"
         },
         {
-          "id": "cta:c5e74847bd1d257ac9cd",
+          "id": "cta:9552a41d53b39577ba67",
           "column": 7,
           "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
-          "line": 483,
+          "line": 460,
+          "owner": "AgendaEventRow",
+          "routes": [
+            "/agenda"
+          ],
+          "href": "`/agenda?event=${encodeURIComponent(event.id)}`",
+          "kind": "internalDynamic",
+          "tag": "Link"
+        },
+        {
+          "id": "cta:d3cb8733f478565d5935",
+          "column": 7,
+          "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
+          "line": 516,
           "owner": "AgendaEventsError",
           "routes": [
             "/agenda"
           ],
           "kind": "actionButton",
           "tag": "Button"
-        },
-        {
-          "id": "cta:3e488b1e97ecebb10b79",
-          "column": 11,
-          "file": "components/features/schedule/dashboard/AgendaEvolutionChart.tsx",
-          "line": 55,
-          "owner": "AgendaEvolutionChart",
-          "routes": [
-            "/agenda"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:b5ab3761a4ab3ea4bc29",
-          "column": 7,
-          "file": "components/features/schedule/dashboard/AgendaNextEventCard.tsx",
-          "line": 112,
-          "owner": "AgendaNextEventCard",
-          "routes": [
-            "/agenda"
-          ],
-          "href": "`/agenda?event=${encodeURIComponent(event.id)}`",
-          "kind": "internalDynamic",
-          "tag": "Link"
-        },
-        {
-          "id": "cta:779305ec4e52b865727b",
-          "column": 15,
-          "file": "components/features/schedule/dashboard/AgendaOverduePanel.tsx",
-          "line": 34,
-          "owner": "AgendaOverduePanel",
-          "routes": [
-            "/agenda"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:02f339dd546276020135",
-          "column": 13,
-          "file": "components/features/schedule/dashboard/AgendaResponsibleResultsPanel.tsx",
-          "line": 143,
-          "owner": "AgendaResponsibleResultsPanel",
-          "routes": [
-            "/agenda"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:9f39a62bb189d3e530e3",
-          "column": 13,
-          "file": "components/features/schedule/dashboard/AgendaResponsibleResultsPanel.tsx",
-          "line": 162,
-          "owner": "AgendaResponsibleResultsPanel",
-          "routes": [
-            "/agenda"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:ddb43fb8238d686de5bd",
-          "column": 11,
-          "file": "components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx",
-          "line": 31,
-          "owner": "AgendaUpcomingEventsPanel",
-          "routes": [
-            "/agenda"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:7730abf7dabf0b9aebf9",
-          "column": 17,
-          "file": "components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx",
-          "line": 56,
-          "owner": "AgendaUpcomingEventsPanel",
-          "routes": [
-            "/agenda"
-          ],
-          "href": "`/agenda?event=${encodeURIComponent(event.id)}`",
-          "kind": "internalDynamic",
-          "tag": "Link"
         },
         {
           "id": "cta:841c7bd4cdee76637e8f",
@@ -26550,10 +26477,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:e64756c32a9288004ca9",
+          "id": "cta:67c8f86690d19dad1245",
           "column": 17,
           "file": "components/features/schedule/event-sheet/EventAssigneesSection.tsx",
-          "line": 123,
+          "line": 133,
           "owner": "EventAssigneesSection",
           "routes": [
             "/agenda",
@@ -26608,10 +26535,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:39fcc5964feba74d17dd",
+          "id": "cta:a987aa104f8827ff6b11",
           "column": 15,
           "file": "components/features/schedule/event-sheet/EventAssigneesSection.tsx",
-          "line": 145,
+          "line": 155,
           "owner": "EventAssigneesSection",
           "routes": [
             "/agenda",
@@ -27479,6 +27406,65 @@
           "tag": "Button"
         },
         {
+          "id": "cta:575acc745239ee615e5a",
+          "column": 15,
+          "file": "components/features/schedule/event-sheet/EventSheetFeedback.tsx",
+          "line": 48,
+          "owner": "EventSheetFeedback",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/ready",
+            "/properties/rentals",
+            "/properties/settings",
+            "/properties/third-party",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/meta-marketing",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "href": "/settings?tab=integrations&integration=google-calendar",
+          "kind": "internal",
+          "tag": "Link"
+        },
+        {
           "id": "cta:5e6d6f7865d2c602920c",
           "column": 7,
           "file": "components/features/schedule/event-sheet/EventSheetHeader.tsx",
@@ -27653,10 +27639,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:07168c128d99640fe31a",
+          "id": "cta:3325c6635b146b5c999f",
           "column": 19,
           "file": "components/features/schedule/event-sheet/EventTimingSection.tsx",
-          "line": 112,
+          "line": 113,
           "owner": "EventTimingSection",
           "routes": [
             "/agenda",
@@ -27827,10 +27813,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:97f68997173128bdf3d2",
+          "id": "cta:b850ad20fd22f09dbda3",
           "column": 21,
           "file": "components/features/schedule/EventSheet.tsx",
-          "line": 1134,
+          "line": 1135,
           "owner": "EventSheet",
           "routes": [
             "/agenda",
@@ -27933,10 +27919,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ef1816f71c9f3801c245",
+          "id": "cta:37336a1c085bf8fffbec",
           "column": 11,
           "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 139,
+          "line": 192,
           "owner": "GoogleCalendarConnect",
           "routes": [
             "/agenda",
@@ -27946,89 +27932,90 @@
           "tag": "Button"
         },
         {
-          "id": "cta:190e9703d768f7943480",
-          "column": 11,
-          "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 176,
-          "owner": "GoogleCalendarConnect",
-          "routes": [
-            "/agenda",
-            "/settings"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:cebe320ac5a495165181",
-          "column": 11,
-          "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 225,
-          "owner": "GoogleCalendarConnect",
-          "routes": [
-            "/agenda",
-            "/settings"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:1f9880b2f51e16948d02",
-          "column": 11,
-          "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 252,
-          "owner": "GoogleCalendarConnect",
-          "routes": [
-            "/agenda",
-            "/settings"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:311aec0223d832e96cab",
-          "column": 11,
-          "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 311,
-          "owner": "GoogleCalendarConnect",
-          "routes": [
-            "/agenda",
-            "/settings"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:fe48df4a2657e47fa467",
-          "column": 19,
-          "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 381,
-          "owner": "GoogleCalendarConnect",
-          "routes": [
-            "/agenda",
-            "/settings"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:eb907ed8951c187d269f",
-          "column": 58,
-          "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 453,
-          "owner": "GoogleCalendarConnect",
-          "routes": [
-            "/agenda",
-            "/settings"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:b23eaf0d8f9bfe4e899f",
+          "id": "cta:8cd9dc179bceb3a234ec",
           "column": 13,
           "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 472,
+          "line": 203,
           "owner": "GoogleCalendarConnect",
+          "routes": [
+            "/agenda",
+            "/settings"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:08a8181e12f200363b59",
+          "column": 19,
+          "file": "components/features/schedule/GoogleCalendarConnect.tsx",
+          "line": 241,
+          "owner": "GoogleCalendarConnect",
+          "routes": [
+            "/agenda",
+            "/settings"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:5df29e308c5fef37ae18",
+          "column": 19,
+          "file": "components/features/schedule/GoogleCalendarConnect.tsx",
+          "line": 247,
+          "owner": "GoogleCalendarConnect",
+          "routes": [
+            "/agenda",
+            "/settings"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:6a57fffaf0db9587f6da",
+          "column": 21,
+          "file": "components/features/schedule/GoogleCalendarConnect.tsx",
+          "line": 265,
+          "owner": "GoogleCalendarConnect",
+          "routes": [
+            "/agenda",
+            "/settings"
+          ],
+          "href": "/politica-de-privacidade",
+          "kind": "internal",
+          "tag": "Link"
+        },
+        {
+          "id": "cta:713ab692448b2d9c3c42",
+          "column": 17,
+          "file": "components/features/schedule/GoogleCalendarConnect.tsx",
+          "line": 270,
+          "owner": "GoogleCalendarConnect",
+          "routes": [
+            "/agenda",
+            "/settings"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:fc97904d17e6e86f571e",
+          "column": 19,
+          "file": "components/features/schedule/GoogleCalendarConnect.tsx",
+          "line": 308,
+          "owner": "GoogleCalendarConnect",
+          "routes": [
+            "/agenda",
+            "/settings"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:2edac2a9e49277b5985c",
+          "column": 9,
+          "file": "components/features/schedule/GoogleTasksConnectionPanel.tsx",
+          "line": 32,
+          "owner": "GoogleTasksConnectionPanel",
           "routes": [
             "/agenda",
             "/settings"
@@ -28726,10 +28713,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:57e6e19552b7ca2b1dbf",
+          "id": "cta:d2768a6b95564544cc8c",
           "column": 21,
           "file": "components/features/settings/IntegrationsTab.tsx",
-          "line": 1093,
+          "line": 1095,
           "owner": "IntegrationCard",
           "routes": [
             "/settings"
@@ -28738,10 +28725,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:8b8d28c54f70673301c5",
+          "id": "cta:ae2e984e10f863ea06e0",
           "column": 13,
           "file": "components/features/settings/IntegrationsTab.tsx",
-          "line": 1131,
+          "line": 1133,
           "owner": "IntegrationCard",
           "routes": [
             "/settings"
@@ -28750,10 +28737,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:424d8a9530edca2917e3",
+          "id": "cta:00b0d07c2258a671ed86",
           "column": 11,
           "file": "components/features/settings/IntegrationsTab.tsx",
-          "line": 1141,
+          "line": 1143,
           "owner": "IntegrationCard",
           "routes": [
             "/settings"
@@ -45080,10 +45067,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:9462a188e6d23695f35e",
+          "id": "control:ce69137a4874ab7a4103",
           "column": 21,
           "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 400,
+          "line": 327,
           "owner": "GoogleCalendarConnect",
           "routes": [
             "/agenda",
@@ -45093,10 +45080,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:29fc5867b4686894cada",
+          "id": "control:473542ca8a5195f919bd",
           "column": 21,
           "file": "components/features/schedule/GoogleCalendarConnect.tsx",
-          "line": 401,
+          "line": 328,
           "owner": "GoogleCalendarConnect",
           "routes": [
             "/agenda",
@@ -47409,7 +47396,7 @@
         }
       ]
     },
-    "digestSha256": "f2f1c691745b7cc465bb5b707fbd51f460b2844e3e98959daf7b71f741d38602"
+    "digestSha256": "141d013e930dcb4c4462d8a97d44141f1b3750ad18cc39c02177f6108a188041"
   },
   "routes": [
     {
@@ -56279,6 +56266,15 @@
       "access": [
         "protected"
       ],
+      "file": "components/features/schedule/CalendarEventOverflow.tsx",
+      "routes": [
+        "/agenda"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
       "file": "components/features/schedule/CalendarView.tsx",
       "routes": [
         "/agenda"
@@ -56353,24 +56349,6 @@
       "access": [
         "protected"
       ],
-      "file": "components/features/schedule/dashboard/AgendaAdaptiveChart.tsx",
-      "routes": [
-        "/agenda"
-      ]
-    },
-    {
-      "access": [
-        "protected"
-      ],
-      "file": "components/features/schedule/dashboard/AgendaAppointmentsTab.tsx",
-      "routes": [
-        "/agenda"
-      ]
-    },
-    {
-      "access": [
-        "protected"
-      ],
       "file": "components/features/schedule/dashboard/AgendaDailyChart.tsx",
       "routes": [
         "/agenda"
@@ -56407,15 +56385,6 @@
       "access": [
         "protected"
       ],
-      "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
-      "routes": [
-        "/agenda"
-      ]
-    },
-    {
-      "access": [
-        "protected"
-      ],
       "file": "components/features/schedule/dashboard/AgendaDashboardPeriodFilter.tsx",
       "routes": [
         "/agenda"
@@ -56443,79 +56412,7 @@
       "access": [
         "protected"
       ],
-      "file": "components/features/schedule/dashboard/AgendaEvolutionChart.tsx",
-      "routes": [
-        "/agenda"
-      ]
-    },
-    {
-      "access": [
-        "protected"
-      ],
-      "file": "components/features/schedule/dashboard/AgendaNextEventCard.tsx",
-      "routes": [
-        "/agenda"
-      ]
-    },
-    {
-      "access": [
-        "protected"
-      ],
-      "file": "components/features/schedule/dashboard/AgendaOverduePanel.tsx",
-      "routes": [
-        "/agenda"
-      ]
-    },
-    {
-      "access": [
-        "protected"
-      ],
       "file": "components/features/schedule/dashboard/AgendaOverviewTab.tsx",
-      "routes": [
-        "/agenda"
-      ]
-    },
-    {
-      "access": [
-        "protected"
-      ],
-      "file": "components/features/schedule/dashboard/AgendaResponsibleResultsPanel.tsx",
-      "routes": [
-        "/agenda"
-      ]
-    },
-    {
-      "access": [
-        "protected"
-      ],
-      "file": "components/features/schedule/dashboard/AgendaResultsTab.tsx",
-      "routes": [
-        "/agenda"
-      ]
-    },
-    {
-      "access": [
-        "protected"
-      ],
-      "file": "components/features/schedule/dashboard/AgendaTeamTab.tsx",
-      "routes": [
-        "/agenda"
-      ]
-    },
-    {
-      "access": [
-        "protected"
-      ],
-      "file": "components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx",
-      "routes": [
-        "/agenda"
-      ]
-    },
-    {
-      "access": [
-        "protected"
-      ],
-      "file": "components/features/schedule/dashboard/AgendaWeeklyChart.tsx",
       "routes": [
         "/agenda"
       ]
@@ -57206,6 +57103,16 @@
         "protected"
       ],
       "file": "components/features/schedule/GoogleCalendarConnect.tsx",
+      "routes": [
+        "/agenda",
+        "/settings"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
+      "file": "components/features/schedule/GoogleTasksConnectionPanel.tsx",
       "routes": [
         "/agenda",
         "/settings"
@@ -62693,19 +62600,19 @@
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 89,
       "asChildPrimitiveControlsWithUnrecognizedChild": 2,
-      "ctasAll": 1627,
+      "ctasAll": 1622,
       "ctasByKind": {
-        "actionButton": 1453,
+        "actionButton": 1447,
         "external": 6,
-        "internal": 33,
-        "internalDynamic": 80,
+        "internal": 35,
+        "internalDynamic": 79,
         "unknownDynamic": 55
       },
       "forms": 54,
       "formsRouteReachable": 54,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1566,
-      "internalCtasRouteReachable": 1534,
+      "internalCtas": 1561,
+      "internalCtasRouteReachable": 1529,
       "overlays": 253,
       "overlaysByKind": {
         "alertDialog": 74,
@@ -62733,7 +62640,7 @@
     "protectedAccessChecksThreePersonas": 213,
     "renderableRouteViewportChecksDesktopAndMobile": 174,
     "routeReachableFormImplementations": 54,
-    "routeReachableInternalCtaImplementations": 1534,
+    "routeReachableInternalCtaImplementations": 1529,
     "routeReachableOverlayImplementations": 248,
     "routeReachableSupplementalOverlayAndTabControls": 292
   },

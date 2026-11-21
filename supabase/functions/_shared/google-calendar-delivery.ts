@@ -28,13 +28,17 @@ export class GoogleCalendarConnectionChangedError extends Error {
   }
 }
 
-export function assertGoogleCalendarOAuthReady(token: Record<string, unknown>) {
-  const scopes = new Set(String(token.scope || "").split(/\s+/).filter(Boolean));
+export function assertGoogleCalendarOAuthScope(scope: unknown) {
+  const scopes = new Set(typeof scope === "string" ? scope.split(/\s+/).filter(Boolean) : []);
   if (!scopes.has("https://www.googleapis.com/auth/calendar.events.owned") &&
     !scopes.has("https://www.googleapis.com/auth/calendar.events") &&
     !scopes.has("https://www.googleapis.com/auth/calendar")) {
     throw new Error("Permissao do Google Agenda nao concedida. Reconecte e autorize a Agenda.");
   }
+}
+
+export function assertGoogleCalendarOAuthReady(token: Record<string, unknown>) {
+  assertGoogleCalendarOAuthScope(token.scope);
   if (typeof token.access_token !== "string" || !token.access_token.trim() ||
     typeof token.refresh_token !== "string" || !token.refresh_token.trim()) {
     throw new Error("Autorizacao offline do Google ausente. Reconecte a conta com consentimento.");

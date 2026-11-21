@@ -48,6 +48,7 @@ func TestScheduleHardeningAgainstDedicatedLocalPostgres(t *testing.T) {
 	if _, err := database.Pool().Exec(ctx, scheduleHardeningFixture); err != nil {
 		t.Fatalf("create minimal owned fixture: %v", err)
 	}
+	installScheduleOrdinaryLeadReadFixture(t, ctx, database.Pool())
 	repo := NewRepository(database, nil)
 	id := func() string {
 		var result string

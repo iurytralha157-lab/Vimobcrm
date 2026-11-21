@@ -652,7 +652,7 @@ test("outbound worker claims verified jobs without a user allowlist", async () =
   assert.deepEqual(await run(20), { processed: 0, results: [] });
   assert.equal(calls.length, 1);
   const claimArgs = calls[0];
-  assert.equal(claimArgs.name, "google_calendar_claim_outbound_sync_jobs_v2");
+  assert.equal(claimArgs.name, "google_calendar_claim_outbound_sync_jobs_v3");
   assert.deepEqual(Object.keys(claimArgs).sort(), ["name", "p_limit", "p_worker"]);
   assert.equal(claimArgs.p_limit, 20);
 });
@@ -1304,6 +1304,7 @@ test("OAuth start creates consent URL for an authorized pilot user", async () =>
       getUserProfile: async () => ({ id: pilotUserId, organization_id: "organization-b" }),
       getGoogleScheduleCapability: async () => ({ allowed: true }),
       connectGate: (userId: string) => resolveGoogleCalendarConnectGate(userId, "pilot", pilotUserId),
+      getConnectionForUser: async () => null,
       createOAuthState: async () => { statesCreated += 1; return "state-b"; },
       buildGoogleAuthUrl: (state: string) => `https://accounts.google.test/auth?state=${state}`,
       jsonResponse: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status }),
@@ -1407,6 +1408,7 @@ test("OAuth status stays readable while a user without Agenda access cannot star
     success: true,
     can_connect: false,
     can_use_schedule: false,
+    tasks_available: true,
     connect_restriction: "SCHEDULE_ACCESS_REQUIRED",
     connection: null,
   });
@@ -1447,6 +1449,7 @@ test("OAuth status reports connection eligibility for an authorized pilot user",
     success: true,
     can_connect: true,
     can_use_schedule: true,
+    tasks_available: true,
     connect_restriction: null,
     connection: null,
   });

@@ -18,14 +18,8 @@ import {
   Calendar as CalendarIcon,
   List,
   LayoutGrid,
-  Phone,
-  Mail,
-  Video,
-  ClipboardList,
-  Home,
-  MessageSquare,
+  Check,
   SlidersHorizontal,
-  Trash2,
   AlertCircle,
   RefreshCw,
   CalendarSync,
@@ -37,6 +31,7 @@ import { EventsList } from "@/components/features/schedule/EventsList";
 import { getAgendaLocalPeriod, navigateAgendaPeriod } from "@/components/features/schedule/agenda-period";
 import { matchesScheduleEventType } from "@/components/features/schedule/schedule-event-presentation";
 import { EventSheet } from "@/components/features/schedule/EventSheet";
+import { eventTypes } from "@/components/features/schedule/event-sheet/config";
 import { UserFilter } from "@/components/features/schedule/UserFilter";
 import {
   useScheduleEvents,
@@ -53,7 +48,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Badge } from "@/components/ui/badge";
+import { FILTER_UI } from "@/config/filter-ui";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { VimobLoader } from "@/components/shared/loading/VimobLoader";
@@ -90,18 +85,7 @@ const AgendaDashboard = dynamic(
 
 // --- helpers ----------------------------------------------------------------
 
-const EVENT_TYPE_FILTER_OPTIONS: Array<{
-  value: EventType;
-  label: string;
-  icon: React.ElementType;
-}> = [
-  { value: "call", label: "Ligação", icon: Phone },
-  { value: "email", label: "E-mail", icon: Mail },
-  { value: "meeting", label: "Reunião", icon: Video },
-  { value: "task", label: "Tarefa", icon: ClipboardList },
-  { value: "message", label: "Mensagem", icon: MessageSquare },
-  { value: "visit", label: "Visita ao imóvel", icon: Home },
-];
+const filterOptionClass = "flex min-w-0 items-center gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 py-2 text-left text-xs text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] focus-visible:outline-2 focus-visible:outline-primary aria-pressed:bg-primary/12 aria-pressed:font-medium aria-pressed:text-[var(--app-text-primary)]";
 
 const AGENDA_VIEW_MODES = ["day", "week", "month", "year", "list"] as const;
 type AgendaViewMode = (typeof AGENDA_VIEW_MODES)[number];
@@ -543,60 +527,56 @@ function AgendaCalendar() {
                 {!isMobile && <span>Google Agenda</span>}
               </Button>
 
-              {/* Novo Botão de Filtros */}
               <Popover>
                 <PopoverTrigger asChild>
                   <Button
                     data-tour="agenda-filters"
-                    aria-label="Filtros da agenda"
+                    aria-label={activeFiltersCount ? `Filtros da agenda, ${activeFiltersCount} ativos` : "Filtros da agenda"}
                     variant="ghost"
                     size="sm"
                     className={cn(
-                      "h-8 gap-2 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light text-[var(--color-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)]",
-                      isMobile && "w-8 px-0",
-                      activeFiltersCount > 0 &&
-                        "bg-primary/50 text-white hover:bg-primary hover:text-white",
+                      FILTER_UI.trigger,
+                      "text-xs",
+                      isMobile && "min-w-8 px-1.5",
+                      activeFiltersCount > 0 && "bg-primary/12 font-medium text-[var(--app-text-primary)]",
                     )}
                   >
                     <SlidersHorizontal size={14} />
                     {!isMobile && <span>Filtros</span>}
                     {activeFiltersCount > 0 && (
-                      <Badge
-                        variant="secondary"
-                        className="h-4 min-w-[18px] rounded-[4px] bg-primary/50 px-1 text-[10px] font-light text-white hover:bg-primary/50"
+                      <span
+                        aria-hidden="true"
+                        className="grid size-[18px] place-items-center rounded bg-[var(--app-surface-solid)] text-[11px] tabular-nums"
                       >
                         {activeFiltersCount}
-                      </Badge>
+                      </span>
                     )}
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent
-                  className="app-header-popover z-50 max-h-[calc(100dvh-5rem)] w-[min(320px,calc(100vw-16px))] overflow-y-auto rounded-[8px] border-0 p-2.5"
+                  className={cn("app-header-popover z-50 w-[320px] rounded-[8px] border-0 p-3.5", FILTER_UI.panelViewport)}
+                  collisionPadding={FILTER_UI.collisionPadding}
                   align="end"
                 >
-                  <div className="flex flex-col gap-3">
-                    {/* Visualização */}
+                  <div className="flex flex-col gap-4">
                     {!isMobile && (
-                      <div className="flex flex-col gap-3">
-                        <SideLabel>Visualização</SideLabel>
-                        <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-2" role="group" aria-label="Visualização">
+                        <FilterLabel>Visualização</FilterLabel>
+                        <div className="grid grid-cols-2 gap-1.5">
                           {VIEW_MODES.map((m) => {
                             const active = viewMode === m.value;
                             const Icon = m.icon;
                             return (
                               <button
                                 key={m.value}
+                                type="button"
                                 onClick={() => setViewMode(m.value)}
-                                 aria-pressed={active}
-                                className={cn(
-                                  "flex items-center gap-2 rounded-[6px] border-0 px-3 py-2 text-[12px] font-light transition-colors",
-                                  active
-                                    ? "bg-primary/50 text-white hover:bg-primary"
-                                    : "bg-[var(--app-surface-soft)] text-[var(--color-text-secondary)] hover:bg-[var(--app-surface-hover)]",
-                                )}
+                                aria-pressed={active}
+                                className={filterOptionClass}
                               >
                                 <Icon size={14} />
-                                {m.label}
+                                <span className="flex-1">{m.label}</span>
+                                {active && <Check size={13} aria-hidden="true" />}
                               </button>
                             );
                           })}
@@ -604,53 +584,42 @@ function AgendaCalendar() {
                       </div>
                     )}
 
-                    {/* Filtro por tipo de agendamento */}
-                    <div className="flex flex-col gap-3">
-                      <SideLabel>Tipo de agendamento</SideLabel>
-                      <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-2" role="group" aria-label="Tipo de agendamento">
+                      <FilterLabel>Tipo de agendamento</FilterLabel>
+                      <div className="grid grid-cols-2 gap-1.5">
                         <button
                           type="button"
                           onClick={() => setSelectedEventType(null)}
-                           aria-pressed={selectedEventType === null}
-                          className={cn(
-                            "col-span-2 flex items-center gap-2 rounded-[6px] border-0 px-3 py-2 text-[12px] font-light transition-colors",
-                            selectedEventType === null
-                              ? "bg-primary/50 text-white hover:bg-primary"
-                              : "bg-[var(--app-surface-soft)] text-[var(--color-text-secondary)] hover:bg-[var(--app-surface-hover)]",
-                          )}
+                          aria-pressed={selectedEventType === null}
+                          className={cn(filterOptionClass, "col-span-2")}
                         >
                           <CalendarIcon size={14} />
-                          Todos os tipos
+                          <span className="flex-1">Todos os tipos</span>
+                          {selectedEventType === null && <Check size={13} aria-hidden="true" />}
                         </button>
-                        {EVENT_TYPE_FILTER_OPTIONS.map((option) => {
-                          const active = selectedEventType === option.value;
-                          const Icon = option.icon;
+                        {eventTypes.map(({ type, label, icon: Icon }) => {
+                          const active = selectedEventType === type;
 
                           return (
                             <button
-                              key={option.value}
+                              key={type}
                               type="button"
-                              onClick={() => setSelectedEventType(option.value)}
-                               aria-pressed={active}
-                              className={cn(
-                                "flex min-w-0 items-center gap-2 rounded-[6px] border-0 px-3 py-2 text-left text-[12px] font-light transition-colors",
-                                active
-                                  ? "bg-primary/50 text-white hover:bg-primary"
-                                  : "bg-[var(--app-surface-soft)] text-[var(--color-text-secondary)] hover:bg-[var(--app-surface-hover)]",
-                              )}
+                              onClick={() => setSelectedEventType(type)}
+                              aria-pressed={active}
+                              className={filterOptionClass}
                             >
                               <Icon className="h-3.5 w-3.5 shrink-0" />
-                              <span className="truncate">{option.label}</span>
+                              <span className="flex-1">{label}</span>
+                              {active && <Check className="size-3 shrink-0" aria-hidden="true" />}
                             </button>
                           );
                         })}
                       </div>
                     </div>
 
-                    {/* Filtro de Equipe */}
                     {canFilterUsers && (
-                      <div className="flex flex-col gap-3">
-                        <SideLabel>Filtro por Equipe</SideLabel>
+                      <div className="space-y-2" role="group" aria-label="Responsável">
+                        <FilterLabel>Responsável</FilterLabel>
                         <UserFilter
                           users={users}
                           selectedUserId={selectedUserId}
@@ -662,14 +631,14 @@ function AgendaCalendar() {
                     {activeFiltersCount > 0 && (
                       <div>
                         <Button
+                          variant="ghost"
                           size="sm"
-                          className="h-8 w-full gap-2 rounded-[6px] bg-primary/50 text-[12px] font-light text-white shadow-none hover:bg-primary hover:text-white"
+                          className="h-8 w-full rounded-[6px] text-xs text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)]"
                           onClick={() => {
                             setSelectedUserId(null);
                             setSelectedEventType(null);
                           }}
                         >
-                          <Trash2 size={13} />
                           Limpar filtros
                         </Button>
                       </div>
@@ -788,15 +757,13 @@ function AgendaCalendar() {
       </div>
 
       <Dialog open={googleCalendarOpen} onOpenChange={setGoogleCalendarOpen}>
-        <DialogContent className="max-h-[90dvh] w-[calc(100vw-16px)] max-w-xl overflow-y-auto rounded-[8px] border-0 bg-[var(--app-background)] p-4 sm:p-5">
-          <DialogHeader className="gap-1.5">
+        <DialogContent className="max-h-[90dvh] w-[calc(100vw-16px)] max-w-md overflow-y-auto rounded-[8px] border-0 bg-[var(--app-background)] p-4 sm:p-5">
+          <DialogHeader className="sr-only">
             <DialogTitle className="text-[14px] font-light text-[var(--app-text-primary)]">
               Google Agenda
             </DialogTitle>
             <DialogDescription className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-              Envie automaticamente ao Google Agenda os compromissos criados
-              ou alterados no Vimob. A exclusão no Vimob também envia a remoção
-              do evento vinculado no Google.
+              Conecte sua conta Google para enviar atividades do Vimob.
             </DialogDescription>
           </DialogHeader>
           <GoogleCalendarConnect />
@@ -817,27 +784,10 @@ function AgendaCalendar() {
 
 // --- Sub-componentes pequenos ------------------------------------------------
 
-function SideLabel({ children }: { children: React.ReactNode }) {
+function FilterLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        fontSize: 10,
-        fontWeight: 300,
-        color: "var(--app-text-tertiary)",
-      }}
-    >
-      <div
-        style={{
-          width: 4,
-          height: 4,
-          borderRadius: "50%",
-          background: "var(--primary)",
-        }}
-      />
+    <h3 className="text-xs font-medium text-[var(--app-text-primary)]">
       {children}
-    </div>
+    </h3>
   );
 }

@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useScheduleDashboardEvents } from "@/hooks/schedule/use-schedule-dashboard-events";
 import { getPublicErrorMessage } from "@/lib/api/vimob-error";
-import { getScheduleAllDayLastOccupiedInstant, getScheduleOutcomeLabel } from "@/lib/schedule-outcome";
+import { getScheduleAllDayLastOccupiedInstant, getScheduleLifecycleState, getScheduleOutcomeLabel } from "@/lib/schedule-outcome";
 import { cn } from "@/lib/utils";
 import type {
   ScheduleDashboardEvent,
@@ -28,7 +28,7 @@ import type {
   ScheduleDashboardQuery,
 } from "@/lib/validation/schedule-dashboard";
 
-import { AgendaTableHeader, EventTypePill, formatEventWhen } from "./agenda-dashboard-ui";
+import { AgendaTableHeader, EventTypePill, formatEventTime, formatEventWhen } from "./agenda-dashboard-ui";
 
 const EVENT_TYPE_PRESENTATION = {
   call: { label: "Ligação", icon: Phone },
@@ -76,6 +76,7 @@ export type AgendaEventsPanelProps = {
   lifecycleRevision?: number;
   /** Refreshes the list when the local "Atrasado" segment is on. */
   overdueRevision?: number;
+  variant?: "period" | "today";
   className?: string;
 };
 
@@ -173,6 +174,7 @@ function getEventTypePresentation(eventType: string) {
 function getDisplayStatus(
   event: ScheduleDashboardEvent,
   now: number,
+  timeZone: string,
 ): EventDisplayStatus {
   if (event.outcome === "rescheduled") return "rescheduled";
   if (event.status === "no_show" || event.outcome === "no_show") {
@@ -181,14 +183,16 @@ function getDisplayStatus(
   if (event.status === "cancelled") return "cancelled";
   if (event.status === "completed") return "completed";
   if (event.status === "__unknown__") return "unclassified";
-  const endTime = Date.parse(event.end_time);
-  if (
-    event.is_overdue ||
-    (event.status === "scheduled" && Number.isFinite(endTime) && endTime < now)
-  ) {
-    return "overdue";
-  }
-  return "open";
+  if (event.is_overdue) return "overdue";
+  return getScheduleLifecycleState({
+    status: event.status,
+    outcome: event.outcome,
+    startTime: event.start_time,
+    endTime: event.end_time,
+    isAllDay: event.is_all_day,
+    now,
+    timeZone,
+  });
 }
 
 function getStatusLabel(
@@ -208,8 +212,10 @@ export function AgendaEventsPanel({
   enabled,
   lifecycleRevision: filterRevision = 0,
   overdueRevision = 0,
+  variant = "period",
   className,
 }: AgendaEventsPanelProps) {
+  const isToday = variant === "today";
   const [segment, setSegment] = useState<ListSegment>(() => segmentOfStatus(filters.status));
   // Picking a segment overrides the status filter set by a KPI, "Todos" included,
   // until a new KPI is chosen.
@@ -269,7 +275,7 @@ export function AgendaEventsPanel({
 
   return (
     <section
-      aria-label="Compromissos do período"
+      aria-label={isToday ? "Compromissos de hoje" : "Compromissos do período"}
       aria-busy={eventsQuery.isFetching}
       className={cn(
         "min-w-0 rounded-[12px] bg-[var(--app-surface-solid)] p-4",
@@ -279,7 +285,7 @@ export function AgendaEventsPanel({
       <header className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <h2 className="truncate text-[14px] font-normal text-[var(--app-text-primary)]">
-            Lista de compromissos
+            {isToday ? "Compromissos de hoje" : "Lista de compromissos"}
           </h2>
           <span aria-live="polite" className="shrink-0 text-[12px] font-light tabular-nums text-[var(--app-text-tertiary)]">
             {events.length < total ? `${events.length} de ${total}` : total}
@@ -290,8 +296,8 @@ export function AgendaEventsPanel({
             size="icon"
             disabled={eventsQuery.isFetching || enabled === false}
             onClick={() => void eventsQuery.refetch()}
-            aria-label="Atualizar lista de compromissos"
-            title="Atualizar lista de compromissos"
+            aria-label={isToday ? "Atualizar compromissos de hoje" : "Atualizar lista de compromissos"}
+            title={isToday ? "Atualizar compromissos de hoje" : "Atualizar lista de compromissos"}
             className="h-7 w-7 shrink-0 rounded-[6px] text-[var(--app-text-tertiary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
           >
             <RefreshCw
@@ -300,7 +306,7 @@ export function AgendaEventsPanel({
             />
           </Button>
         </div>
-        <div role="group" aria-label="Situação na lista" className="flex max-w-full gap-1 overflow-x-auto rounded-[8px] bg-[var(--app-surface-soft)] p-1 [scrollbar-width:none]">
+        {!isToday && <div role="group" aria-label="Situação na lista" className="flex max-w-full gap-1 overflow-x-auto rounded-[8px] bg-[var(--app-surface-soft)] p-1 [scrollbar-width:none]">
           {LIST_SEGMENTS.map((item) => (
             <button
               key={item.key}
@@ -318,7 +324,7 @@ export function AgendaEventsPanel({
               {item.label}
             </button>
           ))}
-        </div>
+        </div>}
       </header>
 
       {eventsQuery.isPending ? (
@@ -332,7 +338,7 @@ export function AgendaEventsPanel({
           onRetry={() => void eventsQuery.refetch()}
         />
       ) : events.length === 0 ? (
-        <EmptyNote>Nenhum compromisso encontrado para o período e os filtros selecionados.</EmptyNote>
+        <EmptyNote>{isToday ? "Nenhum compromisso para hoje com estes filtros." : "Nenhum compromisso encontrado para o período e os filtros selecionados."}</EmptyNote>
       ) : (
         <div className="text-[12px] font-light">
           {eventsQuery.isError && !eventsQuery.isFetchNextPageError ? (
@@ -351,20 +357,21 @@ export function AgendaEventsPanel({
             </div>
           ) : null}
 
-          <AgendaTableHeader className={ROW_COLUMNS}>
+          {!isToday && <AgendaTableHeader className={ROW_COLUMNS}>
             <span>Compromisso</span>
             <span className="text-right">Lead</span>
             <span className="text-right">Responsável</span>
             <span className="text-right">Quando</span>
             <span className="text-right">Situação</span>
-          </AgendaTableHeader>
-          <ol className="max-h-[560px] overflow-y-auto overscroll-contain">
+          </AgendaTableHeader>}
+          <ol className={cn("overflow-y-auto overscroll-contain", isToday ? "max-h-[420px]" : "max-h-[560px]")}>
             {events.map((event) => (
               <AgendaEventRow
                 key={event.id}
                 event={event}
                 reportTimezone={reportTimezone}
                 lifecycleNow={lifecycleNow}
+                compact={isToday}
               />
             ))}
           </ol>
@@ -402,10 +409,12 @@ function AgendaEventRow({
   event,
   reportTimezone,
   lifecycleNow,
+  compact,
 }: {
   event: ScheduleDashboardEvent;
   reportTimezone: string;
   lifecycleNow: number;
+  compact: boolean;
 }) {
   const presentation = getEventTypePresentation(event.event_type);
   const startDate = formatEventDate(event.start_time, reportTimezone);
@@ -413,7 +422,7 @@ function AgendaEventRow({
     ? getScheduleAllDayLastOccupiedInstant(event.start_time, event.end_time, reportTimezone)
     : null;
   const endDate = formatEventDate(occupiedEnd == null ? event.end_time : new Date(occupiedEnd).toISOString(), reportTimezone);
-  const displayStatus = getDisplayStatus(event, lifecycleNow);
+  const displayStatus = getDisplayStatus(event, lifecycleNow, reportTimezone);
   const statusPresentation = STATUS_PRESENTATION[displayStatus];
   const statusLabel = getStatusLabel(event, displayStatus);
   const timingLabel = getEventTimingLabel(event, startDate, endDate);
@@ -421,6 +430,30 @@ function AgendaEventRow({
     .filter((value): value is string => Boolean(value))
     .join(" · ");
   const leadLabel = event.lead_name || "Sem lead vinculado";
+
+  if (compact) {
+    return (
+      <li className="border-b border-[var(--app-border)] last:border-b-0">
+        <Link
+          href={`/agenda?event=${encodeURIComponent(event.id)}`}
+          aria-label={`Abrir ${presentation.label.toLowerCase()} ${event.title}`}
+          className="grid min-w-0 grid-cols-[54px_minmax(0,1fr)] gap-2 px-1 py-2.5 hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40 sm:gap-3"
+        >
+          <time className="pt-0.5 text-[12px] font-medium tabular-nums text-[var(--app-text-primary)]" dateTime={event.start_time} title={timingLabel}>
+            {event.is_all_day ? "Dia inteiro" : formatEventTime(event.start_time, reportTimezone)}
+          </time>
+          <span className="min-w-0 space-y-1">
+            <span className="block break-words text-[13px] font-medium text-[var(--app-text-primary)]">{event.title}</span>
+            <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+              <EventTypePill type={event.event_type} />
+              <span className="min-w-0 break-words text-[var(--app-text-secondary)]">{event.user_name}</span>
+              <span className={statusPresentation.className}>{statusLabel}</span>
+            </span>
+          </span>
+        </Link>
+      </li>
+    );
+  }
 
   return (
     <li className="border-b border-[var(--app-border)] last:border-b-0">

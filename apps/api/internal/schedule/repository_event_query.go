@@ -110,6 +110,8 @@ func scheduleEventsQueryWithOrder(whereClause string, leadJoin string, orderClau
 			v.recurrence_count,
 			case when v.is_masked then null else v.google_event_id end,
 			case when v.is_masked then null else v.google_sync_status end,
+			case when v.is_masked then null else v.google_sync_target end,
+			case when v.is_masked then null else v.google_task_id end,
 			case when v.is_masked then null else v.completed_by::text end,
 			v.completed_at,
 			case when v.is_masked then null else v.outcome end,
@@ -250,7 +252,7 @@ func leadVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder string, c
 func scanEvent(row scanner) (Event, error) {
 	var event Event
 	var userID, leadID, propertyID, createdBy, teamID, leadSourceSnapshot, description, location, recurrenceParentID, recurrenceRule, googleEventID, googleSyncStatus, completedBy pgtype.Text
-	var eventType pgtype.Text
+	var eventType, googleSyncTarget, googleTaskID pgtype.Text
 	var isAllDay pgtype.Bool
 	var outcome, outcomeNotes, performedBy, rescheduledFromID, rescheduledToID pgtype.Text
 	var reminderMinutes, recurrenceCount pgtype.Int4
@@ -286,6 +288,8 @@ func scanEvent(row scanner) (Event, error) {
 		&recurrenceCount,
 		&googleEventID,
 		&googleSyncStatus,
+		&googleSyncTarget,
+		&googleTaskID,
 		&completedBy,
 		&completedAt,
 		&outcome,
@@ -335,6 +339,8 @@ func scanEvent(row scanner) (Event, error) {
 	event.RecurrenceCount = intPtr(recurrenceCount)
 	event.GoogleEventID = textPtr(googleEventID)
 	event.GoogleSyncStatus = textPtr(googleSyncStatus)
+	event.GoogleSyncTarget = textPtr(googleSyncTarget)
+	event.GoogleTaskID = textPtr(googleTaskID)
 	event.CompletedBy = textPtr(completedBy)
 	event.CompletedAt = timePtr(completedAt)
 	event.Outcome = textPtr(outcome)

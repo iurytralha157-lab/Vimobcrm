@@ -1040,6 +1040,18 @@
       "sha256": "9647c26f7d798cbf6f65f27f30f0feb52a18cb330d48c0b79f7cbf611151277b"
     },
     {
+      "file": "20261104085409_add_google_tasks_outbound_foundation.sql",
+      "sha256": "3419efe2a46d3d20e94c93257ade4b987752c5c886842e9c4f1ed3ac13a5ae74"
+    },
+    {
+      "file": "20261104085443_add_google_tasks_fenced_delivery.sql",
+      "sha256": "18287c355b91035b752374ec55d1020a490d79ea5c8bb2845240522e1d68895f"
+    },
+    {
+      "file": "20261104093438_add_google_tasks_schedule_fk_index.sql",
+      "sha256": "fb4d69c08549f7441885f9838c99bfd96720eeb34ca22421db1980c1d545b835"
+    },
+    {
       "file": "20261104120000_add_marketing_connections.sql",
       "sha256": "22e10def23c54c9511be2551db94e39463abe76490dd93675ea4f2ab373852f1"
     },

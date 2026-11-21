@@ -501,6 +501,7 @@ export const scheduleDashboardDataSchema = z
     upcoming_events: z.array(scheduleDashboardUpcomingEventSchema).max(10),
     overdue_by_owner: z.array(scheduleDashboardOverdueOwnerSchema),
     performer_ranking: z.array(scheduleDashboardPerformerRankingSchema),
+    creator_ranking: z.array(scheduleDashboardTopPerformerSchema).optional(),
     data_quality: scheduleDashboardDataQualitySchema.optional(),
   })
   .passthrough()

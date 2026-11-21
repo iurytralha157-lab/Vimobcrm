@@ -1,31 +1,31 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "f7ba2f29883be5bca5186be9f5a800d7de4c9528fa7065d057ffd572a97043ab",
-  "surfaceInventoryDigestSha256": "df4ace41e058b6e0f2a33c37ff5f38306d45648c853ba9954c3c9f76ac1d2213",
+  "sourceDigestSha256": "9f76fd84c3d2503652c38da8e3be8a34b213c7e2131259c31913f9f385cf64cd",
+  "surfaceInventoryDigestSha256": "2e978a0ee0059e3e3d762be15b1b789fc62d75e0aceadf203267691587eb3305",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 691,
+    "filesScanned": 682,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
-    "filesWithFindings": 73,
-    "findings": 162,
-    "protectedReachableFilesWithFindings": 69,
-    "protectedReachableFindings": 158,
+    "filesWithFindings": 74,
+    "findings": 165,
+    "protectedReachableFilesWithFindings": 70,
+    "protectedReachableFindings": 161,
     "bySurfaceScope": {
-      "protected-only": 116,
+      "protected-only": 119,
       "protected-and-public": 42,
       "public-only": 2,
       "infrastructure": 2
     },
     "byPriority": {
-      "P1": 117,
+      "P1": 120,
       "P2": 27,
       "P3": 18
     },
     "byRule": {
       "heavy-shadow": {
-        "count": 11,
+        "count": 10,
         "guidance": "Usar shadow-none ou a sombra sutil dos pop-ups globais.",
         "label": "Sombra forte",
         "priority": "P1"
@@ -37,13 +37,13 @@
         "priority": "P2"
       },
       "oversized-radius": {
-        "count": 51,
+        "count": 54,
         "guidance": "Blocos usam 8px; controles 6px; microelementos 4px.",
         "label": "Raio acima de 8px",
         "priority": "P1"
       },
       "heavy-font": {
-        "count": 9,
+        "count": 10,
         "guidance": "Texto normal usa 300; títulos usam 400.",
         "label": "Tipografia pesada",
         "priority": "P1"
@@ -176,6 +176,14 @@
     },
     {
       "file": "components/features/properties/property-locations/LocationPanels.tsx",
+      "count": 3,
+      "score": 9,
+      "rules": {
+        "oversized-radius": 3
+      }
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaDashboard.tsx",
       "count": 3,
       "score": 9,
       "rules": {
@@ -349,14 +357,6 @@
     },
     {
       "file": "components/features/schedule/dashboard/AgendaDailyChart.tsx",
-      "count": 1,
-      "score": 4,
-      "rules": {
-        "heavy-shadow": 1
-      }
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaWeeklyChart.tsx",
       "count": 1,
       "score": 4,
       "rules": {
@@ -603,6 +603,14 @@
       }
     },
     {
+      "file": "components/features/schedule/dashboard/AgendaDashboard.tsx",
+      "count": 3,
+      "score": 9,
+      "rules": {
+        "oversized-radius": 3
+      }
+    },
+    {
       "file": "components/features/dashboard/LeadDistributionSection.tsx",
       "count": 4,
       "score": 8,
@@ -761,14 +769,6 @@
     },
     {
       "file": "components/features/schedule/dashboard/AgendaDailyChart.tsx",
-      "count": 1,
-      "score": 4,
-      "rules": {
-        "heavy-shadow": 1
-      }
-    },
-    {
-      "file": "components/features/schedule/dashboard/AgendaWeeklyChart.tsx",
       "count": 1,
       "score": 4,
       "rules": {
@@ -1840,8 +1840,17 @@
       "weight": 3
     },
     {
+      "file": "components/features/schedule/CalendarEventOverflow.tsx",
+      "line": 66,
+      "match": "font-semibold",
+      "priority": "P1",
+      "rule": "heavy-font",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
       "file": "components/features/schedule/CalendarView.tsx",
-      "line": 371,
+      "line": 370,
       "match": "bg-white",
       "priority": "P2",
       "rule": "hardcoded-surface",
@@ -1850,7 +1859,7 @@
     },
     {
       "file": "components/features/schedule/CalendarView.tsx",
-      "line": 799,
+      "line": 869,
       "match": "bg-white/90",
       "priority": "P2",
       "rule": "hardcoded-surface",
@@ -1859,25 +1868,43 @@
     },
     {
       "file": "components/features/schedule/dashboard/AgendaDailyChart.tsx",
-      "line": 83,
-      "match": "shadow-[0_8px_24px_rgba",
+      "line": 70,
+      "match": "shadow-lg",
       "priority": "P1",
       "rule": "heavy-shadow",
       "surfaceScope": "protected-only",
       "weight": 4
     },
     {
-      "file": "components/features/schedule/dashboard/AgendaWeeklyChart.tsx",
-      "line": 106,
-      "match": "shadow-[0_8px_24px_rgba",
+      "file": "components/features/schedule/dashboard/AgendaDashboard.tsx",
+      "line": 546,
+      "match": "rounded-[12px]",
       "priority": "P1",
-      "rule": "heavy-shadow",
+      "rule": "oversized-radius",
       "surfaceScope": "protected-only",
-      "weight": 4
+      "weight": 3
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaDashboard.tsx",
+      "line": 550,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaDashboard.tsx",
+      "line": 551,
+      "match": "rounded-[12px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
     },
     {
       "file": "components/features/settings/IntegrationsTab.tsx",
-      "line": 1360,
+      "line": 1362,
       "match": "font-semibold",
       "priority": "P1",
       "rule": "heavy-font",

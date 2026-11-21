@@ -67,6 +67,8 @@ export interface ScheduleEvent {
   recurrence_until?: string | null;
   recurrence_count?: number | null;
   google_event_id: string | null;
+  google_task_id?: string | null;
+  google_sync_target?: "calendar" | "tasks" | null;
   google_sync_status?: string | null;
   completed_by: string | null;
   completed_at: string | null;

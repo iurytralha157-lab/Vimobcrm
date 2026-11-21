@@ -104,8 +104,12 @@ export function EventAssigneesSection({
           </div>
         ) : allAssignees.length > 0 ? (
           allAssignees.map((assignee) => (
-            <div key={assignee.id} className="group relative">
-              <Avatar className="h-8 w-8" title={assignee.name}>
+            <div
+              key={assignee.id}
+              className={cn("group relative flex min-w-0 items-center", assignee.primary && "gap-2 rounded-md bg-[var(--app-surface-soft)] py-1 pl-1 pr-2.5")}
+              title={assignee.name}
+            >
+              <Avatar className="h-8 w-8 shrink-0" aria-hidden={assignee.primary || undefined}>
                 <AvatarImage
                   src={assignee.avatar_url || undefined}
                   alt={assignee.name}
@@ -119,12 +123,18 @@ export function EventAssigneesSection({
                     .toUpperCase()}
                 </AvatarFallback>
               </Avatar>
+              {assignee.primary && (
+                <div className="min-w-0 leading-tight">
+                  <p className="break-words text-xs font-medium text-[var(--app-text-primary)]">{assignee.name}</p>
+                  <span className="text-[10px] text-[var(--app-text-secondary)]">Principal</span>
+                </div>
+              )}
               {!locked && !assignee.primary && (
                 <button
                   type="button"
                   onClick={() => onRemoveAssignee(assignee.id)}
                   className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-destructive-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                  aria-label="Remover responsável"
+                  aria-label={`Remover responsável ${assignee.name}`}
                 >
                   <X size={8} strokeWidth={3} />
                 </button>

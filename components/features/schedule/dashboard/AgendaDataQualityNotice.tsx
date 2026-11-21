@@ -31,7 +31,7 @@ export function AgendaDataQualityNotice({ quality }: { quality?: ScheduleDashboa
                   <li>{quality.completed_without_result_time} realizados sem data real de desfecho.</li>
                 </ul>
                 <p>{quality.unknown_result_time_in_scope} finalizados sem data de desfecho no escopo dos filtros. Como a data é desconhecida, essa contagem não é atribuída ao período selecionado.</p>
-                <p>As contagens podem se sobrepor. O ranking considera responsáveis e participantes, não a autoria da execução.</p>
+                <p>As contagens podem se sobrepor. O ranking de agendamentos considera autores registrados que você pode visualizar.</p>
               </>
             ) : (
               <p>O serviço não informou a cobertura destes dados. Os indicadores não comprovam que o histórico esteja completo.</p>

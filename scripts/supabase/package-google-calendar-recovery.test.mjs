@@ -42,7 +42,9 @@ test('packages a legitimate external directory with matching file hashes and no 
     assert.equal(summary.secrets, 0);
     assert.equal(summary.remote_operations, 0);
     const inventory = JSON.parse(await readFile(path.join(output, 'inventory.json'), 'utf8'));
-    assert.equal(inventory.files.filter(item => item.destination.startsWith('functions/')).length, 9);
+    assert.equal(inventory.files.filter(item => item.destination.startsWith('functions/')).length, 13);
+    assert.equal(inventory.files.filter(item => item.destination.startsWith('database/')).length, 5);
+    assert.equal(inventory.database_prerequisite.rpc, 'public.google_calendar_claim_outbound_sync_jobs_v3(integer, text)');
     assert.ok(inventory.files.every(item => !/(^|\/)\.env|(^|\/)production-manifest\.json$/.test(item.destination)));
     for (const item of inventory.files) {
       const bytes = await readFile(path.join(output, item.destination));

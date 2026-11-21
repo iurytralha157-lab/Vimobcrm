@@ -8,6 +8,7 @@ import {
   type GoogleCalendarConnectionStatus,
 } from "@/lib/api/google-calendar";
 import { toast } from "sonner";
+import type { GoogleCalendarAuthorizationOptions } from "@/lib/validation/integrations";
 
 export type { GoogleCalendarConnectionStatus };
 
@@ -34,7 +35,7 @@ export function useGoogleCalendarStatus(options: { enabled?: boolean } = {}) {
   });
 }
 
-export function useConnectGoogleCalendar() {
+export function useConnectGoogleCalendar(options: GoogleCalendarAuthorizationOptions = {}) {
   const queryClient = useQueryClient();
   const { activeOrganization } = useAuth();
 
@@ -46,6 +47,7 @@ export function useConnectGoogleCalendar() {
       return googleCalendarAPI.getAuthUrl(
         activeOrganization.organizationId,
         buildGoogleCalendarReturnUrl(window.location.href),
+        options,
       );
     },
     onSuccess: (data) => {
@@ -54,7 +56,7 @@ export function useConnectGoogleCalendar() {
     },
     onError: (error) => {
       console.error("Error connecting Google Agenda:", error);
-      toast.error(`Erro ao conectar Google Agenda: ${getErrorMessage(error)}`);
+      toast.error(`${options.enableTasks ? "Erro ao autorizar Google Tasks" : "Erro ao conectar Google Agenda"}: ${getErrorMessage(error)}`);
     },
   });
 }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   apiScheduleCapabilitiesResponseSchema,
+  apiScheduleEventSchema,
   completeScheduleEventInputSchema,
   createScheduleEventInputSchema,
   rescheduleScheduleEventInputSchema,
@@ -28,6 +29,22 @@ test("rejects ambiguous timestamps and zero-duration new events", () => {
   assert.equal(createScheduleEventInputSchema.safeParse({ ...base, start_time: "2026-10-12" }).success, false);
   assert.equal(createScheduleEventInputSchema.safeParse({ ...base, end_time: base.start_time }).success, false);
   assert.equal(updateScheduleEventInputSchema.safeParse({ start_time: base.start_time, end_time: base.start_time }).success, false);
+});
+
+test("accepts optional server Google destinations without adding a writable provider selector", () => {
+  const event = {
+    id: "30000000-0000-4000-8000-000000000001", organization_id: "10000000-0000-4000-8000-000000000001",
+    user_id: "20000000-0000-4000-8000-000000000001", lead_id: null, property_id: null,
+    title: "Tarefa sintética", description: null, event_type: "task", start_time: "2026-11-04T12:00:00Z",
+    end_time: "2026-11-04T13:00:00Z", is_all_day: false, location: null, status: "scheduled",
+    reminder_minutes: null, google_event_id: null, completed_by: null, completed_at: null, created_at: null, updated_at: null,
+  };
+  assert.equal(apiScheduleEventSchema.safeParse(event).success, true);
+  assert.equal(apiScheduleEventSchema.parse({ ...event, google_sync_target: "tasks", google_task_id: "synthetic-task", google_sync_status: "pending" }).google_sync_target, "tasks");
+  assert.equal(apiScheduleEventSchema.safeParse({ ...event, google_sync_target: "unsupported" }).success, false);
+  assert.equal(apiScheduleEventSchema.safeParse({ ...event, google_task_id: [] }).success, false);
+  assert.equal(createScheduleEventInputSchema.safeParse({ title: event.title, start_time: event.start_time, end_time: event.end_time, google_sync_target: "tasks" }).success, false);
+  assert.equal(updateScheduleEventInputSchema.safeParse({ title: event.title, google_task_id: "synthetic-task" }).success, false);
 });
 
 test("preserves command identity and version guard while rejecting malformed commands", () => {

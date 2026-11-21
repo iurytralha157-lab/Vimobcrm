@@ -49,6 +49,8 @@ type Event struct {
 	RecurrenceCount    *int         `json:"recurrence_count"`
 	GoogleEventID      *string      `json:"google_event_id"`
 	GoogleSyncStatus   *string      `json:"google_sync_status"`
+	GoogleSyncTarget   *string      `json:"google_sync_target"`
+	GoogleTaskID       *string      `json:"google_task_id"`
 	CompletedBy        *string      `json:"completed_by"`
 	CompletedAt        *time.Time   `json:"completed_at"`
 	Outcome            *string      `json:"outcome"`

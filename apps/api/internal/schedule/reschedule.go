@@ -291,6 +291,8 @@ const enqueueRescheduleGoogleSyncSQL = `
 			$2::uuid,
 			'push_delete',
 			jsonb_build_object(
+				'protocol_version', 2,
+				'target', 'calendar',
 				'event_id', $2::text,
 				'owner_user_id', $5::text,
 				'connection_id', connection.id::text,
@@ -309,7 +311,7 @@ const enqueueRescheduleGoogleSyncSQL = `
 			$1::uuid,
 			$3::uuid,
 			'push_upsert',
-			jsonb_build_object('event_id', $3::text, 'owner_user_id', $5::text),
+			jsonb_build_object('protocol_version', 2, 'target', 'calendar', 'event_id', $3::text, 'owner_user_id', $5::text),
 			$4::uuid
 		from active_connection
 		returning schedule_event_id
@@ -320,6 +322,8 @@ const enqueueRescheduleGoogleSyncSQL = `
 				else 'not_connected'
 			end,
 			google_sync_error = null,
+			google_sync_target = case when exists (select 1 from inserted_jobs job where job.schedule_event_id = event.id)
+				then 'calendar' else null end,
 			updated_at = now()
 		where event.organization_id = $1::uuid
 		  and event.id = any(array[$2::uuid, $3::uuid])

@@ -10210,6 +10210,17 @@ components:
             upcoming_events: {type: array, description: Kept for compatibility; always empty. Use the events endpoint with status=upcoming., items: {type: object, additionalProperties: true}}
             overdue_by_owner: {type: array, items: {type: object, additionalProperties: true}}
             performer_ranking: {type: array, items: {type: object, additionalProperties: true}}
+            creator_ranking:
+              type: array
+              description: Additive. Counts by recorded creator of the filtered events, restricted to the caller's visible roster.
+              items:
+                type: object
+                required: [user_id, name, avatar_url, total]
+                properties:
+                  user_id: {type: string, format: uuid}
+                  name: {type: string}
+                  avatar_url: {type: [string, 'null']}
+                  total: {type: integer, minimum: 1}
             top_performers: {type: array, description: Kept for compatibility; always empty., items: {type: object, additionalProperties: true}}
             data_quality: {type: object, additionalProperties: true}
     ScheduleDashboardEventsResponse:

@@ -1,7 +1,14 @@
 import { FEATURES } from "@/config/constants";
 import { VimobAPIError, vimobAPIRequest } from "@/lib/api/vimob-client";
+import {
+  googleCalendarAuthorizationOptionsSchema,
+  googleCalendarTasksStatusSchema,
+  type GoogleCalendarAuthorizationOptions,
+  type GoogleCalendarTasksConnection,
+} from "@/lib/validation/integrations";
+import { parseDomainInput, validateDomainResponse } from "@/lib/validation/common";
 
-export interface GoogleCalendarConnectionStatus {
+export interface GoogleCalendarConnectionStatus extends GoogleCalendarTasksConnection {
   id: string;
   organization_id: string;
   user_id: string;
@@ -24,6 +31,7 @@ export interface GoogleCalendarStatus {
   connection: GoogleCalendarConnectionStatus | null;
   can_connect: boolean;
   can_use_schedule?: boolean;
+  tasks_available?: boolean;
   connect_restriction?:
     | "GOOGLE_CALENDAR_PILOT_ONLY"
     | "GOOGLE_CALENDAR_CONNECT_DISABLED"
@@ -101,19 +109,29 @@ export const googleCalendarAPI = {
       organizationId,
       { action: "status" },
     );
+    const tasks = validateDomainResponse(
+      googleCalendarTasksStatusSchema, data, "integrations.google-calendar.tasks-status",
+    );
     return {
-      connection: data.connection,
+      connection: data.connection ? { ...data.connection, ...tasks.connection } : data.connection,
       can_connect: data.can_connect === true,
       can_use_schedule: data.can_use_schedule,
       connect_restriction: data.connect_restriction,
+      tasks_available: tasks.tasks_available,
     };
   },
 
-  getAuthUrl(organizationId: string, returnUrl: string) {
+  getAuthUrl(organizationId: string, returnUrl: string, options: GoogleCalendarAuthorizationOptions = {}) {
+    const input = parseDomainInput(
+      googleCalendarAuthorizationOptionsSchema, options, "integrations.google-calendar.authorize",
+    );
     return invokeGoogleCalendar<{ auth_url: string }>(
       GOOGLE_CALENDAR_OAUTH_PROXY_PATH,
       organizationId,
-      { action: "get_auth_url", return_url: returnUrl },
+      {
+        action: "get_auth_url", return_url: returnUrl,
+        ...(input.enableTasks === true ? { enable_tasks: true } : {}),
+      },
     );
   },
 

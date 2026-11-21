@@ -641,6 +641,7 @@ func TestScheduleDashboardResponseContract(t *testing.T) {
 		UpcomingEvents:   []DashboardUpcomingEvent{},
 		OverdueByOwner:   []DashboardOverdueOwner{},
 		PerformerRanking: []DashboardPerformerRanking{},
+		CreatorRanking:   []DashboardTopPerformer{},
 		TopPerformers:    []DashboardTopPerformer{},
 	}
 	payload, err := json.Marshal(Envelope[DashboardReport]{Data: report})
@@ -653,7 +654,7 @@ func TestScheduleDashboardResponseContract(t *testing.T) {
 		`"kpis"`, `"eligible"`, `"appointment_eligible"`, `"open"`, `"overdue"`,
 		`"upcoming"`, `"completion_rate"`, `"no_show_rate"`, `"daily"`, `"hourly"`, `"weekly"`, `"by_type"`, `"by_source"`,
 		`"by_outcome"`, `"upcoming_events"`, `"overdue_by_owner"`, `"hour_distribution"`,
-		`"performer_ranking"`, `"top_performers"`,
+		`"performer_ranking"`, `"creator_ranking"`, `"top_performers"`,
 	} {
 		if !strings.Contains(serialized, key) {
 			t.Fatalf("dashboard response missing %s: %s", key, serialized)
@@ -713,6 +714,9 @@ func TestScheduleDashboardNormalizesEmptyCollections(t *testing.T) {
 	report.normalizeCollections()
 	if report.Daily == nil || report.Hourly == nil || report.Weekly == nil {
 		t.Fatal("dashboard time-series collections must normalize to empty arrays")
+	}
+	if report.CreatorRanking == nil {
+		t.Fatal("dashboard creator ranking must normalize to an empty array")
 	}
 
 	page := DashboardEventsPage{}

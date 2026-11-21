@@ -9,7 +9,13 @@ const manifestPath = path.join(functionsRoot, "production-manifest.json");
 const verifierPath = path.join(repositoryRoot, "scripts", "supabase", "verify-edge-functions.mjs");
 const releaseSlugs = ["google-calendar-oauth", "google-calendar-sync"];
 const legacySlug = "google-calendar-auth";
-const outboundClaimMigration = "supabase/migrations/20261012212128_harden_google_calendar_outbound_protocol.sql";
+const outboundMigrations = [
+  "supabase/migrations/20261012212128_harden_google_calendar_outbound_protocol.sql",
+  "supabase/migrations/20261013000127_harden_google_calendar_activation_status_and_export.sql",
+  "supabase/migrations/20261104085409_add_google_tasks_outbound_foundation.sql",
+  "supabase/migrations/20261104085443_add_google_tasks_fenced_delivery.sql",
+  "supabase/migrations/20261104093438_add_google_tasks_schedule_fk_index.sql",
+];
 
 function parseArguments(args) {
   let runtimeSlugs = null;
@@ -96,8 +102,10 @@ async function localDependencies(filePath, seen = new Set()) {
 
 async function buildPlan(runtimeSlugs) {
   const manifestCheck = verifyManifest();
-  if (!(await isFile(path.join(repositoryRoot, outboundClaimMigration)))) {
-    throw new Error(`Pre-requisito de banco ausente: ${outboundClaimMigration}`);
+  for (const migration of outboundMigrations) {
+    if (!(await isFile(path.join(repositoryRoot, migration)))) {
+      throw new Error(`Pre-requisito de banco ausente: ${migration}`);
+    }
   }
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   const bySlug = new Map(manifest.functions.map((entry) => [entry.slug, entry]));
@@ -145,8 +153,9 @@ async function buildPlan(runtimeSlugs) {
       google_cloud_oauth_audience_verified: false,
     },
     database_prerequisite: {
-      migration: outboundClaimMigration,
-      rpc: "public.google_calendar_claim_outbound_sync_jobs_v2(integer, text)",
+      migrations: outboundMigrations,
+      rpc: "public.google_calendar_claim_outbound_sync_jobs_v3(integer, text)",
+      tasksForeignKeyIndex: "public.google_tasks_links_schedule_event_fk_idx",
       old_edge_workers_must_be_stopped_and_drained: true,
       old_go_producers_compatible: true,
       runtime_verified: false,
@@ -177,7 +186,7 @@ function printPlan(plan) {
   console.log(`Diretorios: ${plan.release_directories.map((item) => item.path).join(", ")}`);
   console.log(`Dependencias _shared: ${plan.shared_files.join(", ")}`);
   console.log(`Acesso no Vimob: ${plan.access_policy.vimob}. Configure ${plan.access_policy.required_edge_env.join(" e ")}; sem essas variaveis novas conexoes ficam bloqueadas. Confirme o publico e a verificacao do OAuth no Google Cloud.`);
-  console.log(`Pre-requisito do worker: ${plan.database_prerequisite.migration} (${plan.database_prerequisite.rpc}), aplicar somente apos reconciliacao do banco.`);
+  console.log(`Pre-requisitos do worker (${plan.database_prerequisite.rpc}): ${plan.database_prerequisite.migrations.join(", ")}. Confirmar catalogo antes de aplicar qualquer delta.`);
   console.log(`Fora do fluxo de mao unica: ${plan.inbound_webhook.path}, ${plan.legacy_tombstone.path}`);
   if (plan.observed_runtime_slugs) {
     console.log(`Rotas observadas a preservar: ${plan.observed_runtime_slugs.join(", ")}`);

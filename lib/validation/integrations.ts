@@ -7,6 +7,24 @@ import {
   propertyPublicationObservedStateSchema,
 } from './property-publications'
 
+export const googleCalendarAuthorizationOptionsSchema = z.object({
+  enableTasks: z.boolean().optional(),
+}).strict()
+
+export const googleCalendarTasksConnectionSchema = z.object({
+  tasks_authorized: z.boolean().optional(),
+  routing_v2: z.boolean().optional(),
+  tasks_list_id: z.string().min(1).max(2_048).nullable().optional(),
+})
+
+export const googleCalendarTasksStatusSchema = z.object({
+  connection: googleCalendarTasksConnectionSchema.nullable().optional(),
+  tasks_available: z.boolean().optional(),
+})
+
+export type GoogleCalendarAuthorizationOptions = z.infer<typeof googleCalendarAuthorizationOptionsSchema>
+export type GoogleCalendarTasksConnection = z.infer<typeof googleCalendarTasksConnectionSchema>
+
 export const googleAnalyticsMeasurementIdSchema = z
   .string()
   .trim()

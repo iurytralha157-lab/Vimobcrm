@@ -55,7 +55,7 @@ export function EventSheetActions({
   onSubmit: () => void;
 }) {
   return (
-    <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[var(--app-border)] px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 sm:border-t-0 sm:px-5 sm:py-4">
+    <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[var(--app-border)] bg-[var(--app-surface-solid)] px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 sm:px-6 sm:py-3">
       {canManageSchedule && isExisting && !isMasked && canDelete ? (
         <AlertDialog>
           <AlertDialogTrigger asChild>

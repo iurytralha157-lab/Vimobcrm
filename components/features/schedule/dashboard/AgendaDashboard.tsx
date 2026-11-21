@@ -3,13 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
-  BarChart3,
   CalendarDays,
-  CalendarSearch,
   LayoutGrid,
   LoaderCircle,
   RefreshCw,
-  UsersRound,
   WifiOff,
   type LucideIcon,
 } from "lucide-react";
@@ -20,7 +17,6 @@ import {
   useScheduleDashboard,
   useScheduleDashboardQueryScope,
 } from "@/hooks/schedule/use-schedule-dashboard";
-import { useScheduleDashboardEvents } from "@/hooks/schedule/use-schedule-dashboard-events";
 import { useScheduleUsers } from "@/hooks/use-schedule-users";
 import { useTeams } from "@/hooks/use-teams";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
@@ -34,16 +30,13 @@ import {
 } from "@/lib/validation/schedule-dashboard";
 
 import { AgendaDashboardFilters } from "./AgendaDashboardFilters";
-import { AgendaAppointmentsTab } from "./AgendaAppointmentsTab";
+import { AgendaEventsPanel } from "./AgendaEventsPanel";
 import { AgendaOverviewTab } from "./AgendaOverviewTab";
-import { AgendaResultsTab } from "./AgendaResultsTab";
-import { AgendaTeamTab } from "./AgendaTeamTab";
 import {
   AGENDA_DASHBOARD_FALLBACK_TIME_ZONE,
   getAgendaDashboardPresetRange,
 } from "./agenda-dashboard-date-range";
-import { getPreviousPeriod } from "./agenda-dashboard-metrics";
-import { getUpcomingWindow, type AgendaDashboardTab } from "./agenda-dashboard-ui";
+import type { AgendaDashboardTab } from "./agenda-dashboard-ui";
 
 const URL_KEYS = {
   dateFrom: "ad_from",
@@ -60,8 +53,6 @@ const TAB_URL_KEY = "ad_tab";
 const AGENDA_TABS: Array<{ key: AgendaDashboardTab; label: string; icon: LucideIcon }> = [
   { key: "visao", label: "Visão geral", icon: LayoutGrid },
   { key: "compromissos", label: "Compromissos", icon: CalendarDays },
-  { key: "equipe", label: "Equipe", icon: UsersRound },
-  { key: "resultados", label: "Resultados", icon: BarChart3 },
 ];
 
 function readTabFromUrl(fallback: AgendaDashboardTab) {
@@ -202,20 +193,6 @@ export function AgendaDashboard({
     () => normalizeOperationalFilters(controlledFilters ?? internalFilters),
     [controlledFilters, internalFilters],
   );
-  const effectiveFiltersKey = useMemo(
-    () =>
-      [
-        effectiveFilters.dateFrom,
-        effectiveFilters.dateTo,
-        effectiveFilters.dateBasis,
-        effectiveFilters.teamId ?? "",
-        effectiveFilters.userId ?? "",
-        effectiveFilters.source ?? "",
-        effectiveFilters.eventType ?? "",
-        effectiveFilters.status ?? "",
-      ].join("|"),
-    [effectiveFilters],
-  );
   const [urlReady, setUrlReady] = useState(
     () => !syncFiltersToUrl || isControlled,
   );
@@ -326,47 +303,7 @@ export function AgendaDashboard({
   const teamsQuery = useTeams({ catalog: true, enabled: urlReady && canViewTeams });
   const usersQuery = useScheduleUsers({ enabled: urlReady });
   const data = dashboardQuery.data;
-  const reportReady = Boolean(data) && !dashboardQuery.isPlaceholderData;
   const reportTimezone = data?.report_timezone ?? AGENDA_DASHBOARD_FALLBACK_TIME_ZONE;
-
-  // Same filters over the same number of days just before the period; only used for the deltas.
-  const previousPeriod = getPreviousPeriod(effectiveFilters.dateFrom, effectiveFilters.dateTo);
-  const previousQuery = useScheduleDashboard(
-    { ...effectiveFilters, ...(previousPeriod ?? {}) },
-    { enabled: reportReady && previousPeriod !== null },
-  );
-  const previous = previousPeriod && !previousQuery.isPlaceholderData ? previousQuery.data : undefined;
-  const deltaTitle = previousPeriod
-    ? `Comparado a ${formatShortDate(previousPeriod.dateFrom)} a ${formatShortDate(previousPeriod.dateTo)}`
-    : undefined;
-
-  // What comes next does not depend on the selected period, which may well be in the past.
-  // The report's counters move as events start, which keeps these reads current.
-  const upcomingWindow = useMemo(() => getUpcomingWindow(reportTimezone), [reportTimezone]);
-  const upcomingFilters = useMemo<ScheduleDashboardQuery>(
-    () => ({
-      dateFrom: upcomingWindow.today,
-      dateTo: upcomingWindow.next30,
-      dateBasis: "start_time",
-      status: "upcoming",
-      teamId: effectiveFilters.teamId,
-      userId: effectiveFilters.userId,
-      source: effectiveFilters.source,
-      eventType: effectiveFilters.eventType,
-    }),
-    [effectiveFilters.eventType, effectiveFilters.source, effectiveFilters.teamId, effectiveFilters.userId, upcomingWindow],
-  );
-  const upcomingOptions = { enabled: reportReady, lifecycleRevision: data?.kpis.upcoming ?? 0 };
-  const upcomingQuery = useScheduleDashboardEvents(upcomingFilters, upcomingOptions);
-  const next7DaysQuery = useScheduleDashboardEvents({ ...upcomingFilters, dateTo: upcomingWindow.next7 }, upcomingOptions);
-  const todayQuery = useScheduleDashboardEvents({ ...upcomingFilters, dateTo: upcomingWindow.today }, upcomingOptions);
-  const upcoming = {
-    events: upcomingQuery.data?.pages[0]?.items ?? [],
-    next7Days: next7DaysQuery.data?.pages[0]?.total,
-    today: todayQuery.data?.pages[0]?.total,
-    isLoading: upcomingQuery.isPending,
-    isError: upcomingQuery.isError,
-  };
 
   useEffect(() => {
     if (
@@ -451,19 +388,6 @@ export function AgendaDashboard({
     [usersQuery.data],
   );
 
-  const hasActivityData = Boolean(
-    data &&
-    (data.kpis.total > 0 ||
-      data.kpis.completed > 0 ||
-      data.kpis.cancelled > 0 ||
-      data.kpis.no_show > 0 ||
-      data.kpis.open > 0 ||
-      data.kpis.overdue > 0 ||
-      data.kpis.upcoming > 0 ||
-      data.by_type.some((item) => item.count > 0) ||
-      data.by_source.some((item) => item.count > 0) ||
-      data.performer_ranking.length > 0),
-  );
   const selectStatus = useCallback(
     (status: ScheduleDashboardStatus) => {
       const nextStatus = effectiveFilters.status === status ? undefined : status;
@@ -486,32 +410,10 @@ export function AgendaDashboard({
         ...effectiveFilters,
         eventType: effectiveFilters.eventType === eventType ? undefined : eventType,
       });
-    },
-    [applyFilters, effectiveFilters],
-  );
-
-  const selectOverdueOwner = useCallback(
-    (userId: string) => {
-      applyFilters({
-        ...effectiveFilters,
-        dateBasis: "start_time",
-        status: "overdue",
-        userId,
-      });
       setActiveTab("compromissos");
     },
     [applyFilters, effectiveFilters],
   );
-
-  const openNext7Days = useCallback(() => {
-    applyFilters({
-      ...effectiveFilters,
-      dateFrom: upcomingWindow.today,
-      dateTo: upcomingWindow.next7,
-      dateBasis: "start_time",
-      status: "upcoming",
-    });
-  }, [applyFilters, effectiveFilters, upcomingWindow]);
 
   return (
     <section
@@ -558,48 +460,22 @@ export function AgendaDashboard({
             <AgendaDashboardTransitionNotice />
           ) : null}
 
-          {!hasActivityData && upcoming.events.length === 0 ? (
-            <AgendaDashboardEmpty />
-          ) : activeTab === "compromissos" ? (
-            <AgendaAppointmentsTab
-              data={data}
-              previous={previous}
-              deltaTitle={deltaTitle}
+          {activeTab === "compromissos" ? (
+            <AgendaEventsPanel
               filters={effectiveFilters}
-              eventsEnabled={!dashboardQuery.isPlaceholderData}
-              lifecycleRevision={
-                effectiveFilters.status === "overdue" ||
-                effectiveFilters.status === "upcoming"
-                  ? data.kpis.total
-                  : 0
-              }
-              upcoming={upcoming}
-              onTypeSelect={selectEventType}
-              onOpenNext7Days={openNext7Days}
-            />
-          ) : activeTab === "equipe" ? (
-            <AgendaTeamTab
-              data={data}
-              resultsKey={effectiveFiltersKey}
-              onSelectOverdueOwner={selectOverdueOwner}
-            />
-          ) : activeTab === "resultados" ? (
-            <AgendaResultsTab
-              data={data}
-              previous={previous}
-              deltaTitle={deltaTitle}
-              activeStatus={effectiveFilters.status}
-              onStatusSelect={selectStatus}
+              period={data.period}
+              reportTimezone={data.report_timezone}
+              enabled={!dashboardQuery.isPlaceholderData}
+              lifecycleRevision={effectiveFilters.status === "upcoming" ? data.kpis.total : 0}
+              overdueRevision={data.kpis.overdue}
             />
           ) : (
             <AgendaOverviewTab
               data={data}
-              previous={previous}
-              deltaTitle={deltaTitle}
-              upcoming={upcoming}
-              activeStatus={effectiveFilters.status}
+              filters={effectiveFilters}
+              eventsEnabled={!dashboardQuery.isPlaceholderData}
               onOpenCompromissos={() => setActiveTab("compromissos")}
-              onOpenResultados={() => setActiveTab("resultados")}
+              onTypeSelect={selectEventType}
               onStatusSelect={selectStatus}
             />
           )}
@@ -607,11 +483,6 @@ export function AgendaDashboard({
       ) : null}
     </section>
   );
-}
-
-function formatShortDate(value: string) {
-  const [, month, day] = value.split("-");
-  return `${day}/${month}`;
 }
 
 function AgendaTabs({
@@ -670,26 +541,15 @@ function AgendaFreshness({ updatedAt, isFetching }: { updatedAt?: number; isFetc
 function AgendaDashboardLoading() {
   return (
     <div aria-label="Carregando dashboard da agenda" className="space-y-3">
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
-        {Array.from({ length: 6 }, (_, index) => (
-          <Skeleton key={index} className="h-[112px] rounded-[8px]" />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {Array.from({ length: 4 }, (_, index) => (
+          <Skeleton key={index} className="h-[88px] rounded-[12px]" />
         ))}
       </div>
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
-        {Array.from({ length: 6 }, (_, index) => (
-          <Skeleton key={index} className="h-[64px] rounded-[8px]" />
-        ))}
+      <div className="grid grid-cols-1 gap-3 @[920px]/agenda-dashboard:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+        <Skeleton className="h-[340px] rounded-[12px]" />
+        <Skeleton className="h-[340px] rounded-[12px]" />
       </div>
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-12">
-        <Skeleton className="h-[360px] rounded-[8px] xl:col-span-8" />
-        <Skeleton className="h-[360px] rounded-[8px] xl:col-span-4" />
-      </div>
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-        {Array.from({ length: 3 }, (_, index) => (
-          <Skeleton key={index} className="h-[440px] rounded-[8px]" />
-        ))}
-      </div>
-      <Skeleton className="h-[280px] rounded-[8px]" />
     </div>
   );
 }
@@ -764,23 +624,6 @@ function AgendaDashboardError({
         <RefreshCw className="h-3.5 w-3.5" />
         Tentar novamente
       </Button>
-    </div>
-  );
-}
-
-function AgendaDashboardEmpty() {
-  return (
-    <div className="flex min-h-[280px] flex-col items-center justify-center rounded-[8px] bg-[var(--app-surface-solid)] px-6 py-10 text-center">
-      <span className="flex h-10 w-10 items-center justify-center rounded-[8px] bg-primary/10 text-primary">
-        <CalendarSearch className="h-5 w-5" aria-hidden="true" />
-      </span>
-      <h2 className="mt-3 text-[13px] font-medium text-[var(--app-text-primary)]">
-        Nenhum agendamento encontrado
-      </h2>
-      <p className="mt-1 max-w-md text-[11px] font-light text-[var(--app-text-tertiary)]">
-        Ajuste o período ou remova algum dos demais filtros para ampliar a
-        busca.
-      </p>
     </div>
   );
 }

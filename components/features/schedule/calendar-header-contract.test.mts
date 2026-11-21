@@ -19,8 +19,9 @@ test("keeps compact weekly and monthly day headers fixed as full-width soft stri
   );
   assert.match(
     calendarSource,
-    /aria-hidden="true"[\s\S]{0,120}h-9 w-16 flex-shrink-0 border-r/,
+    /aria-hidden="true"[\s\S]{0,120}h-9 w-11 flex-shrink-0 border-r/,
   );
+  assert.equal(calendarSource.match(/w-11 flex-shrink-0 border-r/g)?.length, 3);
   assert.match(
     calendarSource,
     /data-calendar-header="month"[\s\S]{0,140}schedule-calendar-days-header sticky top-0 z-20 grid h-8 shrink-0 grid-cols-7/,

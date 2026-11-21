@@ -20,11 +20,16 @@ const files = [
   "hooks/schedule/schedule-query-refresh.test.ts",
   "lib/validation/schedule.test.ts", "lib/validation/schedule-dashboard.test.ts",
   "lib/api/schedule-pagination.test.ts", "contexts/schedule-realtime-refresh.test.ts",
-  "lib/api/schedule-errors.test.ts",
+  "lib/api/schedule-errors.test.ts", "lib/api/google-calendar.runtime.test.mjs",
   "supabase/functions/_shared/google-calendar-event.test.ts",
   "supabase/functions/_shared/google-calendar-pilot.test.ts",
   "supabase/functions/_shared/google-calendar-delivery.test.ts",
   "supabase/functions/_shared/google-calendar-lifecycle.test.ts",
+  "supabase/functions/_shared/google-calendar-oauth-token.test.ts",
+  "supabase/functions/_shared/google-tasks-transport.test.ts",
+  "supabase/functions/_shared/google-tasks-runtime.test.ts",
+  "supabase/functions/_shared/google-tasks-delivery.test.ts",
+  "supabase/functions/_shared/google-tasks-oauth.test.ts",
   "supabase/functions/evolution-go-webhook/notification-receipt.test.ts",
 ].sort();
 console.log(`Agenda: ${files.length} focused test files (no services, OAuth or production writes).`);

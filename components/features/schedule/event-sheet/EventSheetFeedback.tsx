@@ -1,15 +1,18 @@
-import { AlertTriangle, CheckCircle2, Lock, UserRound } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, Lock, UserRound } from "lucide-react";
+import Link from "next/link";
 import { AgendaRow } from "@/components/features/schedule/event-sheet/EventSheetPrimitives";
 import type { ScheduleOutcome } from "@/hooks/use-schedule-events";
 import { getScheduleOutcomeLabel } from "@/lib/schedule-outcome";
 import { cn } from "@/lib/utils";
 import { formatScheduleTimestamp } from "@/components/features/schedule/event-sheet/model";
+import { getGoogleSyncFeedback } from "@/components/features/schedule/google-sync-presentation";
 
 export function EventSheetFeedback({
   isCompleted,
   isMasked,
   status,
   googleSyncStatus,
+  googleSyncTarget,
   outcome,
   outcomeNotes,
   performedByName,
@@ -21,6 +24,7 @@ export function EventSheetFeedback({
   isMasked: boolean;
   status?: string | null;
   googleSyncStatus?: string | null;
+  googleSyncTarget?: "calendar" | "tasks" | null;
   outcome?: ScheduleOutcome | null;
   outcomeNotes?: string | null;
   performedByName?: string | null;
@@ -28,17 +32,21 @@ export function EventSheetFeedback({
   attendanceOutcome: boolean;
   timeZone: string;
 }) {
+  const googleFeedback = getGoogleSyncFeedback({ target: googleSyncTarget, status: googleSyncStatus, isMasked });
   return (
     <>
-      {!isMasked && (googleSyncStatus === "conflict" || googleSyncStatus === "error") && (
-        <AgendaRow icon={<AlertTriangle size={18} />} align="start">
-          <div role="alert" className="rounded-[6px] bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-amber-800 dark:text-amber-200">
-            <span className="font-medium">Envio ao Google Agenda precisa de atenção</span>
-            <p>
-              O último envio não foi concluído. Confira a conexão do Google Agenda
-              e salve o compromisso no Vimob para tentar novamente. Se o aviso
-              continuar, peça uma revisão.
-            </p>
+      {googleFeedback && (
+        <AgendaRow icon={googleFeedback.tone === "warning" ? <AlertTriangle size={18} /> : googleFeedback.tone === "pending" ? <Clock size={18} /> : <CheckCircle2 size={18} />} align="start">
+          <div role={googleFeedback.tone === "warning" ? "alert" : "status"} className={cn(
+            "rounded-[6px] px-3 py-2 text-[12px] leading-5",
+            googleFeedback.tone === "warning" ? "bg-amber-500/10 text-amber-800 dark:text-amber-200"
+              : "bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]",
+          )}>
+            <span className="font-medium">{googleFeedback.title}</span>
+            <p>{googleFeedback.description}</p>
+            {googleFeedback.requiresConnection && (
+              <Link className="mt-1 inline-block font-medium underline" href="/settings?tab=integrations&integration=google-calendar">Abrir integração Google</Link>
+            )}
           </div>
         </AgendaRow>
       )}

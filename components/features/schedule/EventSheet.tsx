@@ -985,7 +985,7 @@ export function EventSheet({
             onClose={() => handleSheetOpenChange(false)}
           />
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:px-8 sm:pb-2 sm:pt-0">
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-2 sm:px-6 sm:pb-3">
             {!draftReady && (
               <div role="status" className="mb-3 rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2 text-[12px]">
                 {scheduleCapabilitiesQuery.isError || scheduleCapabilitiesQuery.isSuccess ? (
@@ -1003,6 +1003,7 @@ export function EventSheet({
               isMasked={isMasked}
               status={event?.status}
               googleSyncStatus={event?.google_sync_status}
+              googleSyncTarget={event?.google_sync_target}
               outcome={event?.outcome}
               outcomeNotes={event?.outcome_notes}
               performedByName={event ? getSchedulePerformerName(event) : null}
@@ -1035,13 +1036,6 @@ export function EventSheet({
               </div>
             )}
 
-            <EventLocationSection
-              locked={draftLocked}
-              isMasked={isMasked}
-              location={location}
-              onLocationChange={setLocation}
-            />
-
             <EventAssigneesSection
               isMasked={isMasked}
               locked={draftLocked}
@@ -1073,6 +1067,13 @@ export function EventSheet({
               onPrimaryUserChange={setPrimaryUserId}
             />
 
+            <div className="my-2 border-t border-[var(--app-border)]" />
+            <EventLocationSection
+              locked={draftLocked}
+              isMasked={isMasked}
+              location={location}
+              onLocationChange={setLocation}
+            />
             <EventVisibilitySection
               locked={draftLocked}
               visibility={visibility}

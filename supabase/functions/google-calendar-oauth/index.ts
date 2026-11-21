@@ -137,13 +137,16 @@ Deno.serve(async (req) => {
       if (!gate.allowed) {
         return jsonResponse({ success: false, error: connectGateMessage(gate), code: gate.restriction }, 403);
       }
+      const existing = await getConnectionForUser(profile.id, profile.organization_id, { requireSyncEnabled: false });
+      const enableTasks = body.enable_tasks === true || existing?.routing_v2 === true;
       const state = await createOAuthState({
         userId: profile.id,
         organizationId: profile.organization_id,
         returnUrl: body.return_url || body.returnUrl || null,
+        enableTasks,
       });
 
-      return jsonResponse({ success: true, auth_url: buildGoogleAuthUrl(state) });
+      return jsonResponse({ success: true, auth_url: buildGoogleAuthUrl(state, enableTasks) });
     }
 
     if (action === "status") {
@@ -154,6 +157,7 @@ Deno.serve(async (req) => {
         success: true,
         can_connect: capability.allowed && gate.allowed,
         can_use_schedule: capability.allowed,
+        tasks_available: true,
         connect_restriction: !capability.allowed
           ? "SCHEDULE_ACCESS_REQUIRED"
           : gate.restriction,
@@ -167,6 +171,9 @@ Deno.serve(async (req) => {
           calendar_summary: connection.calendar_summary,
           sync_enabled: connection.sync_enabled,
           sync_status: connection.sync_status,
+          tasks_authorized: connection.tasks_authorized === true,
+          routing_v2: connection.routing_v2 === true,
+          tasks_list_id: connection.tasks_list_id || null,
           connected_at: connection.connected_at,
           last_synced_at: connection.last_synced_at,
           watch_expires_at: connection.watch_expires_at,

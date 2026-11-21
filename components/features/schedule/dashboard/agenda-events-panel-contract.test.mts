@@ -35,7 +35,7 @@ const backendRealtimeBusPath = new URL(
 test("painel lista os agendamentos do recorte com paginação interna", async () => {
   const source = await readFile(panelPath, "utf8");
 
-  assert.match(source, />\s*Lista de compromissos\s*</);
+  assert.match(source, /"Compromissos de hoje" : "Lista de compromissos"/);
   assert.doesNotMatch(source, /Próximos agendamentos/);
   assert.match(
     source,
@@ -49,7 +49,7 @@ test("painel lista os agendamentos do recorte com paginação interna", async ()
   assert.match(source, /propertyLabel/);
   assert.match(source, /event\.user_name/);
   assert.match(source, /event\.is_overdue/);
-  assert.match(source, /endTime < now/);
+  assert.match(source, /getScheduleLifecycleState\([\s\S]*isAllDay: event\.is_all_day,[\s\S]*timeZone,/);
   assert.match(source, /lifecycleRevision/);
   assert.match(source, /event\.is_all_day/);
   assert.match(source, /Dia inteiro/);

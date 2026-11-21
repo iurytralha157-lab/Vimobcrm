@@ -34,19 +34,32 @@ export const PropertyPreviewDialog=({property,open})=>open&&property?<div data-t
 export const PropertyPickerDialog=()=>null;
 export const useScheduleEventAssignees=()=>({assignees:empty,isLoading:false,isFetching:false,isError:false,refetch:()=>{}});
 export const useToast=()=>({toast:()=>{}});
-const mutation=name=>({isPending:name==='update'&&!!window.fixtureState.updatePending,mutate:input=>window.fixtureWrites.push({name,input}),mutateAsync:async input=>{window.fixtureWrites.push({name,input});if(window.fixtureState.writeFail)throw Error('synthetic failure');return {...baseEvent,...input}}});
+const mutation=name=>({isPending:(name==='update'&&!!window.fixtureState.updatePending)||(name==='disconnect-google'&&!!window.fixtureState.googleDisconnectPending),mutate:input=>window.fixtureWrites.push({name,input}),mutateAsync:async input=>{window.fixtureWrites.push({name,input});if(window.fixtureState.writeFail)throw Error('synthetic failure');return {...baseEvent,...input}}});
 export const useCreateScheduleEvent=()=>mutation('create');export const useUpdateScheduleEvent=()=>mutation('update');export const useCompleteScheduleEvent=()=>mutation('complete');export const useRescheduleScheduleEvent=()=>mutation('reschedule');export const useDeleteScheduleEvent=()=>mutation('delete');
 export const useScheduleCapabilities=()=>{const state=useContext(State);return {data:state.capabilityError?undefined:{timeZone:state.capabilityMissingTimezone?undefined:state.timeZone||'America/Sao_Paulo',isTeamLeader:true},isSuccess:!state.capabilityError,isError:!!state.capabilityError,refetch:()=>window.fixturePatch({capabilityError:false,capabilityMissingTimezone:false})}};
 export const useScheduleEvents=options=>{if(options.startDate){window.eventQuery=options;if(options.enabled!==false)window.fixtureReads.push(options)}return {data:options.enabled===false?undefined:window.fixtureEvents,isLoading:false,isError:false,refetch:()=>{}}};
 export const useScheduleDashboardQueryScope=()=>({organizationId:baseEvent.organization_id,currentUserId:own.id,accessSignature:'synthetic',isReady:true});
-export const useScheduleDashboard=()=>({data:window.fixtureDashboard,isPending:false,isError:false,isFetching:false,isPlaceholderData:false,refetch:()=>{}});
-export const useScheduleDashboardEvents=()=>({data:{pages:[scheduleDashboardEventsPageSchema.parse({items:window.fixtureEvents.slice(0,20).map(event=>({...event,user_name:own.name,user_avatar_url:null,lead_name:null,property_code:null,property_title:null,is_overdue:false})),total:51,limit:20,offset:0,has_more:true})]},isPending:false,isError:false,isFetching:false,hasNextPage:true,fetchNextPage:()=>{},refetch:()=>{}});
+export const useScheduleDashboard=query=>{window.fixtureDashboardReportQuery=query;return {data:window.fixtureDashboard,isPending:false,isError:false,isFetching:false,isPlaceholderData:false,refetch:()=>{}}};
+export function useScheduleDashboardEvents(query){
+  window.fixtureDashboardEventsQuery=query;
+  const daily=query.dateFrom===query.dateTo;
+  const source=daily?[
+    {...baseEvent,id:'30000000-0000-4000-8000-000000000091',title:'Visita no edifício C',event_type:'visit',start_time:'2026-10-12T15:00:00.000Z',end_time:'2026-10-12T16:00:00.000Z'},
+    {...baseEvent,id:'30000000-0000-4000-8000-000000000092',title:'Reunião de proposta',event_type:'meeting',start_time:'2026-10-12T17:00:00.000Z',end_time:'2026-10-12T18:00:00.000Z'},
+    {...baseEvent,id:'30000000-0000-4000-8000-000000000093',title:'Revisar documentação',start_time:'2026-10-12T18:00:00.000Z',end_time:'2026-10-12T19:00:00.000Z'},
+  ]:window.fixtureEvents;
+  const visible=source.filter(event=>!query.eventType||event.event_type===query.eventType);
+  const items=visible.slice(0,20).map(event=>({...event,user_name:own.name,user_avatar_url:null,lead_name:null,property_code:null,property_title:null,is_overdue:false}));
+  const hasNextPage=visible.length>20;
+  const page=scheduleDashboardEventsPageSchema.parse({items,total:visible.length,limit:20,offset:0,has_more:hasNextPage});
+  return {data:{pages:[page]},isPending:false,isError:false,isFetching:false,hasNextPage,fetchNextPage:()=>{},refetch:()=>{}};
+}
 export const scheduleAPI={getComments:async()=>{if(window.fixtureState.commentError)throw Error('synthetic failure');if(window.fixtureState.commentDelay)await new Promise(resolve=>window.releaseComments=resolve);return []},addComment:async(id,content,organizationId,requestId)=>{window.fixtureWrites.push({name:'comment',input:{id,content,organizationId,requestId}});if(window.fixtureState.writeFail)throw Error('synthetic failure');return {id:requestId,content}}};
 export const GoogleCalendarConnect=()=>null;
-export const useGoogleCalendarStatus=()=>{const state=useContext(State);return {data:{connection:{id:'40000000-0000-4000-8000-000000000001',account_email:'qa@example.invalid',calendar_summary:'Agenda sintética',calendar_id:'primary',sync_status:'error',last_error:state.googleError},can_connect:false,can_use_schedule:true},isLoading:false,isError:false,refetch:()=>window.fixtureReads.push('google-calendar-status')}};
-export const useConnectGoogleCalendar=()=>mutation('google-connect');
-export const useDisconnectGoogleCalendar=()=>mutation('google-disconnect');
-export const isGoogleCalendarServiceUnavailable=()=>false;
+export const isGoogleCalendarServiceUnavailable=error=>error?.code==='google_calendar_function_unavailable';
+export const useGoogleCalendarStatus=()=>{const state=useContext(State);return {data:state.googleStatus||{connection:null,can_connect:true},error:state.googleStatusError,isError:!!state.googleStatusError,isLoading:!!state.googleLoading,refetch:()=>window.fixtureWrites.push({name:'refetch-google'})}};
+export const useConnectGoogleCalendar=options=>({isPending:!!window.fixtureState.googleConnectPending,mutate:()=>window.fixtureWrites.push({name:'authorize-google',input:options||{}})});
+export const useDisconnectGoogleCalendar=()=>mutation('disconnect-google');
 export const MetaCreativePreview=()=>null;
 export const AppLayout=({children})=><main style={{height:'100vh',padding:12}}>{children}</main>;
 export const useRouter=()=>({push:()=>{},replace:()=>{}});export const useSearchParams=()=>new URLSearchParams();export const usePathname=()=>'/agenda';
@@ -60,12 +73,11 @@ import {createRoot} from 'react-dom/client';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 import Agenda from '@/components/features/schedule/AgendaScreen';
 import {EventSheet} from '@/components/features/schedule/EventSheet';
+import {GoogleCalendarConnect as GoogleConnection} from '@/components/features/schedule/GoogleCalendarConnect.tsx';
 import {CalendarView} from '@/components/features/schedule/CalendarView';
 import {EventsList} from '@/components/features/schedule/EventsList';
 import {CompactScheduleEventsList} from '@/components/features/schedule/CompactScheduleEventsList';
-import {GoogleCalendarConnect as GoogleCalendarStatusPanel} from ${JSON.stringify(path.join(root, "components/features/schedule/GoogleCalendarConnect.tsx").replaceAll("\\", "/"))};
 import {ptBR} from 'date-fns/locale';
-import {AgendaSourceDistributionPanel} from '@/components/features/schedule/dashboard/AgendaDashboardPanels';
 import {AgendaDashboardKpis} from '@/components/features/schedule/dashboard/AgendaDashboardKpis';
 import {AgendaDashboard} from '@/components/features/schedule/dashboard/AgendaDashboard';
 import {AgendaDashboardPeriodFilter} from '@/components/features/schedule/dashboard/AgendaDashboardPeriodFilter';
@@ -74,8 +86,8 @@ import {AgendaDataQualityNotice} from '@/components/features/schedule/dashboard/
 import {useScheduleComments} from '@/hooks/use-schedule-comments';
 import {scheduleDashboardDataSchema} from '@/lib/validation/schedule-dashboard';
 import {Provider,baseEvent} from './synthetic';
-const kpis={total:51,completed:5,open:46,overdue:4,no_show:0,upcoming:42,visits:0,meetings:0,calls:0,eligible:9,appointment_eligible:0,cancelled:0,completion_rate:55.56,no_show_rate:0};
-window.fixtureDashboard=scheduleDashboardDataSchema.parse({kpis,report_timezone:'America/Sao_Paulo',period:{date_from:'2026-10-11',date_to:'2026-10-17',date_basis:'start_time'},hourly:[],daily:[{date:'2026-10-12',total:51,completed:5,open:46,overdue:4,cancelled:0,no_show:0}],weekly:[],by_outcome:[],top_performers:[],upcoming_events:[],by_type:[{key:'task',count:51}],by_source:Array.from({length:12},(_,index)=>({key:'source'+index,label:'Origem sintética '+index,count:index===11?40:1})),overdue_by_owner:[{user_id:baseEvent.user_id,name:'Pessoa sintética',avatar_url:null,overdue:4}],performer_ranking:[{user_id:baseEvent.user_id,name:'Pessoa sintética',avatar_url:null,total:51,appointments:0,appointment_eligible:0,completed:5,open:46,overdue:4,no_show:0,eligible:9,completion_rate:55.56,no_show_rate:0}]});
+const kpis={total:51,completed:5,open:46,overdue:4,no_show:0,upcoming:42,visits:9,meetings:7,calls:0,eligible:9,appointment_eligible:0,cancelled:0,completion_rate:55.56,no_show_rate:0};
+window.fixtureDashboard=scheduleDashboardDataSchema.parse({kpis,report_timezone:'America/Sao_Paulo',period:{date_from:'2026-10-11',date_to:'2026-10-17',date_basis:'start_time'},hourly:[],daily:[{date:'2026-10-12',total:28,completed:4,open:24,overdue:1,cancelled:0,no_show:0},{date:'2026-10-13',total:23,completed:1,open:22,overdue:3,cancelled:0,no_show:0}],weekly:[],by_outcome:[],top_performers:[],upcoming_events:[],by_type:[{key:'task',count:35},{key:'visit',count:9},{key:'meeting',count:7}],by_source:Array.from({length:12},(_,index)=>({key:'source'+index,label:'Origem sintética '+index,count:index===11?40:1})),overdue_by_owner:[{user_id:baseEvent.user_id,name:'Pessoa sintética',avatar_url:null,overdue:4}],performer_ranking:[],creator_ranking:[{user_id:baseEvent.user_id,name:'Pessoa que agendou',avatar_url:null,total:14}]});
 function Comments(){const comments=useScheduleComments(baseEvent.id);window.sendFixtureComment=content=>comments.addComment(content);return <div>Comments probe</div>}
 function Period({timeZone}){
 const[filters,setFilters]=useState({dateFrom:'2026-10-12',dateTo:'2026-10-18',dateBasis:'start_time',source:'synthetic-source'});
@@ -85,8 +97,9 @@ return <div style={{display:'flex',justifyContent:'flex-end',gap:8}}><DateFilter
 function Fixture({mode,eventType,duration,revision,canManage=true,propertyId,masked=false,initialState,quality,eventOverrides,calendarDate,calendarTimeZone='America/Sao_Paulo'}){
 const [open,setOpen]=useState(true);window.fixtureClosed=!open;
 const event={...baseEvent,is_masked:masked,event_type:eventType||'task',end_time:new Date(Date.parse(baseEvent.start_time)+(duration||540)*60000).toISOString(),property_id:propertyId||null,property:propertyId?{id:propertyId,title:'Imóvel fora da primeira página',code:'S51'}:null,...eventOverrides};
+if(mode==='google')return <Provider initialState={initialState}><div data-fixture={revision}><GoogleConnection compact={Boolean(initialState?.compact)}/></div></Provider>;
 return <Provider initialState={initialState}><div data-fixture={revision} className="app-shell" style={{height:'100vh'}}>
-{mode==='google-status'?<GoogleCalendarStatusPanel/>:mode==='period'?<Period timeZone={calendarTimeZone}/>:mode==='sheet'?<EventSheet open={open} onOpenChange={setOpen} event={event} defaultUserId={event.user_id}/>:mode==='create'?<EventSheet open={open} onOpenChange={setOpen} defaultUserId={event.user_id} defaultDate={new Date(2030,9,12)} defaultTime="09:00"/>:mode==='week'||mode==='month'?<section style={{height:580}}><CalendarView events={[event]} selectedDate={calendarDate?new Date(...calendarDate):new Date(2026,mode==='week'?9:7,mode==='week'?12:1)} pivotDate={calendarDate?new Date(...calendarDate):new Date(2026,mode==='week'?9:7,mode==='week'?12:1)} onDateSelect={day=>window.fixtureSelected=day.getDate()} onPivotChange={()=>{}} viewMode={mode} canManageEvents={canManage} onEventUpdate={(id,input)=>window.fixtureWrites.push({name:'timing',input:{id,...input}})} onEditEvent={()=>window.fixtureOpened++} timeZone={calendarTimeZone}/></section>:mode==='list'?<EventsList events={window.fixtureEvents} paginate canManage={canManage} onEditEvent={()=>window.fixtureOpened++} timeZone="America/Sao_Paulo"/>:mode==='compact'?<CompactScheduleEventsList events={window.fixtureEvents} locale={ptBR} onEditEvent={()=>window.fixtureOpened++}/>:mode==='sources'?<AgendaSourceDistributionPanel items={Array.from({length:12},(_,index)=>({key:'source'+index,label:'Origem sintética '+index,count:12-index}))}/>:mode==='kpis'?<section className="@container/agenda-dashboard" style={{width:'100%'}}><AgendaDashboardKpis kpis={kpis} dateBasis="start_time"/></section>:mode==='dashboard'?<AgendaDashboard syncFiltersToUrl={false} initialFilters={{dateFrom:'2026-10-11',dateTo:'2026-10-17'}}/>:mode==='quality'?<AgendaDataQualityNotice quality={quality}/>:mode==='comments'?<Comments/>:<Agenda/>}
+{mode==='period'?<Period timeZone={calendarTimeZone}/>:mode==='sheet'?<EventSheet open={open} onOpenChange={setOpen} event={event} defaultUserId={event.user_id}/>:mode==='create'?<EventSheet open={open} onOpenChange={setOpen} defaultUserId={event.user_id} defaultDate={new Date(2030,9,12)} defaultTime="09:00"/>:mode==='week'||mode==='month'?<section style={{height:580}}><CalendarView events={[event]} selectedDate={calendarDate?new Date(...calendarDate):new Date(2026,mode==='week'?9:7,mode==='week'?12:1)} pivotDate={calendarDate?new Date(...calendarDate):new Date(2026,mode==='week'?9:7,mode==='week'?12:1)} onDateSelect={day=>window.fixtureSelected=day.getDate()} onPivotChange={()=>{}} viewMode={mode} canManageEvents={canManage} onEventUpdate={(id,input)=>window.fixtureWrites.push({name:'timing',input:{id,...input}})} onEditEvent={()=>window.fixtureOpened++} timeZone={calendarTimeZone}/></section>:mode==='list'?<EventsList events={window.fixtureEvents} paginate canManage={canManage} onEditEvent={()=>window.fixtureOpened++} timeZone="America/Sao_Paulo"/>:mode==='compact'?<CompactScheduleEventsList events={window.fixtureEvents} locale={ptBR} onEditEvent={()=>window.fixtureOpened++}/>:mode==='kpis'?<section className="@container/agenda-dashboard" style={{width:'100%'}}><AgendaDashboardKpis kpis={kpis} dateBasis="start_time"/></section>:mode==='dashboard'?<AgendaDashboard syncFiltersToUrl={false} initialFilters={{dateFrom:'2026-10-11',dateTo:'2026-10-17'}}/>:mode==='quality'?<AgendaDataQualityNotice quality={quality}/>:mode==='comments'?<Comments/>:<Agenda/>}
 </div></Provider>}
 const app=createRoot(document.getElementById('app'));let revision=0;
 window.showFixture=options=>{window.fixtureWrites=[];window.fixturePeriodChanges=[];window.fixtureReads=[];window.fixtureOpened=0;window.fixtureEvents=Array.from({length:options.eventCount??51},(_,i)=>({...baseEvent,id:'30000000-0000-4000-8000-'+String(i+2).padStart(12,'0'),title:'Evento sintético '+i,start_time:new Date(Date.parse(baseEvent.start_time)+i*60000).toISOString(),status:i%2?'completed':'scheduled',...options.eventOverrides}));const next=++revision;const client=new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}});window.fixtureClient=client;app.render(<QueryClientProvider client={client}><Fixture key={next} revision={next} {...options}/></QueryClientProvider>);return next};
@@ -150,14 +163,137 @@ test("activity pagination uses singular only for one activity", async () => {
 
 test("Google status preserves legacy and outbound diagnostics without guessing the error origin", async () => {
   for (const googleError of ["Google Calendar sync error 404", "Google Agenda HTTP 503"]) {
-    await show({mode:"google-status",initialState:{googleError}});
+    await show({mode:"google",initialState:{googleStatus:{connection:{id:'40000000-0000-4000-8000-000000000001',account_email:'qa@example.invalid',calendar_summary:'Agenda sintética',calendar_id:'primary',sync_status:'error',last_error:googleError},can_connect:false,can_use_schedule:true}}});
     await expect(page.getByText(/A sincronização com o Google Agenda registrou um erro/)).toBeVisible();
     await expect(page.getByText(googleError,{exact:true})).toBeVisible();
     await page.getByRole("button",{name:"Atualizar status",exact:true}).click();
-    assert.deepEqual(await page.evaluate(()=>window.fixtureReads),["google-calendar-status"]);
-    assert.equal(await page.evaluate(()=>window.fixtureWrites.length),0);
+    assert.deepEqual(await page.evaluate(()=>window.fixtureWrites),[{name:"refetch-google"}]);
     await expect(page.getByRole("button",{name:"Conectar Google Agenda",exact:true})).toHaveCount(0);
   }
+});
+
+test("Google first connection requests Agenda and Tasks together only with explicit server capability",async()=>{
+  for(const [width,compact] of [[320,false],[1024,false],[390,true]]) for(const capability of [true,false,undefined]){
+    await show({mode:'google',initialState:{compact,googleStatus:{connection:null,can_connect:true,tasks_available:capability}}},width);
+    assert.deepEqual(await page.evaluate(()=>window.fixtureWrites),[]);
+    const name=capability===true?'Conectar Google Agenda e Tasks':'Conectar Google Agenda';
+    await page.getByRole('button',{name,exact:true}).click();
+    assert.deepEqual(await page.evaluate(()=>window.fixtureWrites),[{name:'authorize-google',input:capability===true?{enableTasks:true}:{}}]);
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
+    if(process.env.VIMOB_AGENDA_UI_SCREENSHOT_DIR&&width===1024&&capability===true){
+      const output=path.resolve(process.env.VIMOB_AGENDA_UI_SCREENSHOT_DIR);await mkdir(output,{recursive:true});
+      await page.screenshot({path:path.join(output,'google-first-connection.png'),fullPage:true});
+    }
+  }
+});
+
+test("Google Tasks legacy upgrade is explicit and the healthy card stays compact",async()=>{
+  const connection={id:'synthetic-google',account_email:'synthetic@example.test',calendar_id:'primary',sync_status:'connected',tasks_authorized:false,routing_v2:false,tasks_list_id:null};
+  for(const [width,compact] of [[320,false],[390,false],[1024,false],[390,true]]){
+    await show({mode:'google',initialState:{compact,googleStatus:{connection,can_connect:true,can_use_schedule:true,tasks_available:true}}},width);
+    await expect(page.getByText('synthetic@example.test',{exact:true}).first()).toBeVisible();
+    await expect(page.getByRole('button',{name:'Autorizar Google Tasks',exact:true})).toBeEnabled();
+    await expect(page.getByText(/No Google Tasks aparece apenas a data/)).not.toBeVisible();
+    await page.locator('summary').click();
+    await expect(page.getByText(/No Google Tasks aparece apenas a data/)).toBeVisible();
+    await page.getByRole('button',{name:'Autorizar Google Tasks',exact:true}).click();
+    assert.deepEqual(await page.evaluate(()=>window.fixtureWrites),[{name:'authorize-google',input:{enableTasks:true}}]);
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
+  }
+  for(const [width,compact] of [[320,false],[390,false],[1024,false],[390,true]]){
+    await show({mode:'google',initialState:{compact,googleStatus:{connection:{...connection,tasks_authorized:true,routing_v2:true,tasks_list_id:'synthetic-list-private-id'},can_connect:true,can_use_schedule:true,tasks_available:true}}},width);
+    await expect(page.getByText('Conectado',{exact:true})).toBeVisible();
+    await expect(page.getByRole('button',{name:'Autorizar Google Tasks',exact:true})).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'Desconectar',exact:true})).toBeVisible();
+    await expect(page.getByText(/No Google Tasks aparece apenas a data/)).not.toBeVisible();
+    const box=await page.locator('[data-google-calendar-connection]').boundingBox();
+    assert.ok(box.width<=448&&box.height<260);
+    assert.ok(Math.abs(box.x+box.width/2-width/2)<2);
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
+    assert.doesNotMatch(await page.locator('body').innerText(),/synthetic-list-private-id/);
+    assert.deepEqual(await page.evaluate(()=>window.fixtureWrites),[]);
+    if(process.env.VIMOB_AGENDA_UI_SCREENSHOT_DIR){
+      const output=path.resolve(process.env.VIMOB_AGENDA_UI_SCREENSHOT_DIR);await mkdir(output,{recursive:true});
+      await page.screenshot({path:path.join(output,'google-connected-'+width+'-'+(compact?'compact':'full')+'.png'),fullPage:true});
+    }
+  }
+});
+
+test("Google Tasks consent respects access and server availability without disabling CRM activities",async()=>{
+  const connection={id:'synthetic-google',calendar_id:'primary',sync_status:'connected',tasks_authorized:false,routing_v2:false,tasks_list_id:null};
+  await show({mode:'google',initialState:{googleStatus:{connection:{...connection,routing_v2:true},can_connect:true,can_use_schedule:true,tasks_available:true}}});
+  await expect(page.getByText('O envio ao Google Tasks aguarda sua autorização. Visitas e reuniões continuam no Google Agenda.',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Autorizar Google Tasks',exact:true})).toBeEnabled();
+  await show({mode:'google',initialState:{googleStatus:{connection,can_connect:false,can_use_schedule:false,tasks_available:true}}});
+  await expect(page.getByRole('button',{name:'Autorizar Google Tasks',exact:true})).toBeDisabled();
+  await show({mode:'google',initialState:{googleStatus:{connection,can_connect:true,can_use_schedule:true,tasks_available:false}}});
+  await expect(page.getByRole('button',{name:'Autorizar Google Tasks',exact:true})).toHaveCount(0);
+  await show({mode:'create'});
+  await page.getByRole('textbox',{name:'Título da atividade'}).fill('Tarefa local sem concessão Tasks');
+  await expect(page.getByRole('button',{name:'Adicionar',exact:true})).toBeEnabled();
+});
+
+test("Google connection preserves errors, restrictions, pending actions and disconnect confirmation",async()=>{
+  await show({mode:'google',initialState:{googleLoading:true}});
+  await expect(page.getByLabel('Verificando conexão Google')).toBeVisible();
+  for(const code of ['google_calendar_function_unavailable','other']){
+    await show({mode:'google',initialState:{googleStatusError:{code}}});
+    await expect(page.getByRole('alert')).toContainText('Nenhum estado foi alterado.');
+    await expect(page.getByRole('button',{name:/^Conectar/})).toHaveCount(0);
+    await page.getByRole('button',{name:'Tentar novamente',exact:true}).click();
+    assert.deepEqual(await page.evaluate(()=>window.fixtureWrites),[{name:'refetch-google'}]);
+  }
+  for(const [connect_restriction,name] of [['GOOGLE_CALENDAR_PILOT_ONLY','Em teste piloto'],['GOOGLE_CALENDAR_CONNECT_DISABLED','Indisponível'],['SCHEDULE_ACCESS_REQUIRED','Sem acesso à Agenda']]){
+    await show({mode:'google',initialState:{googleStatus:{connection:null,can_connect:false,connect_restriction,tasks_available:true}}});
+    await expect(page.getByRole('button',{name,exact:true})).toBeDisabled();
+    assert.deepEqual(await page.evaluate(()=>window.fixtureWrites),[]);
+  }
+  await show({mode:'google',initialState:{googleConnectPending:true,googleStatus:{connection:null,can_connect:true,tasks_available:true}}});
+  await expect(page.getByRole('button',{name:'Conectando...',exact:true})).toBeDisabled();
+  const connection={id:'synthetic-google',account_email:'synthetic@example.test',calendar_id:'primary',sync_status:'error',last_error:'Falha sintética de envio',tasks_authorized:false,routing_v2:false};
+  const googleStatus={connection,can_connect:true,can_use_schedule:true,tasks_available:true};
+  await show({mode:'google',initialState:{googleStatus}});
+  await expect(page.getByText('Erro',{exact:true})).toBeVisible();
+  await expect(page.getByText('Falha sintética de envio',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Autorizar Google Tasks',exact:true})).toBeEnabled();
+  await page.getByRole('button',{name:'Desconectar',exact:true}).click();
+  await expect(page.getByRole('alertdialog')).toContainText('Atividades já enviadas permanecem no Google.');
+  assert.deepEqual(await page.evaluate(()=>window.fixtureWrites),[]);
+  await page.getByRole('button',{name:'Cancelar',exact:true}).click();
+  assert.deepEqual(await page.evaluate(()=>window.fixtureWrites),[]);
+  await page.getByRole('button',{name:'Desconectar',exact:true}).click();
+  await page.getByRole('alertdialog').getByRole('button',{name:'Desconectar',exact:true}).click();
+  assert.deepEqual(await page.evaluate(()=>window.fixtureWrites),[{name:'disconnect-google',input:'synthetic-google'}]);
+  await show({mode:'google',initialState:{googleStatus,googleDisconnectPending:true}});
+  await expect(page.getByRole('button',{name:'Desconectando...',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'Autorizar Google Tasks',exact:true})).toBeDisabled();
+  await show({mode:'google',initialState:{googleStatus:{...googleStatus,connection:{...connection,tasks_authorized:true,routing_v2:true}}}});
+  await expect(page.getByText('Falha sintética de envio',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Autorizar Google Tasks',exact:true})).toHaveCount(0);
+  assert.deepEqual(await page.evaluate(()=>window.fixtureWrites),[]);
+  await page.getByRole('button',{name:'Reconectar Google',exact:true}).click();
+  assert.deepEqual(await page.evaluate(()=>window.fixtureWrites),[{name:'authorize-google',input:{enableTasks:true}}]);
+});
+
+test("Agenda Google modal is narrow and centered without changing the shared dialog",async()=>{
+  for(const width of [320,1024]){
+    await show({mode:'agenda'},width);
+    await page.getByRole('button',{name:'Configurar Google Agenda',exact:true}).click();
+    const box=await page.getByRole('dialog',{name:'Google Agenda',exact:true}).boundingBox();
+    assert.ok(box.width<=448);
+    assert.ok(Math.abs(box.x+box.width/2-width/2)<2);
+    await page.keyboard.press('Escape');
+  }
+});
+
+test("Google export feedback shows its destination and stays hidden for masked activities",async()=>{
+  await show({mode:'sheet',eventOverrides:{google_sync_target:'tasks',google_sync_status:'pending'}});
+  await expect(page.getByText('Envio ao Google Tasks pendente',{exact:true})).toBeVisible();
+  await expect(page.getByText(/horários e lembretes continuam no Vimob/)).toBeVisible();
+  await show({mode:'sheet',eventOverrides:{google_sync_target:'calendar',google_sync_status:'synced'}});
+  await expect(page.getByText('Enviado ao Google Agenda',{exact:true})).toBeVisible();
+  await show({mode:'sheet',eventOverrides:{google_sync_target:'tasks',google_sync_status:'error'},masked:true});
+  assert.doesNotMatch(await page.locator('body').innerText(),/Google Tasks|Envio ao|Abrir integração Google/);
 });
 
 for (const width of [320,390,1024,1440]) for (const theme of ["light","dark"]) test(`Agenda period uses shared Dashboard presentation at ${width}px/${theme}`,async()=>{
@@ -272,6 +408,40 @@ test("week scrolls horizontally and all six month rows remain reachable",async()
   assert.equal(await page.evaluate(()=>window.fixtureOpened),1);
 });
 
+test("dense week and mobile day expose every overlapping appointment",async()=>{
+  for (const { width, visible, hidden } of [
+    { width: 1024, visible: 1, hidden: 31 },
+    { width: 390, visible: 3, hidden: 29 },
+  ]) {
+    await page.evaluate(()=>localStorage.setItem("agendaViewMode","week"));
+    await show({mode:"agenda",eventCount:32,eventOverrides:{
+      start_time:"2026-10-12T12:00:00.000Z",
+      end_time:"2026-10-12T12:30:00.000Z",
+      status:"scheduled",
+    }},width);
+    const cards=page.locator('[data-calendar-event-density]');
+    await expect(cards).toHaveCount(visible);
+    const trigger=page.getByRole("button",{name:new RegExp(`Ver ${hidden} compromissos a mais.*09:00`)});
+    await trigger.scrollIntoViewIfNeeded();
+    const card=await cards.first().boundingBox();
+    const badge=await trigger.boundingBox();
+    assert.ok(card&&badge&&card.width>70&&card.x+card.width<=badge.x);
+    await trigger.focus();
+    await page.keyboard.press("Enter");
+    const list=page.locator('[data-calendar-overflow-list]');
+    await expect(list.getByRole("listitem")).toHaveCount(hidden);
+    await expect(list).toContainText("09:00 – 09:30");
+    const last=list.getByRole("button",{name:/Evento sintético 31/});
+    await last.scrollIntoViewIfNeeded();
+    await last.focus();
+    await page.keyboard.press("Enter");
+    await expect(list).toHaveCount(0);
+    const details=page.getByRole("dialog",{name:"Detalhes da atividade",exact:true});
+    await expect(details.getByRole("heading",{name:"Evento sintético 31",exact:true})).toBeVisible();
+    assert.equal(await page.evaluate(()=>window.fixtureWrites.length),0);
+  }
+});
+
 test("list keeps completed events, exposes every page and opens details for view-only users",async()=>{
   await show({mode:"list",canManage:false},390);
   await expect(page.getByText("20 de 51 atividades")).toBeVisible();
@@ -296,9 +466,7 @@ test("list deletion requires a confirmation before the write",async()=>{
   assert.equal(await page.evaluate(()=>window.fixtureWrites.length),0);
 });
 
-test("all source entries remain reachable and KPI columns use their container",async()=>{
-  await show({mode:"sources"},390);
-  await expect(page.getByText("Origem sintética 11",{exact:true})).toBeAttached();
+test("dashboard KPI columns use their responsive layout",async()=>{
   for(const [width,columns] of [[480,2],[768,2],[1024,4]]){
     await show({mode:"kpis"},width);
     const grid=page.locator('[data-fixture] section>section').first();
@@ -423,8 +591,8 @@ test("dashboard retains controls and contains its panels across every audited wi
     const dashboard=page.getByRole("region",{name:"Dashboard da agenda"});
     await expect(page.getByRole("button",{name:"Demais filtros da agenda",exact:true})).toBeVisible();
     assert.ok(await dashboard.evaluate(element=>element.scrollWidth<=element.clientWidth+1));
-    await expect(page.getByText("Por tipo",{exact:true}).first()).toBeVisible();
-    for(const [tab,heading] of [["Compromissos","Lista de compromissos"],["Equipe","Resultado por responsável"],["Resultados","Como terminaram"],["Visão geral","Próximo compromisso"]]){
+    await expect(page.getByRole("heading",{name:"Compromissos por dia",exact:true})).toBeVisible();
+    for(const [tab,heading] of [["Compromissos","Lista de compromissos"],["Visão geral","Compromissos de hoje"]]){
       await page.getByRole("button",{name:tab,exact:true}).click();
       await expect(page.getByRole("heading",{name:heading,exact:true})).toBeVisible();
       assert.ok(await dashboard.evaluate(element=>element.scrollWidth<=element.clientWidth+1),`${tab} at ${width}px`);
@@ -439,6 +607,21 @@ test("dashboard retains controls and contains its panels across every audited wi
     await expect(page.getByRole("button",{name:"Demais filtros da agenda",exact:true})).toBeVisible();
   }
   assert.deepEqual(errors,[]);
+});
+
+test("dashboard separates today's chronological appointments from the selected period and drills down by type",async()=>{
+  await show({mode:"dashboard"},390);
+  const today=page.getByRole("region",{name:"Compromissos de hoje"});
+  await expect(today.locator("time")).toHaveText(["12:00","14:00","15:00"]);
+  await expect(today.getByRole("link",{name:"Abrir reunião Reunião de proposta"})).toBeVisible();
+  await expect(page.getByRole("heading",{name:"Quem mais agendou"})).toBeVisible();
+  await expect(page.getByText("Pessoa que agendou",{exact:true})).toBeVisible();
+  await expect(page.getByText("Mais realizações em",{exact:false})).toContainText("12/10 (4)");
+  await expect(page.getByText("Mais atrasos em",{exact:false})).toContainText("13/10 (3)");
+  assert.deepEqual(await page.evaluate(()=>[window.fixtureDashboardReportQuery.dateFrom,window.fixtureDashboardEventsQuery.dateFrom]),["2026-10-11","2026-10-12"]);
+  await page.getByRole("button",{name:"Filtrar visitas",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"Lista de compromissos"})).toBeVisible();
+  assert.deepEqual(await page.evaluate(()=>[window.fixtureDashboardEventsQuery.dateFrom,window.fixtureDashboardEventsQuery.dateTo,window.fixtureDashboardEventsQuery.eventType]),["2026-10-11","2026-10-17","visit"]);
 });
 
 test("historical coverage distinguishes an absent report from complete cohort data and unperiodized gaps",async()=>{
@@ -726,15 +909,28 @@ test("busy intervals stay neutral in calendar, full and compact lists, and the r
       await page.getByRole("button",{name:"Filtros da agenda",exact:true}).click();
       await page.getByRole("button",{name:"Tarefa",exact:true}).click();
       await page.keyboard.press("Escape");
+      const week=page.locator('[data-calendar-week-scroll]');
+      const isWeek=Boolean(await week.count());
+      const visible=eventCount===1||isWeek?1:3;
       const cards=page.locator('[data-calendar-event-density]').filter({hasText:"Horário ocupado"});
-      await expect(cards).toHaveCount(eventCount);
+      await expect(cards).toHaveCount(visible);
       await expect(cards.first()).toBeVisible();
       assert.ok(await cards.evaluateAll(elements=>elements.every(element=>{const bounds=element.getBoundingClientRect();return bounds.width>0&&bounds.height>0})),`positive occupied bounds at ${width}px with ${eventCount} events`);
-      const week=page.locator('[data-calendar-week-scroll]');
-      const scroll=await week.count()?week:page.locator('[data-radix-scroll-area-viewport]').first();
+      const scroll=isWeek?week:page.locator('[data-radix-scroll-area-viewport]').first();
       await scroll.evaluate(element=>{element.scrollLeft=180;element.scrollTop=200});
       await expect(cards.first()).toBeInViewport();
-      await cards.first().focus();
+      if(eventCount>visible){
+        const overflow=page.getByRole("button",{name:new RegExp(`Ver ${eventCount-visible} compromissos a mais`)});
+        await overflow.focus();
+        await page.keyboard.press("Enter");
+        const list=page.locator('[data-calendar-overflow-list]');
+        const hidden=list.getByRole("button",{name:/^Horário ocupado/});
+        await expect(hidden).toHaveCount(eventCount-visible);
+        await expect(list).not.toContainText(/Texto privado que não deve aparecer|Em aberto|Atrasad[ao]|Tarefa|Ligação|Sem lembrete/);
+        await hidden.last().focus();
+      }else{
+        await cards.first().focus();
+      }
       await page.keyboard.press("Enter");
       await expect(page.getByRole("dialog",{name:"Detalhes da atividade",exact:true})).toBeVisible();
       await expect(page.getByRole("heading",{name:"Horário ocupado",exact:true})).toBeVisible();

@@ -78,6 +78,7 @@ export function EventTimingSection({
     <AgendaRow
       dataTour="agenda-event-date"
       icon={<Clock size={19} />}
+      label="Quando"
       align={locked ? "center" : "start"}
     >
       {locked ? (
@@ -91,7 +92,7 @@ export function EventTimingSection({
           </div>}
         </div>
       ) : (
-        <div className="space-y-2 sm:space-y-1">
+        <div className="space-y-3">
           {timingLocked ? (
             <div className="rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2 text-[12px] font-light text-[var(--app-text-primary)]">
               <div>
@@ -106,7 +107,7 @@ export function EventTimingSection({
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-[minmax(0,1fr)_76px_12px_76px] sm:items-center">
+            <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-[minmax(0,1fr)_84px_84px]">
               <Popover>
                 <PopoverTrigger asChild>
                   <button
@@ -136,7 +137,7 @@ export function EventTimingSection({
                 </PopoverContent>
               </Popover>
               <div className="min-w-0 space-y-1 sm:space-y-0">
-                <span className="text-[11px] font-light text-[var(--app-text-tertiary)] sm:sr-only">
+                <span className="text-[11px] text-[var(--app-text-secondary)]">
                   Início
                 </span>
                 <TimePicker
@@ -146,11 +147,8 @@ export function EventTimingSection({
                   disabled={isAllDay}
                 />
               </div>
-              <span className="hidden text-center text-[var(--app-text-tertiary)] sm:block">
-                -
-              </span>
               <div className="min-w-0 space-y-1 sm:space-y-0">
-                <span className="text-[11px] font-light text-[var(--app-text-tertiary)] sm:sr-only">
+                <span className="text-[11px] text-[var(--app-text-secondary)]">
                   Fim
                 </span>
                 <TimePicker

@@ -41,7 +41,7 @@ export function AgendaRow({
         <div className="flex justify-center pt-0.5 text-[var(--app-text-tertiary)] sm:pt-0">
           {icon}
         </div>
-        <div className="min-w-0 text-[12px] font-light text-[var(--app-text-secondary)]">
+        <div className="min-w-0 text-xs font-medium text-[var(--app-text-primary)]">
           {label}
         </div>
         <div className="col-start-2 min-w-0 sm:col-start-3 sm:row-start-1">
@@ -70,7 +70,7 @@ export function AgendaRow({
       </div>
       <div className="min-w-0">
         {label && (
-          <div className="mb-1.5 text-[12px] font-light text-[var(--app-text-secondary)]">
+          <div className="mb-1.5 text-xs font-medium text-[var(--app-text-primary)]">
             {label}
           </div>
         )}
@@ -117,7 +117,7 @@ export function TimePicker({
           type="button"
           disabled={disabled}
           aria-label={`${ariaLabel}: ${value || "não definido"}`}
-          className="inline-flex h-10 w-full min-w-[76px] items-center justify-center rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light text-[var(--app-text-primary)] shadow-none transition hover:bg-[var(--app-surface-hover)] disabled:opacity-50 sm:h-9 sm:w-auto"
+          className="inline-flex h-10 w-full min-w-[76px] items-center justify-center rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-xs tabular-nums text-[var(--app-text-primary)] shadow-none transition hover:bg-[var(--app-surface-hover)] disabled:opacity-50 sm:h-9"
         >
           {value || "--:--"}
         </button>

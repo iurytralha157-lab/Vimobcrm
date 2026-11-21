@@ -1,5 +1,9 @@
 # Google Agenda: envio do Vimob
 
+O roteamento opt-in Calendar/Tasks, suas migrations, limites e publicacao estao
+documentados em [google-tasks.md](google-tasks.md). As observacoes historicas
+abaixo nao substituem a verificacao do runtime antes de um release.
+
 O Vimob é a origem dos compromissos. Criar, editar e excluir enfileira saída
 para a conta Google do responsável. Não importamos eventos Google, não criamos
 watch no callback e não convidamos participantes Vimob. Conectar não envia
@@ -147,3 +151,29 @@ Para release, drenar workers **e callbacks/refresh antigos**, aplicar a forward
 sob revisão, publicar API/Web/Edge compatíveis, validar PostgreSQL 17 alvo,
 duas sessões/réplicas (inclusive ciclo de locks), e canário autorizado Web/PWA
 de uma conta. Testes sintéticos/PG18.6 WASM não provam Google real nem carga.
+
+## Escopo omitido na troca OAuth — candidato de homologação de 04/11/2026
+
+Se o JSON da troca do código omitir a propriedade `scope`, a API consulta
+`https://oauth2.googleapis.com/tokeninfo` por POST, com Bearer no header,
+deadline, sem redirecionamento e sem cache. Só usa o escopo confirmado nessa
+resposta quando `aud` corresponde exatamente ao cliente configurado. A query
+de retorno do navegador nunca comprova autorização. Um `scope` presente, mas
+nulo, vazio, malformado ou parcial, não aciona esse fallback. HTTP, timeout,
+JSON inválido ou audiência divergente interrompem a conexão com erro genérico,
+sem registrar payloads ou credenciais. O único log de sucesso é a frase fixa
+`google-calendar-oauth scopes verified via tokeninfo`, sem valores do usuário.
+
+`assertGoogleCalendarOAuthReady` continua exigindo permissão Calendar e os
+tokens de acesso/offline antes da ativação atômica. O refresh previamente
+salvo só é reutilizado pelas mesmas regras existentes de conta/revisão.
+Essa mudança não ativa importação, webhook ou worker e não muda schema/env.
+
+A resolução foi isolada em `google-calendar-oauth-token.ts`, mantendo somente
+import e chamada no shared legado acima de 800 linhas. A divisão futura de
+OAuth, provider/worker e entrada legada continua separada deste reparo.
+Reversão: republicar a closure anterior de OAuth/sync; o banco permanece
+compatível. Novas tentativas sem `scope` voltariam a falhar na validação.
+
+Referências: [RFC 6749, seção 5.1](https://www.rfc-editor.org/rfc/rfc6749#section-5.1)
+e [implementação oficial Google de getTokenInfo](https://googleapis.dev/nodejs/google-auth-library/latest/classes/OAuth2Client.html#getTokenInfo).

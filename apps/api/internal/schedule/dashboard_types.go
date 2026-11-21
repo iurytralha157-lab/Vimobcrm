@@ -54,6 +54,7 @@ type DashboardReport struct {
 	UpcomingEvents   []DashboardUpcomingEvent         `json:"upcoming_events"`
 	OverdueByOwner   []DashboardOverdueOwner          `json:"overdue_by_owner"`
 	PerformerRanking []DashboardPerformerRanking      `json:"performer_ranking"`
+	CreatorRanking   []DashboardTopPerformer          `json:"creator_ranking"`
 	TopPerformers    []DashboardTopPerformer          `json:"top_performers"`
 	DataQuality      *DashboardDataQuality            `json:"data_quality,omitempty"`
 }

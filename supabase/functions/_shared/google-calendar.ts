@@ -41,6 +41,9 @@ import {
   GoogleCalendarVersionChangedError,
   GoogleCalendarConnectionChangedError,
 } from "./google-calendar-delivery.ts";
+import { resolveGoogleCalendarOAuthTokenScope } from "./google-calendar-oauth-token.ts";
+import { assertGoogleTasksScope, buildGoogleTasksApiUrl, type TasksRecord } from "./google-tasks-api.ts";
+import { processGoogleScheduleV2, tasksRuntimeRpc, type GoogleScheduleRuntimeDependencies } from "./google-tasks-runtime.ts";
 
 export type JsonRecord = Record<string, any>;
 
@@ -493,6 +496,7 @@ export async function createOAuthState(params: {
   userId: string;
   organizationId: string;
   returnUrl?: string | null;
+  enableTasks?: boolean;
 }) {
   const state = randomToken(32);
   const stateHash = await sha256Hex(state);
@@ -503,6 +507,7 @@ export async function createOAuthState(params: {
     user_id: params.userId,
     return_url: safeReturnUrl(params.returnUrl),
     expires_at: addSeconds(10 * 60),
+    enable_tasks: params.enableTasks === true,
   });
 
   if (error) throw error;
@@ -526,13 +531,14 @@ export async function consumeOAuthState(rawState: string) {
   return data as JsonRecord;
 }
 
-export function buildGoogleAuthUrl(state: string) {
+export function buildGoogleAuthUrl(state: string, enableTasks = false) {
   const config = getGoogleOAuthConfig();
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.searchParams.set("client_id", config.clientId);
   url.searchParams.set("redirect_uri", config.redirectUri);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("scope", GOOGLE_SCOPES.join(" "));
+  url.searchParams.set("scope", [...GOOGLE_SCOPES,
+    ...(enableTasks ? ["https://www.googleapis.com/auth/tasks"] : [])].join(" "));
   url.searchParams.set("access_type", "offline");
   url.searchParams.set("prompt", "consent");
   url.searchParams.set("include_granted_scopes", "true");
@@ -561,7 +567,7 @@ export async function exchangeOAuthCode(code: string) {
     throw new Error(
       data.error_description || data.error || "Falha ao trocar codigo OAuth.",
     );
-  return data as JsonRecord;
+  return await resolveGoogleCalendarOAuthTokenScope(data, config.clientId) as JsonRecord;
 }
 
 export async function fetchGoogleUserInfo(accessToken: string) {
@@ -654,6 +660,7 @@ export async function upsertConnectionFromOAuth(params: {
   // Google granular consent may authenticate the email without Calendar.
   // Validate before any Vault or connection write and before reporting success.
   assertGoogleCalendarOAuthReady(authorizedToken);
+  if (params.state.enable_tasks === true) assertGoogleTasksScope(params.tokenResponse.scope);
 
   // HTTP consent has already completed. Vault and activation commit together
   // behind the credential/lifecycle revision; no network runs under that lock.
@@ -677,6 +684,14 @@ export async function upsertConnectionFromOAuth(params: {
   });
   if (error?.code === "40001") throw new GoogleCalendarConnectionChangedError();
   if (error) throw error;
+  if (params.state.enable_tasks === true) {
+    const current = data as JsonRecord;
+    const { data: enabled, error: tasksError } = await supabase.rpc("google_calendar_enable_tasks", {
+      p_connection_id: current.id, p_expected_revision: current.credential_revision,
+    });
+    if (tasksError) throw tasksError;
+    return enabled as JsonRecord;
+  }
   return data as JsonRecord;
 }
 
@@ -1270,6 +1285,7 @@ type GoogleSyncExecutionContext = {
   fallbackConnectionId?: string | null;
   jobId?: string;
   jobWorker?: string;
+  deferMetadata?: boolean;
 };
 
 async function assertGoogleCalendarJobLease(connection: JsonRecord) {
@@ -1531,6 +1547,7 @@ export async function pushScheduleEventToGoogle(
   }
 
   await assertGoogleCalendarJobLease(connection);
+  if (execution.deferMetadata) return { synced: true, google_event_id: googleEvent.id };
   const { data: updatedEvent, error: eventUpdateError } = await supabase
     .from("schedule_events")
     .update({
@@ -2378,6 +2395,85 @@ async function hasOutstandingDeleteForEvent(
   return Boolean(data);
 }
 
+async function googleTasksFetch(connection: JsonRecord, path: string, init: RequestInit = {}) {
+  const url = buildGoogleTasksApiUrl(path);
+  await assertGoogleCalendarJobLease(connection);
+  let refreshed = await refreshAccessToken(connection);
+  const send = async () => {
+    assertGoogleTasksScope(refreshed.token.scope);
+    await assertGoogleCalendarJobLease(connection);
+    return googleCalendarFetchWithDeadline(url, { ...init, redirect: "error", headers: {
+      "Content-Type": "application/json", ...(init.headers || {}),
+      Authorization: `Bearer ${refreshed.token.access_token}`,
+    } });
+  };
+  let response = await send();
+  if (response.status === 401) {
+    refreshed = await refreshAccessToken(refreshed.connection, true);
+    response = await send();
+  }
+  return response;
+}
+
+function googleScheduleV2Dependencies(): GoogleScheduleRuntimeDependencies {
+  return {
+    rpc: (name, args) => tasksRuntimeRpc(async (rpcName, rpcArgs) => {
+      const { data, error } = await supabase.rpc(rpcName, rpcArgs);
+      return { data, error };
+    }, name, args),
+    getEvent: async (id, organizationId) => {
+      const { data, error } = await supabase.from("schedule_events").select("*")
+        .eq("id", id).eq("organization_id", organizationId).maybeSingle();
+      if (error) throw error;
+      return data as TasksRecord | null;
+    },
+    getConnection: (ownerId, organizationId, id) => id
+      ? getConnectionById(id) : getConnectionForUser(ownerId, organizationId, { requireSyncEnabled: false }),
+    getTaskLinks: async (eventId, organizationId, connectionId, ids) => {
+      let query = supabase.from("google_tasks_links").select("*").eq("organization_id", organizationId)
+        .eq("connection_id", connectionId).eq("vimob_event_id", eventId).is("deleted_at", null);
+      if (ids?.length) query = query.in("id", ids);
+      const { data, error } = await query;
+      if (error) throw error;
+      return (data || []) as TasksRecord[];
+    },
+    assertOwner: async (ownerId, organizationId) => { await getUserProfile(ownerId, organizationId); },
+    assertSnapshot: assertScheduleSnapshotCurrent,
+    getTimeZone: getOrganizationTimeZone,
+    getExportContext: async event => (await getOutboundEventContext(event)).event,
+    request: connection => {
+      const deadline = Date.now() + 75_000;
+      return (path, init) => {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw new GoogleCalendarRetryableError("Tempo limite da sincronizacao Tasks.", 408);
+        return googleTasksFetch(connection, path, { ...init, signal: AbortSignal.timeout(remaining) });
+      };
+    },
+    calendarUpsert: async job => pushScheduleEventToGoogle(String(job.schedule_event_id), String(job.created_by || "") || null, {
+      trustedJobOrganizationId: String(job.organization_id), jobId: String(job.id), jobWorker: String(job.locked_by), deferMetadata: true,
+    }),
+    calendarDelete: async job => {
+      const payload = job.payload as JsonRecord;
+      return deleteScheduleEventFromGoogle(String(job.schedule_event_id || payload.event_id), String(job.created_by || "") || null,
+        Array.isArray(payload.link_ids) ? payload.link_ids : [], {
+          trustedJobOrganizationId: String(job.organization_id), fallbackOwnerUserId: String(payload.owner_user_id),
+          fallbackConnectionId: String(job.connection_id || payload.connection_id || "") || null,
+          jobId: String(job.id), jobWorker: String(job.locked_by),
+        });
+    },
+    requeueCurrent: async (job, event) => {
+      await assertGoogleCalendarJobLease({ vimob_job: { id: job.id, worker: job.locked_by } });
+      await assertScheduleSnapshotCurrent(event);
+      const queued = await enqueueSyncJob({
+        organizationId: String(job.organization_id), connectionId: String(job.connection_id),
+        scheduleEventId: String(event.id), action: "push_upsert", createdBy: String(job.created_by || "") || null,
+        payload: { protocol_version: 2, event_id: event.id, owner_user_id: event.user_id, connection_id: job.connection_id },
+      });
+      if (!queued?.id) throw new GoogleCalendarRetryableError("Nao foi possivel confirmar o novo destino Google.", 503);
+    },
+  };
+}
+
 export async function processSyncJob(job: JsonRecord) {
   if (job.action === "push_upsert" && job.schedule_event_id) {
     if (!job.organization_id) {
@@ -2395,6 +2491,7 @@ export async function processSyncJob(job: JsonRecord) {
     )) {
       return { deferred: true, reason: "DELETE_STILL_PENDING" };
     }
+    if (job.payload?.protocol_version === 2) return processGoogleScheduleV2(job, googleScheduleV2Dependencies());
     return pushScheduleEventToGoogle(job.schedule_event_id, job.created_by || null, {
       trustedJobOrganizationId: job.organization_id,
       jobId: job.id, jobWorker: job.locked_by,
@@ -2423,6 +2520,7 @@ export async function processSyncJob(job: JsonRecord) {
     )) {
       return { deferred: true, reason: "UPSERT_STILL_RUNNING" };
     }
+    if (job.payload?.protocol_version === 2) return processGoogleScheduleV2(job, googleScheduleV2Dependencies());
     return deleteScheduleEventFromGoogle(
       eventId,
       job.created_by || null,
@@ -2488,7 +2586,7 @@ async function finishGoogleCalendarJob(job: JsonRecord, status: string, message:
 
 export async function runDueJobs(limit = 10) {
   const { data: jobs, error } = await supabase.rpc(
-    "google_calendar_claim_outbound_sync_jobs_v2",
+    "google_calendar_claim_outbound_sync_jobs_v3",
     {
       p_limit: Math.max(1, Math.min(Number(limit) || 10, 20)),
       p_worker: `google-calendar-sync-${crypto.randomUUID()}`,

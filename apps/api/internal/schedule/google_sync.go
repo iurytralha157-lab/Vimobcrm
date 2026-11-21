@@ -10,13 +10,13 @@ import (
 
 const enqueueScheduleGoogleMutationSQL = `
 	with syncable_event as (
-		select event.id
+		select event.id, event.event_type
 		from public.schedule_events event
 		where event.organization_id = $1::uuid
 		  and event.id = $2::uuid
 	),
 	active_owner_connection as (
-		select connection.id
+		select connection.id, connection.routing_v2
 		from public.google_calendar_tokens connection
 		where connection.organization_id = $1::uuid
 		  and connection.user_id = $4::uuid
@@ -67,10 +67,14 @@ const enqueueScheduleGoogleMutationSQL = `
 			$2::uuid,
 			'push_delete',
 			jsonb_build_object(
+				'protocol_version', 2,
 				'event_id', $2::text,
 				'owner_user_id', $6::text,
 				'connection_id', (select id::text from previous_owner_connection),
-				'link_ids', transfer_links.link_ids
+				'link_ids', transfer_links.link_ids,
+				'task_link_ids', coalesce((select jsonb_agg(link.id::text order by link.id)
+					from public.google_tasks_links link where link.organization_id = $1::uuid
+					and link.vimob_event_id = $2::uuid and link.deleted_at is null), '[]'::jsonb)
 			),
 			$3::uuid
 		from transfer_links
@@ -92,13 +96,15 @@ const enqueueScheduleGoogleMutationSQL = `
 			$1::uuid,
 			$2::uuid,
 			'push_upsert',
-			jsonb_build_object('event_id', $2::text, 'owner_user_id', $4::text),
+			jsonb_build_object('protocol_version', 2, 'event_id', $2::text, 'owner_user_id', $4::text,
+				'target', case when connection.routing_v2 and (select event_type from syncable_event) in ('task','message','email','call')
+					then 'tasks' else 'calendar' end),
 			$3::uuid,
 			case
 				when $5::boolean then statement_timestamp() + interval '30 seconds'
 				else statement_timestamp()
 			end
-		from active_owner_connection
+		from active_owner_connection connection
 		returning id
 	),
 	marked_event as (
@@ -120,6 +126,10 @@ const enqueueScheduleGoogleMutationSQL = `
 				else null
 			end,
 			google_sync_error = null,
+			google_sync_target = case when exists (select 1 from upsert_job) and (select routing_v2 from active_owner_connection)
+				and (select event_type from syncable_event) in ('task','message','email','call') then 'tasks'
+				when exists (select 1 from upsert_job) then 'calendar' else null end,
+			google_task_id = case when $5::boolean or not exists (select 1 from upsert_job) then null else event.google_task_id end,
 			updated_at = now()
 		where event.organization_id = $1::uuid
 		  and event.id = $2::uuid
@@ -168,7 +178,7 @@ func (repo Repository) enqueueScheduleGoogleMutation(
 // in one statement so each can later be edited or deleted independently.
 const enqueueScheduleGoogleRecurringCreatesSQL = `
 	with recurring_events as (
-		select event.id
+		select event.id, event.event_type
 		from public.schedule_events event
 		where event.organization_id = $1::uuid
 		  and event.id = any($2::uuid[])
@@ -176,7 +186,7 @@ const enqueueScheduleGoogleRecurringCreatesSQL = `
 		  and event.recurrence_parent_id = $5::uuid
 	),
 	active_owner_connection as (
-		select connection.id
+		select connection.id, connection.routing_v2
 		from public.google_calendar_tokens connection
 		where connection.organization_id = $1::uuid
 		  and connection.user_id = $4::uuid
@@ -192,10 +202,12 @@ const enqueueScheduleGoogleRecurringCreatesSQL = `
 			created_by
 		)
 		select $1::uuid, event.id, 'push_upsert',
-			jsonb_build_object('event_id', event.id::text, 'owner_user_id', $4::text), $3::uuid
+			jsonb_build_object('protocol_version', 2, 'event_id', event.id::text, 'owner_user_id', $4::text,
+				'target', case when (select routing_v2 from active_owner_connection)
+					and event.event_type in ('task','message','email','call') then 'tasks' else 'calendar' end), $3::uuid
 		from recurring_events event
 		where exists (select 1 from active_owner_connection)
-		returning schedule_event_id
+		returning schedule_event_id, payload->>'target' as target
 	),
 	marked_events as (
 		update public.schedule_events event
@@ -204,6 +216,7 @@ const enqueueScheduleGoogleRecurringCreatesSQL = `
 				else 'not_connected'
 			end,
 			google_sync_error = null,
+			google_sync_target = (select job.target from upsert_jobs job where job.schedule_event_id = event.id limit 1),
 			updated_at = now()
 		from recurring_events recurring
 		where event.organization_id = $1::uuid
@@ -240,7 +253,7 @@ func (repo Repository) enqueueScheduleGoogleRecurringCreates(
 
 const enqueueScheduleGoogleDeleteSQL = `
 	with target_event as (
-		select event.user_id
+		select event.user_id, event.google_sync_target
 		from public.schedule_events event
 		where event.organization_id = $1::uuid
 		  and event.id = $2::uuid
@@ -281,10 +294,15 @@ const enqueueScheduleGoogleDeleteSQL = `
 		$2::uuid,
 		'push_delete',
 		jsonb_build_object(
+			'protocol_version', 2,
+			'target', coalesce((select google_sync_target from target_event), 'calendar'),
 			'event_id', $2::text,
 			'owner_user_id', (select user_id::text from target_event),
 			'connection_id', (select id::text from active_owner_connection),
-			'link_ids', durable_links.link_ids
+			'link_ids', durable_links.link_ids,
+			'task_link_ids', coalesce((select jsonb_agg(link.id::text order by link.id)
+				from public.google_tasks_links link where link.organization_id = $1::uuid
+				and link.vimob_event_id = $2::uuid and link.deleted_at is null), '[]'::jsonb)
 		),
 		$3::uuid
 	from durable_links

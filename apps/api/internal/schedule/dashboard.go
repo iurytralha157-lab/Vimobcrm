@@ -266,8 +266,8 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 		),
 		` + scheduleDashboardOutcomeRowsCTE + `,
 		` + scheduleDashboardHourDistributionCTE(filter.DateBasis) + `,
-		active_roster as (
-			select users.id as user_id, users.name, users.avatar_url
+		visible_roster as materialized (
+			select users.id as user_id, users.name, users.avatar_url, membership.membership_generation
 			from public.users users
 			join public.organization_members membership
 			  on membership.organization_id = $1::uuid
@@ -299,7 +299,11 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 					  and coalesce(leader.is_leader, false) = true
 				)
 			  )
-			  and ($9::uuid is null or users.id = $9::uuid)
+		),
+		active_roster as (
+			select visible_roster.user_id
+			from visible_roster
+			where ($9::uuid is null or visible_roster.user_id = $9::uuid)
 			  and (
 				$10::uuid is null
 				or exists (
@@ -307,11 +311,25 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 					from public.team_members selected_team_member
 					where selected_team_member.organization_id = $1::uuid
 					  and selected_team_member.team_id = $10::uuid
-					  and selected_team_member.user_id = users.id
+					  and selected_team_member.user_id = visible_roster.user_id
 					  and coalesce(selected_team_member.is_active, false) = true
-					  and selected_team_member.membership_generation = membership.membership_generation
+					  and selected_team_member.membership_generation = visible_roster.membership_generation
 				)
 			  )
+		),
+		creator_ranking_rows as (
+			select
+				visible_roster.user_id::text as user_id,
+				left(coalesce(nullif(btrim(visible_roster.name), ''), 'Usuário removido'), 255) as name,
+				visible_roster.avatar_url,
+				creator_counts.total
+			from visible_roster
+			join (
+				select created_by, count(*)::bigint as total
+				from filtered_events
+				where created_by is not null
+				group by created_by
+			) creator_counts on creator_counts.created_by = visible_roster.user_id
 		),
 		event_responsibilities as materialized (
 			select filtered_events.id as event_id, filtered_events.user_id
@@ -490,6 +508,10 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 			'overdue_by_owner', coalesce((
 				select jsonb_agg(to_jsonb(overdue_owner_rows) order by overdue_owner_rows.overdue desc, overdue_owner_rows.name, overdue_owner_rows.user_id)
 				from overdue_owner_rows
+			), '[]'::jsonb),
+			'creator_ranking', coalesce((
+				select jsonb_agg(to_jsonb(creator_ranking_rows) order by creator_ranking_rows.total desc, creator_ranking_rows.name, creator_ranking_rows.user_id)
+				from creator_ranking_rows
 			), '[]'::jsonb),
 			'performer_ranking', coalesce((
 				select jsonb_agg(to_jsonb(performer_ranking_rows) order by performer_ranking_rows.total desc, performer_ranking_rows.completion_rate desc, performer_ranking_rows.name, performer_ranking_rows.user_id)
@@ -702,6 +724,7 @@ func scheduleDashboardFilteredEventsCTEs(scope scheduleDashboardQueryScope) stri
 				se.start_time,
 				se.end_time,
 				coalesce(se.is_all_day, false) as is_all_day,
+				se.created_by,
 				se.created_by is null as missing_creator,
 				(l.id is not null and nullif(btrim(se.lead_source_snapshot), '') is null) as missing_source_snapshot,
 				se.performed_by is null as missing_performer,
@@ -782,6 +805,9 @@ func (report *DashboardReport) normalizeCollections() {
 	}
 	if report.PerformerRanking == nil {
 		report.PerformerRanking = []DashboardPerformerRanking{}
+	}
+	if report.CreatorRanking == nil {
+		report.CreatorRanking = []DashboardTopPerformer{}
 	}
 	if report.TopPerformers == nil {
 		report.TopPerformers = []DashboardTopPerformer{}

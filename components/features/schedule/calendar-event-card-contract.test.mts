@@ -57,8 +57,10 @@ test("short consecutive appointments keep their real slot height", () => {
   assert.equal(
     calendarSource.match(/minHeight: `\$\{Math\.min\(28, height\)\}px`/g)
       ?.length,
-    2,
+    1,
   );
+  assert.match(calendarSource, /renderTimedEvents\(pivotDate\)/);
+  assert.match(calendarSource, /renderTimedEvents\(day\)/);
 });
 
 test("isolates pointer resize from drag and handles every terminal pointer path", () => {

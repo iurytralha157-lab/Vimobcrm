@@ -55,6 +55,8 @@ func findScheduleCreateReplay(ctx context.Context, queryer queryRower, actor ten
 		// of the private owner's current external integration metadata.
 		event.GoogleEventID = nil
 		event.GoogleSyncStatus = nil
+		event.GoogleSyncTarget = nil
+		event.GoogleTaskID = nil
 	}
 	return event, true, nil
 }
