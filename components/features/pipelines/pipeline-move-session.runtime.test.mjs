@@ -3,7 +3,12 @@ import test from 'node:test';
 import ts from 'typescript';
 import { QueryObserver } from '@tanstack/react-query';
 import { deferred, evaluateProduction, leadHookRuntime, productionDeclaration, turn } from '../../../hooks/leads/lead-request-runtime-fixture.mjs';
-import { applyPendingPipelineMoves, clearPendingPipelineMove, findPipelineLeadLocation, registerPendingPipelineMove, restorePipelineLeadSnapshot } from '../../../lib/pipeline-board-cache.ts';
+import {
+  applyPendingPipelineMoves, clearPendingPipelineMove, clearPendingPipelineMoves,
+  findPipelineLeadLocation, getPendingPipelineMoves, getPipelineLeadQueryScopeMatch, protectConfirmedPipelineMoves,
+  reconcilePipelineBoardSnapshot, registerPendingPipelineMove, rememberConfirmedPipelineMove,
+  restorePipelineLeadSnapshot,
+} from '../../../lib/pipeline-board-cache.ts';
 import { getOptimisticPipelineMoveOutcome } from '../../../lib/pipeline-stage-outcome.ts';
 import { getLeadStatusFinancialReviewMessage } from '../../../lib/lead-financial-review.ts';
 import { createPipelineStageSnapshot } from '../../../lib/pipeline-stage-snapshot.ts';
@@ -18,13 +23,29 @@ const leadProgressCapability = evaluateProduction(
   {}, 'leadProgressCapability',
 );
 
-function fixture({ holdFirst = true, serverCAS = false, destinationLost = false, fromStatus = 'open', savedStatus = fromStatus, financialReviewRequired = false, capabilities = {} } = {}) {
+function fixture({ holdFirst = true, serverCAS = false, destinationLost = false, fromStatus = 'open', savedStatus = fromStatus, financialReviewRequired = false, capabilities = {}, additionalLeads = 0, controlledReplies = false, filterUserId, scopedVisibleUserIds } = {}) {
   const runtime = leadHookRuntime(), requests = [], events = [], notices = [], pendingFirst = deferred();
   const scope = runtime.scope(), queryClient = runtime.client();
-  const queryKey = ['stages-with-leads', 'org-a', 'pipeline-a'];
+  const queryKey = ['stages-with-leads', 'org-a', 'pipeline-a', ...(filterUserId ? [filterUserId] : [])];
   const lead = { id: 'lead-a', stage_id: 'stage-a', assigned_user_id: 'actor-a', can_operate: true, deal_status: fromStatus, tags: [], updated_at: '2026-10-16T10:00:00.000001Z', ...capabilities };
-  const stages = [{ id: 'stage-a', leads: [lead] }, { id: 'stage-b', is_lost: destinationLost, leads: [] }, { id: 'stage-c', leads: [] }];
-  let visual = new Map(), reply, lostMove, lostLead, serverLead = { ...lead }, acceptedWrites = 0;
+  const initialLeads = [lead, ...Array.from({ length: additionalLeads }, (_, index) => ({
+    ...lead,
+    id: `lead-${index + 1}`,
+  }))].map((item, index) => ({ ...item, board_order_at: `2026-10-16T10:00:00.${String(999999 - index).padStart(6, '0')}Z` }));
+  const stages = [{ id: 'stage-a', leads: initialLeads }, { id: 'stage-b', is_lost: destinationLost, leads: [] }, { id: 'stage-c', leads: [] }];
+  const serverLeads = new Map(initialLeads.map(item => [item.id, { ...item }]));
+  const replies = new Map();
+  let visual = new Map(), reply, lostMove, lostLead, acceptedWrites = 0;
+  function persist(id, body) {
+    const serverLead = serverLeads.get(id);
+    if (body.expectedStageId !== serverLead.stage_id) throw new VimobAPIError('Changed stage', { status: 409, code: 'lead_stage_changed' });
+    if (body.expectedUpdatedAt !== serverLead.updated_at) throw new VimobAPIError('Changed lead', { status: 409, code: 'lead_changed' });
+    acceptedWrites++;
+    const saved = { ...serverLead, stage_id: body.stageId, board_order_at: body.boardOrderAt,
+      updated_at: `2026-10-16T10:01:00.${String(acceptedWrites).padStart(6, '0')}Z` };
+    serverLeads.set(id, saved);
+    return { data: { ...saved }, error: null };
+  }
   const refs = Object.fromEntries(['movePersistenceByLeadRef', 'moveRollbackSnapshotByLeadRef', 'latestMoveVersionByLeadRef', 'moveRevisionReceiptByLeadRef'].map(name => [name, { current: new Map() }]));
   const common = { ...refs, useCallback: fn => fn, nextMovePersistenceStartAtRef: { current: 0 }, PIPELINE_MOVE_PERSISTENCE_INTERVAL_MS: 135,
     waitForPipelineMove: async () => undefined };
@@ -33,24 +54,23 @@ function fixture({ holdFirst = true, serverCAS = false, destinationLost = false,
   const dependencies = {
     moveContract: { getCurrent: () => ({ contract: 'revision-v1' }), ensureCompatible: async () => ({ contract: 'revision-v1' }) },
     ...common, leadMoveRequestScope: scope, canOperateLeads: true, isMobile: false, isDraggingRef: { current: false }, dragMoveSnapshotRef: { current: null },
-    stages, stagesWithLeads: stages, stageAutomations: [], filterDealStatus: undefined, pipelineBoardQueryKey: queryKey, pipelineBoardQueryKeyId: 'query-a',
+    stages, stagesWithLeads: stages, stageAutomations: [], filterDealStatus: undefined, scopedVisibleUserIds, pipelineBoardQueryKey: queryKey, pipelineBoardQueryKeyId: 'query-a',
     queryClient, getOptimisticDealStatusForStage, getOptimisticAutomationDealStatusForStage, getOptimisticPipelineMoveOutcome,
     getVisualPendingMoveKey, shouldKeepLeadForDealStatusFilter, createPipelineStageSnapshot, getPipelineBoardOrderAtForIndex, leadProgressCapability,
-    applyPendingPipelineMoves, clearPendingPipelineMove, registerPendingPipelineMove, findPipelineLeadLocation, restorePipelineLeadSnapshot,
+    applyPendingPipelineMoves, clearPendingPipelineMove, registerPendingPipelineMove, rememberConfirmedPipelineMove, findPipelineLeadLocation, getPipelineLeadQueryScopeMatch, restorePipelineLeadSnapshot,
     mergeMovedLeadResponse, isPipelineDealStatus, isUnsafePartialStageDrop, shouldApplyVisualPendingMove, enqueueLeadMovePersistence: enqueue, realtimeOrganizationId: 'org-a',
     capturePipelineMoveRevision, resolvePipelineMoveRevision, PipelineMoveRevisionConflict, getLeadStatusFinancialReviewMessage,
     window: { setTimeout() {} }, preserveOptimisticPipelineBoard() {},
     setVisualPendingMoves: update => { visual = update(visual); },
     leadsAPI: { moveLeadStage: async (...args) => {
       requests.push(args); if (reply) return reply.promise;
-      const body = args[1];
-      if (serverCAS) {
-        if (body.expectedStageId !== serverLead.stage_id) throw new VimobAPIError('Changed stage', { status: 409, code: 'lead_stage_changed' });
-        if (body.expectedUpdatedAt !== serverLead.updated_at) throw new VimobAPIError('Changed lead', { status: 409, code: 'lead_changed' });
-        acceptedWrites++;
-        serverLead = { ...serverLead, stage_id: body.stageId, board_order_at: body.boardOrderAt, updated_at: `2026-10-16T10:01:00.00000${acceptedWrites}Z` };
-        return { data: { ...serverLead }, error: null };
+      const [id, body] = args;
+      if (controlledReplies) {
+        const pending = deferred();
+        replies.set(id, { ...pending, body });
+        return pending.promise;
       }
+      if (serverCAS) return persist(id, body);
       return { data: { ...lead, stage_id: 'stage-b', deal_status: savedStatus, financial_review_required: financialReviewRequired }, error: null };
     } },
     notifyLeadRealtimeChange: event => events.push(event), toast: { error: value => notices.push(value), warning: value => notices.push(value) },
@@ -65,20 +85,41 @@ function fixture({ holdFirst = true, serverCAS = false, destinationLost = false,
   }, name);
   const execute = (...args) => handler('executeLeadMove')(...args);
   queryClient.setQueryData(queryKey, stages);
-  const serverBoard = () => stages.map(stage => ({ ...stage, leads: stage.id === serverLead.stage_id ? [{ ...serverLead }] : [] }));
-  const observer = new QueryObserver(queryClient, { queryKey, queryFn: async () => serverBoard(), staleTime: Infinity });
+  const serverBoard = () => stages.map(stage => {
+    const leads = [...serverLeads.values()].filter(item => item.stage_id === stage.id &&
+      (!filterUserId || item.assigned_user_id === filterUserId) && (!scopedVisibleUserIds || scopedVisibleUserIds.includes(item.assigned_user_id)))
+      .sort((a, b) => b.board_order_at.localeCompare(a.board_order_at)).map(item => ({ ...item }));
+    return { ...stage, leads, total_lead_count: leads.length, has_more: false };
+  });
+  let snapshotToRead;
+  const observer = new QueryObserver(queryClient, {
+    queryKey, staleTime: Infinity,
+    queryFn: async () => protectConfirmedPipelineMoves(queryClient, queryKey, snapshotToRead || serverBoard()),
+    structuralSharing: (oldData, newData) => reconcilePipelineBoardSnapshot(oldData, newData, getPendingPipelineMoves(queryKey)),
+  });
   const unsubscribe = serverCAS ? observer.subscribe(() => undefined) : () => undefined;
   const first = holdFirst ? enqueue('lead-a', () => pendingFirst.promise) : Promise.resolve();
   return { runtime, requests, events, notices, refs, first, pendingFirst, visual: () => visual,
     invoke: () => execute({ draggableId: 'lead-a', source: { droppableId: 'stage-a', index: 0 }, destination: { droppableId: 'stage-b', index: 0 } },
       { lead, revision: capturePipelineMoveRevision(lead, 'stage-a'), operation: scope.capture(), queryKeyId: 'query-a' }),
-    start: source => handler('handleDragStart')({ draggableId: 'lead-a', source: { droppableId: source || 'stage-a', index: 0 } }),
-    drop: (source = 'stage-a', destination = 'stage-b', index = 0) => handler('handleDragEnd')({ draggableId: 'lead-a', source: { droppableId: source, index: 0 }, destination: { droppableId: destination, index } }),
+    start: (source = 'stage-a', id = 'lead-a') => handler('handleDragStart')({ draggableId: id, source: { droppableId: source, index: 0 } }),
+    drop: (source = 'stage-a', destination = 'stage-b', index = 0, id = 'lead-a', sourceIndex = 0) => handler('handleDragEnd')({ draggableId: id, source: { droppableId: source, index: sourceIndex }, destination: { droppableId: destination, index } }),
     confirm: reason => handler('handleLostReasonConfirm')(reason), lost: () => lostMove,
-    patchServer: patch => { serverLead = { ...serverLead, ...patch }; }, server: () => serverLead, writes: () => acceptedWrites,
+    patchServer: (patch, id = 'lead-a') => serverLeads.set(id, { ...serverLeads.get(id), ...patch }),
+    server: (id = 'lead-a') => serverLeads.get(id), writes: () => acceptedWrites, serverBoard,
+    settle: id => {
+      const pending = replies.get(id);
+      assert.ok(pending, id);
+      try { pending.resolve(persist(id, pending.body)); } catch (error) { pending.reject(error); }
+      replies.delete(id);
+    },
+    refetch: async (snapshot) => {
+      snapshotToRead = snapshot;
+      try { await observer.refetch({ throwOnError: true }); } finally { snapshotToRead = undefined; }
+    },
     refresh: () => queryClient.setQueryData(queryKey, serverBoard()), board: () => queryClient.getQueryData(queryKey),
     deferReply: () => reply = deferred(), clearReply: () => { reply = undefined; },
-    close: () => { unsubscribe(); clearPendingPipelineMove(queryKey, 'lead-a'); runtime.close(); } };
+    close: () => { unsubscribe(); clearPendingPipelineMoves(queryKey); runtime.close(); } };
 }
 
 test('progress capability lets the leader archive a broker lead through the usual loss confirmation', async () => {
@@ -256,5 +297,103 @@ test('server-requested loss reason preserves the first drag revision on confirma
     await f.confirm('Synthetic reason'); await turn();
     assert.equal(f.requests.length, 2); assert.equal(f.requests[1][1].expectedUpdatedAt, '2026-10-16T10:00:00.000001Z');
     assert.equal(f.writes(), 0); assert.equal(f.board()[0].leads[0].deal_status, 'won'); assert.equal(f.lost(), null);
+  } finally { f.close(); }
+});
+
+test('rapid moves of 30 leads survive late reads and out-of-order confirmations, with one isolated conflict', async () => {
+  const f = fixture({ holdFirst: false, serverCAS: true, additionalLeads: 29, controlledReplies: true });
+  try {
+    const oldBoard = f.serverBoard();
+    const attempts = oldBoard[0].leads.map(({ id }, index) => ({ id, destination: index % 2 ? 'stage-b' : 'stage-c' }));
+    const expectedPlacement = [
+      [], attempts.filter(({ destination }) => destination === 'stage-b').map(({ id }) => id).reverse(),
+      attempts.filter(({ destination }) => destination === 'stage-c').map(({ id }) => id).reverse(),
+    ];
+    const moves = attempts.map(({ id, destination }) => {
+      f.start('stage-a', id);
+      return f.drop('stage-a', destination, 0, id);
+    });
+    await turn();
+    assert.equal(f.requests.length, 30);
+
+    for (let index = 28; index >= 24; index--) {
+      f.settle(attempts[index].id);
+      await moves[index];
+    }
+    await f.refetch(oldBoard);
+    assert.deepEqual(f.board().map(stage => stage.leads.map(lead => lead.id)), expectedPlacement);
+
+    f.patchServer({ stage_id: 'stage-c', updated_at: '2026-10-16T10:00:00.000002Z' }, attempts[29].id);
+    for (let index = 23; index >= 0; index--) {
+      f.settle(attempts[index].id);
+      await moves[index];
+    }
+    await f.refetch(oldBoard);
+    assert.deepEqual(f.board().map(stage => stage.leads.map(lead => lead.id)), expectedPlacement);
+
+    f.settle(attempts[29].id);
+    await moves[29];
+    await turn();
+    assert.equal(f.writes(), 29);
+    assert.equal(f.events.length, 29);
+    assert.equal(f.notices.length, 1);
+    assert.match(f.notices[0], /atualizado em outra sessão/);
+    assert.deepEqual(f.board().map(stage => stage.leads.map(lead => lead.id)),
+      f.serverBoard().map(stage => stage.leads.map(lead => lead.id)));
+    assert.equal([...f.visual().values()].some(({ move }) => move.leadId === attempts[29].id), false);
+  } finally { f.close(); }
+});
+
+test('a same-column reorder retains the accepted microsecond position during a late read', async () => {
+  const f = fixture({ holdFirst: false, serverCAS: true, additionalLeads: 2 });
+  try {
+    const oldBoard = f.serverBoard();
+    f.start();
+    await f.drop('stage-a', 'stage-a', 2);
+    await f.refetch(oldBoard);
+    const current = f.board()[0].leads;
+    assert.deepEqual(current.map(lead => lead.id), ['lead-1', 'lead-2', 'lead-a']);
+    assert.equal(current[2].board_order_at, f.server().board_order_at);
+    assert.equal(current[2].updated_at, f.server().updated_at);
+
+    f.patchServer({ updated_at: '2026-10-16T10:01:00.000002Z', board_order_at: oldBoard[0].leads[0].board_order_at });
+    await f.refetch();
+    assert.deepEqual(f.board()[0].leads.map(lead => lead.id), ['lead-a', 'lead-1', 'lead-2']);
+  } finally { f.close(); }
+});
+
+test('a confirmed move never restores a card omitted from the authorized board snapshot', async () => {
+  const f = fixture({ holdFirst: false, serverCAS: true });
+  try {
+    const oldBoard = f.serverBoard();
+    f.start();
+    await f.drop();
+    await f.refetch(oldBoard.map(stage => ({ ...stage, leads: [], total_lead_count: 0 })));
+
+    assert.equal(findPipelineLeadLocation(f.board(), 'lead-a'), null);
+    assert.equal([...f.visual().values()].some(entry => shouldApplyVisualPendingMove(f.board(), entry)), false);
+  } finally { f.close(); }
+});
+
+for (const [scope, options] of [
+  ['selected owner filter', { filterUserId: 'actor-a' }],
+  ['unfiltered own-only visibility', { scopedVisibleUserIds: ['actor-a'] }],
+]) test(`a confirmed reassignment respects ${scope} even on a late read`, async () => {
+  const f = fixture({ holdFirst: false, serverCAS: true, ...options });
+  try {
+    const oldBoard = f.serverBoard();
+    const reply = f.deferReply();
+    f.start();
+    const drop = f.drop();
+    await turn();
+    f.patchServer({ stage_id: 'stage-b', assigned_user_id: 'actor-b', updated_at: '2026-10-16T10:00:00.000002Z' });
+    reply.resolve({ data: f.server(), error: null });
+    await drop;
+
+    assert.equal(findPipelineLeadLocation(f.board(), 'lead-a'), null);
+    await f.refetch(oldBoard);
+    assert.equal(findPipelineLeadLocation(f.board(), 'lead-a'), null);
+    await f.refetch();
+    assert.equal(findPipelineLeadLocation(f.board(), 'lead-a'), null);
   } finally { f.close(); }
 });

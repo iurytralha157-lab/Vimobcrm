@@ -9,7 +9,9 @@ import { parseDomainInput, validateDomainResponse } from '../../lib/validation/c
 import { apiLeadResponseSchema, leadMoveStageInputSchema } from '../../lib/validation/leads.ts';
 import { capturePipelineMoveRevision, resolvePipelineMoveRevision, PipelineMoveRevisionConflict } from '../../lib/pipeline-move-revision.ts';
 import { getPipelineBoardOrderAtForIndex } from '../../lib/pipeline-board-order.ts';
-import { applyPendingPipelineMoves, clearPendingPipelineMove, findPipelineLeadLocation, registerPendingPipelineMove, restorePipelineLeadSnapshot } from '../../lib/pipeline-board-cache.ts';
+import { applyPendingPipelineMoves, clearPendingPipelineMove, clearPendingPipelineMoves, findPipelineLeadLocation, getPendingPipelineMoves, getPipelineLeadQueryScopeMatch, protectConfirmedPipelineMoves, reconcilePipelineBoardSnapshot, registerPendingPipelineMove, rememberConfirmedPipelineMove, restorePipelineLeadSnapshot } from '../../lib/pipeline-board-cache.ts';
+import { leadProgressCapability } from '../../lib/lead-operation-capability.ts';
+import { getLeadStatusFinancialReviewMessage } from '../../lib/lead-financial-review.ts';
 import { getOptimisticPipelineMoveOutcome, getPipelineStageOutcome } from '../../lib/pipeline-stage-outcome.ts';
 import { createPipelineStageSnapshot } from '../../lib/pipeline-stage-snapshot.ts';
 import { mergeLeadServerResponse } from '../../lib/merge-lead-server-response.ts';
@@ -80,10 +82,12 @@ const uiDependencies = {
   ts, QueryObserver, deferred, leadHookRuntime, productionDeclaration,
   captureLeadRequestIntent, getGlobalSignOutSessionId, capturePipelineMoveRevision, resolvePipelineMoveRevision, PipelineMoveRevisionConflict,
   getPipelineBoardOrderAtForIndex, applyPendingPipelineMoves, clearPendingPipelineMove, findPipelineLeadLocation,
-  registerPendingPipelineMove, restorePipelineLeadSnapshot, getOptimisticPipelineMoveOutcome, createPipelineStageSnapshot,
+  registerPendingPipelineMove, rememberConfirmedPipelineMove, restorePipelineLeadSnapshot, getOptimisticPipelineMoveOutcome, createPipelineStageSnapshot,
   VimobAPIError, shouldApplyVisualPendingMove, getOptimisticDealStatusForStage, getOptimisticAutomationDealStatusForStage,
   getVisualPendingMoveKey, isPipelineDealStatus, isUnsafePartialStageDrop, mergeMovedLeadResponse, shouldKeepLeadForDealStatusFilter,
   getPipelineStageOutcome, mergeLeadServerResponse, mergeLeadDetailMutation, leadFieldOptimismRuntime,
+  leadProgressCapability, getLeadStatusFinancialReviewMessage, clearPendingPipelineMoves,
+  getPendingPipelineMoves, getPipelineLeadQueryScopeMatch, protectConfirmedPipelineMoves, reconcilePipelineBoardSnapshot,
 };
 
 // Reuse the existing real-handler fixtures, injecting only the new contract

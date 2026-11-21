@@ -21,6 +21,7 @@ import {
 import {
   getPipelineBoardQueryKeyId,
   getPendingPipelineMoves,
+  protectConfirmedPipelineMoves,
   reconcilePipelineBoardSnapshot,
 } from '@/lib/pipeline-board-cache';
 import type { Tables } from '@/lib/supabase/types';
@@ -275,7 +276,7 @@ export function useStagesWithLeads(
           },
         });
         assertCurrent();
-        return refreshedBoard;
+        return protectConfirmedPipelineMoves(queryClient, queryKey, refreshedBoard);
       }
 
       const previousRestoreState = backgroundRestoreStateRef.current;
@@ -291,7 +292,7 @@ export function useStagesWithLeads(
         attemptedStageIds: new Set(),
       };
 
-      return (await getPipelineBoard({
+      const freshBoard = (await getPipelineBoard({
         organizationId,
         pipelineId,
         filterUserId,
@@ -299,6 +300,8 @@ export function useStagesWithLeads(
         limit: LEADS_PER_STAGE,
         signal,
       })) as StageWithLeads[];
+      signal.throwIfAborted();
+      return protectConfirmedPipelineMoves(queryClient, queryKey, freshBoard);
     },
     retry: shouldRetryPipelineQuery,
     retryDelay: (attemptIndex) => Math.min(800 * 2 ** attemptIndex, 8000),

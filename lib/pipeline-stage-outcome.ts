@@ -4,12 +4,15 @@ export function getOptimisticPipelineMoveOutcome(params: {
   isSameStage: boolean;
   currentDealStatus?: string | null;
   destinationOutcome?: PipelineStageOutcome | null;
+  sourceStage: PipelineStageOutcomeStage | null | undefined;
+  stageAutomations?: readonly PipelineStageOutcomeAutomation[];
 }): PipelineStageOutcome | null {
   if (params.isSameStage) return null;
   if (params.destinationOutcome) return params.destinationOutcome;
-  return params.currentDealStatus === 'won' || params.currentDealStatus === 'lost'
-    ? 'open'
-    : null;
+  const status = params.currentDealStatus;
+  if (status !== 'won' && status !== 'lost') return null;
+  const sourceOutcomes = getConfiguredStageOutcomes(params.sourceStage, params.stageAutomations);
+  return sourceOutcomes.size === 1 && sourceOutcomes.has(status) ? 'open' : null;
 }
 
 type PipelineStageOutcomeStage = {
@@ -42,24 +45,31 @@ function getAutomationOutcome(automation: PipelineStageOutcomeAutomation) {
     : null;
 }
 
+function getConfiguredStageOutcomes(
+  stage: PipelineStageOutcomeStage | null | undefined,
+  automations: readonly PipelineStageOutcomeAutomation[] = [],
+): Set<PipelineStageOutcome> {
+  const outcomes = new Set<PipelineStageOutcome>();
+  if (stage?.is_lost) outcomes.add('lost');
+  if (stage?.is_won) outcomes.add('won');
+  for (const automation of automations) {
+    if (!stage?.id || automation.stage_id !== stage.id || automation.is_active === false ||
+        automation.automation_type !== 'change_deal_status_on_enter') continue;
+    const outcome = getAutomationOutcome(automation);
+    if (outcome) outcomes.add(outcome);
+  }
+  return outcomes;
+}
+
 export function getPipelineStageOutcome(
   stage: PipelineStageOutcomeStage | null | undefined,
   automations?: readonly PipelineStageOutcomeAutomation[],
 ): PipelineStageOutcome | null {
-  if (stage?.is_lost) return 'lost';
-
-  const outcomes = (automations || [])
-    .filter((automation) =>
-      automation.stage_id === stage?.id &&
-      automation.is_active !== false &&
-      automation.automation_type === 'change_deal_status_on_enter',
-    )
-    .map(getAutomationOutcome);
-
+  const outcomes = getConfiguredStageOutcomes(stage, automations);
   // A lost outcome always requires the preflight reason, even if stale or
   // conflicting configuration also contains a won action.
-  if (outcomes.includes('lost')) return 'lost';
-  if (stage?.is_won || outcomes.includes('won')) return 'won';
-  if (outcomes.includes('open')) return 'open';
+  if (outcomes.has('lost')) return 'lost';
+  if (outcomes.has('won')) return 'won';
+  if (outcomes.has('open')) return 'open';
   return null;
 }

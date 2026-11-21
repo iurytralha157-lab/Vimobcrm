@@ -3299,6 +3299,10 @@ paths:
   /v1/leads/{id}/move-stage:
     post:
       summary: Move a lead to another pipeline stage
+      description: >-
+        Moving between stages without a configured outcome preserves the lead's deal status and property reservation.
+        A configured outcome at the destination may change the result.
+        Leaving a stage configured for the lead's current terminal result can reopen the lead.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - name: id
@@ -3331,7 +3335,9 @@ paths:
         "404":
           $ref: "#/components/responses/APIError"
         "409":
-          description: The lead revision or expected stage changed. Refresh the lead and ask for a new decision; do not retry the stale move. Closed leads moving between stages require expectedUpdatedAt.
+          description: >-
+            The lead revision or expected stage changed. Refresh the lead and ask for a new decision; do not retry the stale move.
+            Closed leads moving between stages require expectedUpdatedAt. An outcome change can also conflict with the property reservation.
           content:
             application/json:
               schema:

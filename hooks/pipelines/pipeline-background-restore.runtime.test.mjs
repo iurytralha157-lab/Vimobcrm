@@ -7,7 +7,7 @@ import { captureQueryClientAccess } from '../../lib/access/query-client-access.t
 import { stageWithLeadsQueryKey } from '../../lib/pipeline-query-key.ts';
 import { capturePipelinePageLease } from '../../lib/pipeline-page-lease.ts';
 import { refreshExpandedPipelineBoard } from './refresh-expanded-pipeline-board.ts';
-import { getPipelineBoardQueryKeyId, getPendingPipelineMoves, registerPendingPipelineMove, clearPendingPipelineMoves } from '../../lib/pipeline-board-cache.ts';
+import { getPipelineBoardQueryKeyId, getPendingPipelineMoves, protectConfirmedPipelineMoves, registerPendingPipelineMove, clearPendingPipelineMoves } from '../../lib/pipeline-board-cache.ts';
 import { buildPipelineStageRestorePlans, createPipelinePaginationStorageKey, getPipelineStageLoadedCountsFromBoard, getPipelineStagePaginationAfterPage, hasMorePipelineStageLeadsAfterPage, mergePipelineStageLoadedCounts } from '../../lib/pipeline-pagination-state.ts';
 import { evaluateProduction, productionDeclaration, deferred, turn } from '../leads/lead-request-runtime-fixture.mjs';
 
@@ -44,7 +44,7 @@ function runtime({ desired = { 'stage-a': 24 }, stages = ['stage-a'] } = {}) {
     },
     getGlobalSignOutSessionId: session => session?.sid, captureLeadRequestIntent, captureQueryClientAccess,
     getVimobAPIAccessTokenUserId: () => auth.user?.id, getVimobAPIAccessTokenSessionId: () => auth.session?.sid,
-    stageWithLeadsQueryKey, capturePipelinePageLease, getPipelineBoardQueryKeyId, getPendingPipelineMoves, refreshExpandedPipelineBoard,
+    stageWithLeadsQueryKey, capturePipelinePageLease, getPipelineBoardQueryKeyId, getPendingPipelineMoves, protectConfirmedPipelineMoves, refreshExpandedPipelineBoard,
     buildPipelineStageRestorePlans, createPipelinePaginationStorageKey, getPipelineStageLoadedCountsFromBoard,
     hasMorePipelineStageLeadsAfterPage, mergePipelineStageLoadedCounts,
     getPipelineStagePaginationAfterPage,

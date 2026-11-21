@@ -41,7 +41,7 @@ for (const [hook, file, family] of [
     normalizeAutomation: row => row, stageAutomationsQueryKey: () => queryKey,
     select: data => family === 'stage-automations' ? data.rows : data,
     shouldRetryPipelineQuery: () => false, reusePreviousDataWhenKeyPartsMatch: previous => previous,
-    reconcilePipelineBoardSnapshot: (_old, next) => next, getPendingPipelineMoves: () => [],
+    reconcilePipelineBoardSnapshot: (_old, next) => next, getPendingPipelineMoves: () => [], protectConfirmedPipelineMoves: (_client, _key, board) => board,
     setRestoreError: () => {}, queryClient: client, paginationStorageKey: null, queryKeyId: 'synthetic',
     buildPipelineStageRestorePlans,
     readPipelineStageLoadedCounts: () => ({}), mergePipelineStageLoadedCounts: () => ({}), restoreIdentity: {},

@@ -921,11 +921,37 @@ func terminalStageDealStatus(isWon bool, isLost bool) (string, error) {
 	return "", nil
 }
 
-func effectiveMoveStageDealStatus(currentStatus string, destinationStatus string) string {
-	if destinationStatus == "" && (currentStatus == "won" || currentStatus == "lost") {
-		return "open"
+func (repo Repository) resolveStageTransitionDealStatus(ctx context.Context, tx pgx.Tx, organizationID string, current leadSnapshot, destinationStatus string) (string, error) {
+	if destinationStatus != "" || current.StageID == "" || (current.DealStatus != "won" && current.DealStatus != "lost") {
+		return destinationStatus, nil
 	}
-	return destinationStatus
+
+	var isWon, isLost bool
+	err := tx.QueryRow(ctx, `
+		select coalesce(s.is_won, false), coalesce(s.is_lost, false)
+		from public.stages s
+		where s.organization_id = $1::uuid and s.id = $2::uuid
+		for share of s
+	`, organizationID, current.StageID).Scan(&isWon, &isLost)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+
+	sourceStatus, err := repo.resolveMoveStageDealStatus(ctx, tx, organizationID, current.StageID, isWon, isLost)
+	if errors.Is(err, ErrMoveStageConfigurationConflict) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	// An ordinary stage move preserves manually recorded outcomes.
+	if sourceStatus == current.DealStatus {
+		return "open", nil
+	}
+	return "", nil
 }
 
 func moveStagePredictedStatusInput(status string, lostReason *string) updateInput {
@@ -1576,8 +1602,12 @@ func (repo Repository) applyDestinationDealStatus(ctx context.Context, tx pgx.Tx
 		}
 	}
 
+	if destinationStageID == current.StageID {
+		return nil
+	}
+
 	destinationStatus := ""
-	if destinationStageID != "" && destinationStageID != current.StageID {
+	if destinationStageID != "" {
 		resolved, err := repo.resolveMoveStageDestination(ctx, tx, organizationID, destinationStageID)
 		if err != nil {
 			return err
@@ -1589,11 +1619,12 @@ func (repo Repository) applyDestinationDealStatus(ctx context.Context, tx pgx.Tx
 		if err != nil {
 			return err
 		}
-		destinationStatus = effectiveMoveStageDealStatus(current.DealStatus, destinationStatus)
-	} else if destinationStageID == "" && current.StageID != "" {
-		destinationStatus = effectiveMoveStageDealStatus(current.DealStatus, "")
 	}
 
+	destinationStatus, err := repo.resolveStageTransitionDealStatus(ctx, tx, organizationID, current, destinationStatus)
+	if err != nil {
+		return err
+	}
 	return mergeStageDrivenDealStatus(input, destinationStatus)
 }
 

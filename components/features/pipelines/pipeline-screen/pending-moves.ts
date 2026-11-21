@@ -3,6 +3,7 @@ import {
   findPipelineLeadLocation,
   pipelineBoardMatchesMove,
 } from '@/lib/pipeline-board-cache';
+import { parsePipelineOrderMicros } from '@/lib/pipeline-board-order';
 
 import type { VisualPendingPipelineMove } from './model';
 
@@ -11,12 +12,10 @@ export function shouldApplyVisualPendingMove(
   entry: VisualPendingPipelineMove,
 ) {
   if (!entry.release) return true;
-  if (entry.release.kind === 'confirmed') {
-    return !pipelineBoardMatchesMove(board, entry.move);
-  }
-
-  return (
-    findPipelineLeadLocation(board, entry.move.leadId)?.stageId !==
-    entry.release.stageId
-  );
+  const lead = findPipelineLeadLocation(board, entry.move.leadId)?.lead;
+  if (!lead) return false;
+  const revision = parsePipelineOrderMicros(lead.updated_at);
+  const confirmed = parsePipelineOrderMicros(entry.move.optimisticPatch.updated_at);
+  if (confirmed !== null && revision !== null && revision > confirmed) return false;
+  return !pipelineBoardMatchesMove(board, entry.move);
 }

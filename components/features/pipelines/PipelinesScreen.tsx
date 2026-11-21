@@ -60,7 +60,9 @@ import {
   clearPendingPipelineMove,
   findPipelineLeadLocation,
   getPipelineBoardQueryKeyId,
+  getPipelineLeadQueryScopeMatch,
   registerPendingPipelineMove,
+  rememberConfirmedPipelineMove,
   restorePipelineLeadSnapshot,
   type PendingPipelineMove,
 } from '@/lib/pipeline-board-cache';
@@ -1082,6 +1084,8 @@ export default function Pipelines() {
     const optimisticMovedDealStatus = getOptimisticPipelineMoveOutcome({
       isSameStage,
       currentDealStatus: movedLead.deal_status,
+      sourceStage,
+      stageAutomations,
       destinationOutcome: configuredDestinationDealStatus,
     });
     const optimisticStatusChangedAt = new Date().toISOString();
@@ -1204,19 +1208,11 @@ export default function Pipelines() {
       if (!requestOperation.isCurrent()) { reconcileEndedMove(); return; }
       const expectedUpdatedAt = resolvePipelineMoveRevision(snapshot.revision);
       if (!expectedUpdatedAt) throw new PipelineMoveRevisionConflict();
-      const currentStages = queryClient.getQueryData<StageWithLeads[]>(queryKey) || stages;
-      const persistedStage = currentStages.find((stage) => stage.id === newStageId);
-      const persistedLead = persistedStage?.leads?.find((lead) => lead.id === draggableId);
-      const persistedBoardOrderAt =
-        persistedLead?.board_order_at ||
-        optimisticPatch.board_order_at ||
-        new Date().toISOString();
-
       const updateResult = await leadsAPI.moveLeadStage(draggableId, {
         stageId: newStageId,
         expectedStageId: oldStageId,
         expectedUpdatedAt,
-        boardOrderAt: persistedBoardOrderAt,
+        boardOrderAt: nextBoardOrderAt,
         lostReason,
       }, realtimeOrganizationId, requestOperation.intent, moveStageContract);
 
@@ -1253,6 +1249,9 @@ export default function Pipelines() {
             ? createPipelineStageSnapshot(confirmedStage)
             : movedLeadFromRpc.stage || optimisticPatch.stage,
         } as PipelineLead;
+        const ownerLeftVisibleScope = confirmedLead.assigned_user_id !== movedLead.assigned_user_id &&
+          scopedVisibleUserIds !== undefined &&
+          (!confirmedLead.assigned_user_id || !scopedVisibleUserIds.includes(confirmedLead.assigned_user_id));
 
         confirmedMove = {
           ...pendingMove,
@@ -1262,9 +1261,25 @@ export default function Pipelines() {
           fallbackLead: confirmedLead,
           optimisticPatch: confirmedLead,
           keepInDestination:
-            isSameStage ||
-            shouldKeepLeadForDealStatusFilter(responseStatus, effectiveFilterDealStatus),
+            !ownerLeftVisibleScope &&
+            (isSameStage || shouldKeepLeadForDealStatusFilter(responseStatus, effectiveFilterDealStatus)) &&
+            getPipelineLeadQueryScopeMatch(queryKey, confirmedLead) !== 'mismatch',
         };
+
+        const { updated_at, board_order_at, stage_entered_at, deal_status, won_at, lost_at, lost_reason } = movedLeadFromRpc;
+        rememberConfirmedPipelineMove(queryClient, queryKey, {
+          ...confirmedMove,
+          optimisticPatch: {
+            updated_at,
+            board_order_at: board_order_at ?? nextBoardOrderAt,
+            stage: confirmedLead.stage,
+            ...(stage_entered_at !== undefined && { stage_entered_at }),
+            ...(deal_status !== undefined && { deal_status }),
+            ...(won_at !== undefined && { won_at }),
+            ...(lost_at !== undefined && { lost_at }),
+            ...(lost_reason !== undefined && { lost_reason }),
+          },
+        }, requestOperation.canReconcileCapturedAccess);
       }
 
       // A queued second move may already be visible. Its rollback must land on
@@ -1278,8 +1293,8 @@ export default function Pipelines() {
       }
       if (!isLatestMoveForLead()) return;
 
-      // Any GET started before the transaction committed must not win after
-      // the mutation response. A fresh request after this point is safe.
+      // Discard in-flight reads, then keep the accepted revision until the
+      // board reads that revision or a newer one.
       await queryClient.cancelQueries({ queryKey, exact: true });
       if (!requestOperation.isCurrent()) { reconcileEndedMove(); return; }
       if (!isLatestMoveForLead()) return;
@@ -1337,26 +1352,12 @@ export default function Pipelines() {
       queryClient.setQueryData<StageWithLeads[]>(queryKey, (current) =>
         restorePipelineLeadSnapshot(current, latestRollbackData, draggableId),
       );
-      const rollbackLocation = findPipelineLeadLocation<PipelineLead, StageWithLeads>(
-        latestRollbackData,
-        draggableId,
-      );
       setVisualPendingMoves((current) => {
         const entry = current.get(visualMoveKey);
         if (!entry || entry.move.version !== moveVersion) return current;
 
         const next = new Map(current);
-        if (!rollbackLocation) {
-          next.delete(visualMoveKey);
-        } else {
-          next.set(visualMoveKey, {
-            ...entry,
-            release: {
-              kind: 'rollback',
-              stageId: rollbackLocation.stageId,
-            },
-          });
-        }
+        next.delete(visualMoveKey);
         return next;
       });
       moveRollbackSnapshotByLeadRef.current.delete(draggableId);
@@ -1397,6 +1398,7 @@ export default function Pipelines() {
     filterDealStatus,
     pipelineBoardQueryKey,
     pipelineBoardQueryKeyId,
+    scopedVisibleUserIds,
     queryClient,
     realtimeOrganizationId,
     enqueueLeadMovePersistence,

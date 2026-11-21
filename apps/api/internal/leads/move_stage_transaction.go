@@ -66,7 +66,10 @@ func (repo Repository) moveStageTx(ctx context.Context, tx pgx.Tx, tenantContext
 		if err != nil {
 			return moveStageTransition{}, err
 		}
-		effectiveStatus = effectiveMoveStageDealStatus(current.DealStatus, effectiveStatus)
+		effectiveStatus, err = repo.resolveStageTransitionDealStatus(ctx, tx, tenantContext.OrganizationID, current, effectiveStatus)
+		if err != nil {
+			return moveStageTransition{}, err
+		}
 	}
 	predictedStatusInput := moveStagePredictedStatusInput(effectiveStatus, input.LostReason)
 	if err := validateLostReasonContract(current, predictedStatusInput); err != nil {

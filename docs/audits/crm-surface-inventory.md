@@ -1,7 +1,7 @@
 # Inventario canonico de superficies do CRM
 
 Gerado por `node scripts/audits/inventory-crm-surfaces.mjs --write`.
-O conteudo e deterministico para o digest `fc29f904e8859054d05a696a3530817528f1e94fa1cace582ade4ed507d3534e`.
+O conteudo e deterministico para o digest `1f0b692286daba3676874f48b5bdae8e522f689a820540b9fe2aded44c342cf5`.
 
 ## Denominadores
 

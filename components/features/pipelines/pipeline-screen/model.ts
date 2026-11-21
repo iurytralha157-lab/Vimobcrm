@@ -19,10 +19,7 @@ export type PipelineSummary = {
 export type VisualPendingPipelineMove = {
   queryKeyId: string;
   move: PendingPipelineMove<PipelineLead>;
-  release:
-    | null
-    | { kind: 'confirmed' }
-    | { kind: 'rollback'; stageId: string | null };
+  release: { kind: 'confirmed' } | null;
 };
 
 export type ServerSearchSnapshot = {

@@ -533,20 +533,6 @@ func TestTerminalStageDealStatusRejectsAmbiguousTerminalStage(t *testing.T) {
 	}
 }
 
-func TestEffectiveMoveStageDealStatusReopensWhenLeavingTerminalStage(t *testing.T) {
-	for _, current := range []string{"won", "lost"} {
-		if got := effectiveMoveStageDealStatus(current, ""); got != "open" {
-			t.Fatalf("effective status from %q to ordinary stage = %q, want open", current, got)
-		}
-	}
-	if got := effectiveMoveStageDealStatus("open", ""); got != "" {
-		t.Fatalf("open to ordinary stage = %q, want no status update", got)
-	}
-	if got := effectiveMoveStageDealStatus("lost", "won"); got != "won" {
-		t.Fatalf("explicit destination status = %q, want won", got)
-	}
-}
-
 func TestMergeStageDrivenDealStatusMatchesMoveStageSemantics(t *testing.T) {
 	input := updateInput{}
 	if err := mergeStageDrivenDealStatus(&input, "won"); err != nil {

@@ -20,7 +20,7 @@ test('the production drop handler refuses a one-microsecond gap before any optim
   const drag = { current: false };
   const dependencies = {
     moveContract: { getCurrent: () => ({ contract: 'revision-v1' }) },
-    useCallback: fn => fn, stages, stagesWithLeads: stages, stageAutomations: [], filterDealStatus: 'all',
+    useCallback: fn => fn, stages, stagesWithLeads: stages, stageAutomations: [], filterDealStatus: 'all', scopedVisibleUserIds: undefined,
     pipelineBoardQueryKey: key, pipelineBoardQueryKeyId: 'key', canOperateLeads: true, isMobile: false,
     realtimeOrganizationId: 'org-a', isDraggingRef: drag, leadProgressCapability,
     getOptimisticDealStatusForStage: () => null, getOptimisticAutomationDealStatusForStage: () => null,

@@ -1,4 +1,5 @@
-import { replaceEqualDeep } from '@tanstack/react-query';
+import { replaceEqualDeep, type QueryClient } from '@tanstack/react-query';
+import { parsePipelineOrderMicros } from '@/lib/pipeline-board-order';
 import { searchPhoneIncludes, searchTextIncludes } from '@/lib/search-text';
 
 export type PipelineBoardQueryKey = readonly unknown[];
@@ -6,6 +7,8 @@ export type PipelineBoardQueryKey = readonly unknown[];
 export interface PipelineBoardLeadLike {
   id: string;
   stage_id?: string | null;
+  board_order_at?: string | null;
+  updated_at?: string | null;
   assigned_user_id?: string | null;
   team_id?: string | null;
   deal_status?: string | null;
@@ -172,6 +175,57 @@ const pendingMovesByQuery = new Map<
   Map<string, PendingPipelineMove<PipelineBoardLeadLike>>
 >();
 
+const confirmedMovesByQuery = new WeakMap<object, Map<string, {
+  move: PendingPipelineMove<PipelineBoardLeadLike>;
+  revision: bigint;
+  canReconcile: () => boolean;
+}>>();
+
+export function rememberConfirmedPipelineMove<TLead extends PipelineBoardLeadLike>(
+  client: QueryClient,
+  queryKey: PipelineBoardQueryKey,
+  move: PendingPipelineMove<TLead>,
+  canReconcile: () => boolean,
+) {
+  const query = client.getQueryCache().find({ queryKey, exact: true });
+  const revision = parsePipelineOrderMicros(move.optimisticPatch.updated_at);
+  if (!query || revision === null) return;
+
+  const moves = confirmedMovesByQuery.get(query) ?? new Map();
+  moves.set(move.leadId, { move, revision, canReconcile });
+  confirmedMovesByQuery.set(query, moves);
+}
+
+/** Only reconcile rows returned by an authorized board read. */
+export function protectConfirmedPipelineMoves<
+  TLead extends PipelineBoardLeadLike,
+  TStage extends PipelineBoardStageLike<TLead>,
+>(
+  client: QueryClient,
+  queryKey: PipelineBoardQueryKey,
+  incomingBoard: TStage[],
+) {
+  const query = client.getQueryCache().find({ queryKey, exact: true });
+  const moves = query && confirmedMovesByQuery.get(query);
+  if (!moves?.size) return incomingBoard;
+
+  let board = incomingBoard;
+  for (const [leadId, { move, revision, canReconcile }] of moves) {
+    const location = findPipelineLeadLocation<TLead, TStage>(incomingBoard, leadId);
+    const incomingRevision = parsePipelineOrderMicros(location?.lead.updated_at);
+    if (!canReconcile() || !location || incomingRevision === null || incomingRevision >= revision) {
+      moves.delete(leadId);
+      continue;
+    }
+
+    board = applyPendingPipelineMove(board, {
+      ...move,
+      fallbackLead: location.lead,
+    } as PendingPipelineMove<TLead>);
+  }
+  return board;
+}
+
 export function getPipelineBoardQueryKeyId(queryKey: PipelineBoardQueryKey) {
   return JSON.stringify(queryKey);
 }
@@ -187,8 +241,8 @@ export function registerPendingPipelineMove<TLead extends PipelineBoardLeadLike>
 
   if (currentMove && currentMove.version > move.version) return;
 
-  // Reinsert so multiple moves are always applied in the order they were made.
-  nextMoves.delete(move.leadId);
+  // Only a new gesture changes ordering. ACKs may arrive in a different order.
+  if (currentMove?.version !== move.version) nextMoves.delete(move.leadId);
   nextMoves.set(
     move.leadId,
     move as PendingPipelineMove<PipelineBoardLeadLike>,
@@ -270,12 +324,15 @@ export function pipelineBoardMatchesMove<
   const locations = board.flatMap((stage) =>
     stage.leads
       .filter((lead) => lead.id === move.leadId)
-      .map(() => stage.id),
+      .map((lead) => ({ stageId: stage.id, lead })),
   );
 
   if (!move.keepInDestination) return locations.length === 0;
 
-  return locations.length === 1 && locations[0] === move.destinationStageId;
+  const location = locations[0];
+  if (locations.length !== 1 || location.stageId !== move.destinationStageId) return false;
+  const order = parsePipelineOrderMicros(move.optimisticPatch.board_order_at);
+  return order === null || parsePipelineOrderMicros(location.lead.board_order_at) === order;
 }
 
 export function findPipelineLeadLocation<
@@ -330,7 +387,7 @@ export function restorePipelineLeadSnapshot<
   const targetStage = withoutLead[targetStageIndex];
   const targetLeads = [...targetStage.leads];
   targetLeads.splice(
-    Math.min(snapshotLocation.leadIndex, targetLeads.length),
+    pipelineMoveInsertionIndex(targetLeads, snapshotLocation.lead, snapshotLocation.leadIndex),
     0,
     snapshotLocation.lead,
   );
@@ -461,6 +518,24 @@ export function getPipelineLeadValue(lead?: PipelineBoardLeadLike | null) {
   return 0;
 }
 
+function pipelineMoveInsertionIndex(
+  leads: readonly PipelineBoardLeadLike[],
+  moved: Pick<PipelineBoardLeadLike, 'id' | 'board_order_at'>,
+  destinationIndex: number,
+) {
+  const fallbackIndex = Math.min(Math.max(destinationIndex, 0), leads.length);
+  const order = parsePipelineOrderMicros(moved.board_order_at);
+  if (order === null) return fallbackIndex;
+
+  // Match the board API's clock and ID sort so ACK arrival cannot reorder cards.
+  for (const [index, lead] of leads.entries()) {
+    const neighbor = parsePipelineOrderMicros(lead.board_order_at);
+    if (neighbor === null) return fallbackIndex;
+    if (neighbor < order || (neighbor === order && lead.id < moved.id)) return index;
+  }
+  return leads.length;
+}
+
 function applyPendingPipelineMove<
   TLead extends PipelineBoardLeadLike,
   TStage extends PipelineBoardStageLike<TLead>,
@@ -508,7 +583,11 @@ function applyPendingPipelineMove<
     }
 
     const leads = [...stage.leads];
-    leads.splice(Math.min(Math.max(move.destinationIndex, 0), leads.length), 0, optimisticLead);
+    const index = pipelineMoveInsertionIndex(leads, {
+      id: move.leadId,
+      board_order_at: move.optimisticPatch.board_order_at,
+    }, move.destinationIndex);
+    leads.splice(index, 0, optimisticLead);
     return { ...stage, leads };
   });
 
