@@ -574,6 +574,8 @@ func TestWonPropertyUnavailableMessage(t *testing.T) {
 		{name: "active is available", status: "active"},
 		{name: "empty defaults to available", status: ""},
 		{name: "available in portuguese is available", status: " disponivel "},
+		{name: "inactive allows a historical win", status: " inactive "},
+		{name: "inactive in portuguese allows a historical win", status: " Inativo "},
 		{name: "reserved blocks won", status: "reserved", wantBlocked: true, wantText: "ja esta reservado"},
 		{name: "reserved portuguese blocks won", status: "Reservado", wantBlocked: true, wantText: "ja esta reservado"},
 		{name: "sold blocks won", status: "sold", wantBlocked: true, wantText: "ja esta vendido"},
@@ -581,7 +583,8 @@ func TestWonPropertyUnavailableMessage(t *testing.T) {
 		{name: "rented blocks won", status: "rented", wantBlocked: true, wantText: "ja esta alugado"},
 		{name: "rented portuguese blocks won", status: "alugado", wantBlocked: true, wantText: "ja esta alugado"},
 		{name: "leased synonym blocks won", status: "locado", wantBlocked: true, wantText: "ja esta alugado"},
-		{name: "archived blocks won", status: "arquivado", wantBlocked: true, wantText: "nao esta disponivel"},
+		{name: "draft blocks won", status: "rascunho", wantBlocked: true, wantText: "em rascunho"},
+		{name: "archived blocks won", status: "arquivado", wantBlocked: true, wantText: "esta arquivado"},
 	}
 
 	for _, test := range tests {

@@ -2,13 +2,16 @@ package leads
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -111,5 +114,29 @@ func TestMoveStageSpecificErrorsDoNotReplaceOtherRejections(t *testing.T) {
 		if response.Code != test.status || !strings.Contains(response.Body.String(), `"code":"`+test.code+`"`) {
 			t.Fatalf("existing rejection changed: status=%d want=%d code=%s", response.Code, test.status, test.code)
 		}
+	}
+}
+
+func TestLeadPropertyUnavailableResponseIncludesBusinessReason(t *testing.T) {
+	for _, test := range []struct {
+		propertyStatus string
+		message        string
+	}{
+		{"reserved", "O imóvel selecionado já está reservado. Consulte o administrador antes de marcar o lead como ganho."},
+		{"draft", "O imóvel selecionado está em rascunho. Confira o cadastro antes de marcar o lead como ganho."},
+		{"archived", "O imóvel selecionado está arquivado. Confira o cadastro antes de marcar o lead como ganho."},
+	} {
+		t.Run(test.propertyStatus, func(t *testing.T) {
+			err := fmt.Errorf("%w: %s", ErrLeadPropertyUnavailable, wonPropertyUnavailableMessage(test.propertyStatus))
+			response := httptest.NewRecorder()
+			writeLeadError(response, httptest.NewRequest(http.MethodPatch, "/v1/leads/synthetic", nil), err)
+			var body httpserver.ErrorEnvelope
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusConflict || body.Error.Code != "lead_property_unavailable" || body.Error.Message != test.message {
+				t.Fatalf("property conflict response = %d %+v, want 409 lead_property_unavailable with %q", response.Code, body.Error, test.message)
+			}
+		})
 	}
 }

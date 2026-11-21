@@ -43,3 +43,64 @@ func TestUserFacingErrorMessage(t *testing.T) {
 		})
 	}
 }
+
+func TestUserFacingLeadPropertyUnavailableMessage(t *testing.T) {
+	tests := []struct {
+		name     string
+		original string
+		want     string
+	}{
+		{
+			name:     "reserved",
+			original: "Este imovel ja esta reservado. Consulte o administrador antes de marcar o lead como ganho.",
+			want:     "O imóvel selecionado já está reservado. Consulte o administrador antes de marcar o lead como ganho.",
+		},
+		{
+			name:     "sold",
+			original: "Este imovel ja esta vendido e nao pode ser marcado como ganho.",
+			want:     "O imóvel selecionado já está vendido. Confira o cadastro antes de marcar o lead como ganho.",
+		},
+		{
+			name:     "rented",
+			original: "Este imovel ja esta alugado e nao pode ser marcado como ganho.",
+			want:     "O imóvel selecionado já está alugado. Confira o cadastro antes de marcar o lead como ganho.",
+		},
+		{
+			name:     "draft",
+			original: "Este imovel esta em rascunho e nao pode ser marcado como ganho.",
+			want:     "O imóvel selecionado está em rascunho. Confira o cadastro antes de marcar o lead como ganho.",
+		},
+		{
+			name:     "archived",
+			original: "Este imovel esta arquivado e nao pode ser marcado como ganho.",
+			want:     "O imóvel selecionado está arquivado. Confira o cadastro antes de marcar o lead como ganho.",
+		},
+		{
+			name:     "unit reservation",
+			original: "Este imóvel pertence ao espelho de um empreendimento. Faça a reserva pela unidade vinculada.",
+			want:     "Este imóvel está vinculado a uma unidade de empreendimento. Faça a reserva nessa unidade.",
+		},
+		{
+			name:     "unit release",
+			original: "Este imóvel pertence ao espelho de um empreendimento. Reabra a disponibilidade pela unidade vinculada.",
+			want:     "Este imóvel está vinculado a uma unidade de empreendimento. Reabra a disponibilidade nessa unidade.",
+		},
+		{
+			name:     "concurrent edit",
+			original: "O imóvel de interesse está sendo alterado. Aguarde e tente novamente.",
+			want:     "O imóvel de interesse está sendo alterado. Aguarde e tente novamente.",
+		},
+		{
+			name:     "unsafe detail attached to known reason",
+			original: "Este imovel ja esta vendido e nao pode ser marcado como ganho. SQLSTATE 23514 em public.properties",
+			want:     "Não foi possível concluir a operação com este imóvel. Confira o cadastro do imóvel e tente novamente.",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := userFacingErrorMessage("lead_property_unavailable", test.original, http.StatusConflict); got != test.want {
+				t.Fatalf("userFacingErrorMessage() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

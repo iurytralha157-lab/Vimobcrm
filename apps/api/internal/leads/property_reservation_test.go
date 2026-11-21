@@ -28,7 +28,7 @@ func (tx *propertyReservationLockTx) QueryRow(_ context.Context, query string, a
 type propertyReservationLockRow struct{}
 
 func (propertyReservationLockRow) Scan(destinations ...any) error {
-	if len(destinations) != 10 {
+	if len(destinations) != 11 {
 		return errors.New("unexpected lock scan")
 	}
 	for index, value := range []string{
@@ -54,6 +54,7 @@ func (propertyReservationLockRow) Scan(destinations ...any) error {
 	*destinations[7].(*pgtype.Bool) = pgtype.Bool{Bool: true, Valid: true}
 	*destinations[8].(*pgtype.Bool) = pgtype.Bool{Bool: true, Valid: true}
 	*destinations[9].(*string) = "55555555-5555-4555-8555-555555555555"
+	*destinations[10].(*bool) = false
 	return nil
 }
 
@@ -72,6 +73,7 @@ func TestWonLeadPropertyIsLockedBeforeMutation(t *testing.T) {
 	if reservation == nil ||
 		reservation.PropertyID != "44444444-4444-4444-8444-444444444444" ||
 		reservation.OldStatus != "active" ||
+		reservation.HistoricalWin ||
 		!reservation.OldPublishedOnSite ||
 		!reservation.OldAnnounce {
 		t.Fatalf("conditional reservation snapshot = %#v", reservation)

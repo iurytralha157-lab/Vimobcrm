@@ -60,4 +60,108 @@ func TestMoveStageOutcomeLocalPostgres(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("inactive property records a win without changing inventory", func(t *testing.T) {
+		leadID := pipelinePostgresID(715)
+		f.exec(t, `insert into public.leads(id,organization_id,name,source,deal_status,pipeline_id,stage_id,assigned_user_id,property_id,interest_property_id)
+			values($1,$2,'Synthetic lead','manual','open',$3,$4,$5,$6,$6)`, leadID, f.org, f.pipeline, f.open, f.user, f.property)
+		setProperty := func(status string, listed bool) time.Time {
+			t.Helper()
+			var revision time.Time
+			err := f.conn.QueryRow(f.ctx, `update public.properties
+				set status=$2, published_on_site=$3, anunciar=$3, updated_at=now()
+				where id=$1 returning updated_at`, f.property, status, listed).Scan(&revision)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return revision
+		}
+		setLead := func(status string) error {
+			t.Helper()
+			var revision time.Time
+			if err := f.conn.QueryRow(f.ctx, `select updated_at from public.leads where id=$1`, leadID).Scan(&revision); err != nil {
+				t.Fatal(err)
+			}
+			_, err := f.repo.Update(f.ctx, actor, leadID, updateInput{
+				DealStatus:        patchString{Set: true, Value: &status},
+				ExpectedUpdatedAt: &revision,
+			})
+			return err
+		}
+		assertProperty := func(wantStatus string, wantListed, wantMarker bool, unchangedSince time.Time) {
+			t.Helper()
+			var status string
+			var published, advertised, marker bool
+			var revision time.Time
+			err := f.conn.QueryRow(f.ctx, `select status,published_on_site,anunciar,
+				coalesce(metadata ? '_vimob_won_lead_reservation_event_id', false),updated_at
+				from public.properties where id=$1`, f.property).Scan(&status, &published, &advertised, &marker, &revision)
+			if err != nil || status != wantStatus || published != wantListed || advertised != wantListed || marker != wantMarker ||
+				(!unchangedSince.IsZero() && !revision.Equal(unchangedSince)) {
+				t.Fatalf("property = %q/%v/%v marker %v revision %s, %v", status, published, advertised, marker, revision, err)
+			}
+		}
+		assertLead := func(wantStatus string, wantWon bool) {
+			t.Helper()
+			var status, property, interest string
+			var won bool
+			err := f.conn.QueryRow(f.ctx, `select deal_status,property_id::text,interest_property_id::text,won_at is not null
+				from public.leads where id=$1`, leadID).Scan(&status, &property, &interest, &won)
+			if err != nil || status != wantStatus || property != f.property || interest != f.property || won != wantWon {
+				t.Fatalf("lead = %q/%q/%q won %v, %v", status, property, interest, won, err)
+			}
+		}
+
+		for _, inactiveStatus := range []string{"inactive", "inativo"} {
+			propertyRevision := setProperty(inactiveStatus, false)
+			if err := setLead("won"); err != nil {
+				t.Fatalf("record win for %s property: %v", inactiveStatus, err)
+			}
+			assertLead("won", true)
+			assertProperty(inactiveStatus, false, false, propertyRevision)
+			var historical, propertyEvents int
+			err := f.conn.QueryRow(f.ctx, `select count(*) filter (where e.event_type='lead_won_on_inactive_property'
+					and e.status='processed' and e.entity_type='lead' and e.entity_id=$3::uuid
+					and e.payload->>'property_id'=$2::uuid::text
+					and e.payload->'won_at'=to_jsonb(l.won_at at time zone 'UTC')),
+				count(*) filter (where e.entity_type='property' and e.entity_id=$2::uuid
+					and e.event_type in ('property_reserved_by_won_lead','lead_won_on_inactive_property'))
+				from public.events e join public.leads l on l.id=$3::uuid
+				where e.organization_id=$1`,
+				f.org, f.property, leadID).Scan(&historical, &propertyEvents)
+			if err != nil || historical != 1 || propertyEvents != 0 {
+				t.Fatalf("historical lead event/property events = %d/%d, %v", historical, propertyEvents, err)
+			}
+			currentStatus, listed := inactiveStatus, false
+			if inactiveStatus == "inativo" {
+				currentStatus, listed = "active", true
+				propertyRevision = setProperty(currentStatus, listed)
+			}
+			if err := setLead("open"); err != nil {
+				t.Fatalf("reopen win recorded with %s property: %v", inactiveStatus, err)
+			}
+			assertLead("open", false)
+			assertProperty(currentStatus, listed, false, propertyRevision)
+		}
+
+		// An earlier historical win must not exempt a later real reservation from release.
+		if err := setLead("won"); err != nil {
+			t.Fatalf("record new win for reactivated property: %v", err)
+		}
+		assertProperty("reserved", false, true, time.Time{})
+		if err := setLead("open"); err != nil {
+			t.Fatalf("release verified reservation: %v", err)
+		}
+		assertLead("open", false)
+		assertProperty("active", true, false, time.Time{})
+
+		for _, blocked := range []string{"sold", "rented", "reserved", "draft", "archived"} {
+			propertyRevision := setProperty(blocked, false)
+			if err := setLead("won"); !errors.Is(err, ErrLeadPropertyUnavailable) {
+				t.Fatalf("win for %s property = %v, want ErrLeadPropertyUnavailable", blocked, err)
+			}
+			assertLead("open", false)
+			assertProperty(blocked, false, false, propertyRevision)
+		}
+	})
 }

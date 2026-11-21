@@ -18,7 +18,7 @@ const errors = [];
 
 function mobilePresentation(source) {
   const ast = ts.createSourceFile('LeadDetailDialog.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const names = ['renderStageStepper', 'renderAssigneePicker', 'renderAttachments', 'renderActionSections', 'MobileContentV2'];
+  const names = ['renderStageStepper', 'renderAssigneePicker', 'renderInterestProperty', 'renderAttachments', 'renderActionSections', 'MobileContentV2'];
   const found = new Map();
   const visit = node => {
     if (ts.isVariableDeclaration(node) && names.includes(node.name.getText(ast))) {
@@ -65,7 +65,7 @@ before(async () => {
     const InfoLine=({label,value})=><div className='flex justify-between gap-2 text-xs'><span>{label}</span><span className='min-w-0 break-words'>{value}</span></div>;
     const LeadUnifiedThread=()=> <section className='flex h-full min-h-0 flex-col p-3' data-testid='history-panel'><div className='min-h-0 flex-1 overflow-y-auto'>{Array.from({length:20},(_,index)=><p key={index} className='py-3 text-xs'>Atividade sintética {index+1}</p>)}</div><div className='h-6 shrink-0'/></section>;
     const commandSearchFilter=()=>1;
-    function Content({lead,variant,allowed}){
+    function Content({lead,variant,allowed,persistedProperty}){
       const localLead=lead,leadName=lead.name,leadTags=lead.tags,leadTagIds=lead.tags.map(tag=>tag.id),assigneeName='Responsável sintético com nome extenso';
       const isMobile=window.innerWidth<768,activeOrganization={organizationId:'org-a'},mobileTabsId='synthetic-mobile-tabs';
       const allUsersState={isPending:false,isError:false},assigneeCatalogBlocked=false,detailReadState={status:'ready'},retryLeadRead=noop;
@@ -77,7 +77,8 @@ before(async () => {
       const fullLeadQuery={isFetching:false},dealStatusChange={isPending:false},stageMovePending=false,updateLead={isPending:false};
       const scheduleEvents=[],scheduleSummaryLabel='Nenhum compromisso',canViewLeadSchedule=false,canManageLeadSchedule=false;
       const dateLocale=undefined,scheduleError=false,schedulePending=false,schedulePreview={hasNextPage:false,isFetchingNextPage:false,fetchNextPage:noop},refetchScheduleEvents=noop,handleEditScheduleEvent=noop;
-      const hasPropertiesModule=false,canViewProperties=false,propertyOptions=[],attachments=[],attachmentsLoading=false,attachmentsError=null,attachmentsFetching=false,isUploading=false,fileInputRef=useRef(null);
+      const hasPropertiesModule=Boolean(lead.interest_property_id),canViewProperties=hasPropertiesModule,propertyOptions=[],attachments=[],attachmentsLoading=false,attachmentsError=null,attachmentsFetching=false,isUploading=false,fileInputRef=useRef(null);
+      const selectedPropertyId=lead.interest_property_id || null,hasLoadedProperty=Boolean(persistedProperty);
       const attachmentUploadDraft={draft:null,clear:noop};
       const leadCadenceState=null,leadCadenceLoading=false,leadCadenceError=null,cadenceActionPending=false,completeCadenceTask={isPending:false},availableTags=[],assignableUsers=[];
       const pipelineDetailStyles={};
@@ -88,8 +89,8 @@ before(async () => {
       ${mobilePresentation(production)}
       h.rendered++;return MobileContentV2();
     }
-    function Fixture(){const[lead,setLead]=useState(h.lead),[shown,setShown]=useState(true),[variant,setVariant]=useState('pipeline'),[allowed,setAllowed]=useState(true);h.change=setLead;h.show=setShown;h.variant=setVariant;h.allowed=setAllowed;
-      return <Drawer open={shown} onOpenChange={open=>!open&&(h.closed++,setShown(false))}><DrawerContent className='lead-mobile-drawer mx-auto w-full overflow-hidden rounded-t-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none md:max-w-[760px]' showHandle={false}><DrawerTitle className='sr-only'>Detalhes sintéticos</DrawerTitle><DrawerDescription className='sr-only'>Dados, ações e histórico sintéticos.</DrawerDescription><Content lead={lead} variant={variant} allowed={allowed}/></DrawerContent></Drawer>;
+    function Fixture(){const[lead,setLead]=useState(h.lead),[shown,setShown]=useState(true),[variant,setVariant]=useState('pipeline'),[allowed,setAllowed]=useState(true),[property,setProperty]=useState(null);h.change=setLead;h.show=setShown;h.variant=setVariant;h.allowed=setAllowed;h.property=setProperty;
+      return <Drawer open={shown} onOpenChange={open=>!open&&(h.closed++,setShown(false))}><DrawerContent className='lead-mobile-drawer mx-auto w-full overflow-hidden rounded-t-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none md:max-w-[760px]' showHandle={false}><DrawerTitle className='sr-only'>Detalhes sintéticos</DrawerTitle><DrawerDescription className='sr-only'>Dados, ações e histórico sintéticos.</DrawerDescription><Content lead={lead} variant={variant} allowed={allowed} persistedProperty={property}/></DrawerContent></Drawer>;
     }createRoot(document.getElementById('app')).render(<Fixture/>);`);
   const { webpack } = require('next/dist/compiled/webpack/webpack');
   await new Promise((resolveBuild, reject) => {
@@ -152,6 +153,23 @@ async function geometry(page) {
       buttons:[...header.querySelectorAll('button')].filter(node=>node.getBoundingClientRect().width>0).map(node=>({name:node.getAttribute('aria-label')||node.textContent.trim(),...rect(node)})),writes:window.h.writes };
   });
 }
+
+test('Pipeline shows the inactive sale notice only for the loaded property in the current organization', async () => {
+  const page = await open(390, 844);
+  try {
+    await page.evaluate(() => window.h.change({ ...window.h.lead, interest_property_id: 'property-a' }));
+    const notice = page.getByText('O imóvel selecionado está inativo.', { exact: false });
+    await page.evaluate(() => window.h.property({ id: 'property-a', organization_id: 'org-a', status: ' Inativo ' }));
+    await notice.waitFor({ state: 'visible' });
+    await page.evaluate(() => window.h.property({ id: 'property-b', organization_id: 'org-a', status: 'inactive' }));
+    await notice.waitFor({ state: 'hidden' });
+    await page.evaluate(() => window.h.property({ id: 'property-a', organization_id: 'org-a', status: 'inactive' }));
+    await notice.waitFor({ state: 'visible' });
+    await page.evaluate(() => window.h.property({ id: 'property-a', organization_id: 'org-b', status: 'inactive' }));
+    await notice.waitFor({ state: 'hidden' });
+    assert.deepEqual(await page.evaluate(() => window.h.writes), []);
+  } finally { await page.close(); }
+});
 
 for (const [width, height] of [[320,568],[360,640],[390,844]]) test(`mobile lead baseline geometry at ${width}x${height}`, async () => {
   const page = await open(width,height);

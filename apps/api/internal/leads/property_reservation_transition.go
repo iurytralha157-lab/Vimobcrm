@@ -11,6 +11,14 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
+const inactivePropertyLeadWonEventType = "lead_won_on_inactive_property"
+
+// Scope the marker to one win and use the events primary key. Lead events
+// stay outside the property history served by both API versions.
+const inactivePropertyLeadWonEventID = `left(encode(sha256(convert_to(
+	concat_ws(':', $4::text, $1::uuid, $2::uuid, $3::uuid, extract(epoch from %s)), 'UTF8'
+)), 'hex'), 32)::uuid`
+
 func (repo Repository) reserveWonLeadProperty(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -41,6 +49,24 @@ func (repo Repository) reserveWonLeadProperty(
 		}
 	}
 	if reservation == nil || reservation.AlreadyReserved {
+		return "", nil
+	}
+	if reservation.HistoricalWin {
+		// The property is locked, but a historical sale does not change inventory.
+		tag, err := tx.Exec(ctx, `
+			insert into public.events (id, organization_id, event_type, entity_type, entity_id, payload, status)
+			select `+fmt.Sprintf(inactivePropertyLeadWonEventID, "won_at")+`,
+			       organization_id, $4, 'lead', id,
+			       jsonb_build_object('property_id', $3::uuid, 'won_at', won_at at time zone 'UTC'), 'processed'
+			from public.leads
+			where organization_id = $1::uuid and id = $2::uuid and deal_status = 'won' and won_at is not null
+		`, tenantContext.OrganizationID, current.ID, propertyID, inactivePropertyLeadWonEventType)
+		if err != nil {
+			return "", err
+		}
+		if tag.RowsAffected() != 1 {
+			return "", ErrLeadReservationUnverified
+		}
 		return "", nil
 	}
 
@@ -97,6 +123,20 @@ func (repo Repository) releaseReopenedLeadProperty(ctx context.Context, tx pgx.T
 	propertyID := selectedLeadPropertyID(current, updateInput{})
 	if propertyID == "" {
 		return nil
+	}
+	if wonAt, ok := current.Data["won_at"].(string); current.DealStatus == "won" && ok && wonAt != "" {
+		var historicalWin bool
+		err := tx.QueryRow(ctx, `
+			select exists (
+				select 1 from public.events
+				where id = `+fmt.Sprintf(inactivePropertyLeadWonEventID, "$5::timestamptz")+`
+				  and organization_id = $1::uuid and entity_type = 'lead' and entity_id = $2::uuid
+				  and event_type = $4 and status = 'processed'
+			)
+		`, tenantContext.OrganizationID, current.ID, propertyID, inactivePropertyLeadWonEventType, wonAt).Scan(&historicalWin)
+		if err != nil || historicalWin {
+			return err
+		}
 	}
 	var title, code, currentStatus string
 	var reservationEventID string
@@ -228,8 +268,10 @@ func wonPropertyUnavailableMessage(status string) string {
 		return "Este imovel ja esta vendido e nao pode ser marcado como ganho."
 	case "rented", "alugado", "locado":
 		return "Este imovel ja esta alugado e nao pode ser marcado como ganho."
-	case "draft", "rascunho", "inactive", "inativo", "archived", "arquivado":
-		return "Este imovel nao esta disponivel para ser marcado como ganho."
+	case "draft", "rascunho":
+		return "Este imovel esta em rascunho e nao pode ser marcado como ganho."
+	case "archived", "arquivado":
+		return "Este imovel esta arquivado e nao pode ser marcado como ganho."
 	default:
 		return ""
 	}

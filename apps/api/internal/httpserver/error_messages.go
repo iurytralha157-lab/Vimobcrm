@@ -78,10 +78,27 @@ var exactUserErrorMessages = map[string]string{
 	"whatsapp_webhook_session_mismatch":    "A conexão do WhatsApp recebida não corresponde à sessão configurada.",
 }
 
+var leadPropertyUnavailableMessages = map[string]string{
+	"Este imovel ja esta reservado. Consulte o administrador antes de marcar o lead como ganho.":             "O imóvel selecionado já está reservado. Consulte o administrador antes de marcar o lead como ganho.",
+	"Este imovel ja esta vendido e nao pode ser marcado como ganho.":                                         "O imóvel selecionado já está vendido. Confira o cadastro antes de marcar o lead como ganho.",
+	"Este imovel ja esta alugado e nao pode ser marcado como ganho.":                                         "O imóvel selecionado já está alugado. Confira o cadastro antes de marcar o lead como ganho.",
+	"Este imovel esta em rascunho e nao pode ser marcado como ganho.":                                        "O imóvel selecionado está em rascunho. Confira o cadastro antes de marcar o lead como ganho.",
+	"Este imovel esta arquivado e nao pode ser marcado como ganho.":                                          "O imóvel selecionado está arquivado. Confira o cadastro antes de marcar o lead como ganho.",
+	"Este imóvel pertence ao espelho de um empreendimento. Faça a reserva pela unidade vinculada.":           "Este imóvel está vinculado a uma unidade de empreendimento. Faça a reserva nessa unidade.",
+	"Este imóvel pertence ao espelho de um empreendimento. Reabra a disponibilidade pela unidade vinculada.": "Este imóvel está vinculado a uma unidade de empreendimento. Reabra a disponibilidade nessa unidade.",
+	"O imóvel de interesse está sendo alterado. Aguarde e tente novamente.":                                  "O imóvel de interesse está sendo alterado. Aguarde e tente novamente.",
+}
+
 func userFacingErrorMessage(code string, original string, status int) string {
 	code = strings.ToLower(strings.TrimSpace(code))
 	if message := exactUserErrorMessages[code]; message != "" {
 		return message
+	}
+	if code == "lead_property_unavailable" && status == http.StatusConflict {
+		if message := leadPropertyUnavailableMessages[strings.TrimSpace(original)]; message != "" {
+			return message
+		}
+		return "Não foi possível concluir a operação com este imóvel. Confira o cadastro do imóvel e tente novamente."
 	}
 
 	// Business conflicts may contain useful context such as the existing queue name.

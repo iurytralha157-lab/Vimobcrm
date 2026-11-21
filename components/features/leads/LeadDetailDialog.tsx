@@ -434,7 +434,7 @@ export function LeadDetailDialog({
   const canViewLeadSchedule = hasAgendaModule && hasPermission('schedule_view');
   const canManageLeadSchedule = hasAgendaModule && canOperateLead && hasPermission('schedule_manage');
   const selectedPropertyId = localLead?.interest_property_id || localLead?.property_id || editForm.property_id || null;
-  const { data: persistedProperty } = useProperty(canViewProperties && leadProp ? selectedPropertyId : null);
+  const { data: persistedProperty, isSuccess: hasLoadedProperty } = useProperty(canViewProperties && leadProp ? selectedPropertyId : null);
   const propertyOptions = mergePropertyFallback(
     mergePropertyFallback([], persistedProperty || null),
     getLeadPropertyFallback(localLead),
@@ -1425,6 +1425,29 @@ export function LeadDetailDialog({
       searchClassName={variant === 'pipeline' ? pipelineDetailStyles.assigneeSearch : undefined}
       onOpenChange={handleAssigneePopoverChange} onSelect={handleAssignUser} />
   );
+  const renderInterestProperty = () => {
+    if (!hasPropertiesModule) return null;
+    const status = persistedProperty?.status?.trim().toLowerCase();
+    const showInactiveNotice = variant === 'pipeline' && canOperateLead && canViewProperties &&
+      hasLoadedProperty && persistedProperty?.id === selectedPropertyId &&
+      persistedProperty.organization_id === activeOrganization.organizationId &&
+      localLead.deal_status !== 'won' && (status === 'inactive' || status === 'inativo');
+    return (
+      <>
+        <PropertyPickerDialog
+          properties={propertyOptions}
+          selectedPropertyId={selectedPropertyId}
+          onSelect={(property) => void handleSelectInterestProperty(property)}
+          disabled={!canOperateLead || !canViewProperties}
+        />
+        {showInactiveNotice && (
+          <p className="rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-2 text-xs text-muted-foreground">
+            O imóvel selecionado está inativo. Você pode registrar a venda. O cadastro continuará inativo.
+          </p>
+        )}
+      </>
+    );
+  };
   const renderAttachments = (mobile: boolean) => (
     <LeadDetailAttachments mobile={mobile} canOperate={canOperateLead} attachments={attachments}
       loading={attachmentsLoading} error={attachmentsError} fetching={attachmentsFetching} uploading={isUploading}
@@ -1684,12 +1707,7 @@ export function LeadDetailDialog({
                   </div>
                 </section>
 
-                {hasPropertiesModule && <PropertyPickerDialog
-                  properties={propertyOptions}
-                  selectedPropertyId={localLead.interest_property_id || editForm.property_id || null}
-                  onSelect={(property) => void handleSelectInterestProperty(property)}
-                  disabled={!canOperateLead || !canViewProperties}
-                />}
+                {renderInterestProperty()}
 
                 {renderAttachments(true)}
               </div>
@@ -1874,12 +1892,7 @@ export function LeadDetailDialog({
 
                 </div>
 
-                {hasPropertiesModule && <PropertyPickerDialog
-                  properties={propertyOptions}
-                  selectedPropertyId={localLead.interest_property_id || editForm.property_id || null}
-                  onSelect={(property) => void handleSelectInterestProperty(property)}
-                  disabled={!canOperateLead || !canViewProperties}
-                />}
+                {renderInterestProperty()}
 
                 {renderAttachments(false)}
 

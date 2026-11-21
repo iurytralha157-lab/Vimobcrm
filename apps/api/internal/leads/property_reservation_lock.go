@@ -37,6 +37,7 @@ type wonLeadPropertyReservation struct {
 	OldPublishedOnSiteRaw *bool
 	OldAnnounceRaw        *bool
 	AlreadyReserved       bool
+	HistoricalWin         bool
 }
 
 func (repo Repository) latestPropertyReservation(ctx context.Context, tx pgx.Tx, organizationID string, propertyID string, reservationEventID string) (propertyReservationSnapshot, bool, error) {
@@ -216,6 +217,7 @@ func (repo Repository) lockWonLeadPropertyForTrustedSystem(
 					property.status as old_status_raw,
 					property.published_on_site as old_published_on_site_raw,
 					property.anunciar as old_anunciar_raw,
+					lower(btrim(coalesce(property.status, 'active'))) in ('inactive', 'inativo') as historical_win,
 					gen_random_uuid() as reservation_event_id
 				from public.properties property
 				where property.organization_id = $1::uuid
@@ -227,7 +229,6 @@ func (repo Repository) lockWonLeadPropertyForTrustedSystem(
 				    'sold', 'vendido',
 				    'rented', 'alugado', 'locado',
 				    'draft', 'rascunho',
-				    'inactive', 'inativo',
 				    'archived', 'arquivado'
 				  )
 				for update of property skip locked
@@ -244,30 +245,23 @@ func (repo Repository) lockWonLeadPropertyForTrustedSystem(
 				from candidate
 				where property.organization_id = $1::uuid
 				  and property.id = candidate.id
-				returning
-					candidate.id::text,
-					candidate.title,
-					candidate.code,
-					candidate.old_status,
-					candidate.old_published_on_site,
-					candidate.old_anunciar,
-					candidate.old_status_raw,
-					candidate.old_published_on_site_raw,
-					candidate.old_anunciar_raw,
-					candidate.reservation_event_id::text
+				  and not candidate.historical_win
+				returning property.id
 			)
 			select
-				id,
+				id::text,
 				title,
 				code,
-				old_status,
+				candidate.old_status,
 				old_published_on_site,
 				old_anunciar,
 				old_status_raw,
 				old_published_on_site_raw,
 				old_anunciar_raw,
-				reservation_event_id
-			from reserved
+				reservation_event_id::text,
+				historical_win
+			from candidate
+			where historical_win or exists (select 1 from reserved)
 		`, organizationID, propertyID, activeWonLeadReservationEventIDKey).Scan(
 			&reservation.PropertyID,
 			&reservation.Title,
@@ -279,6 +273,7 @@ func (repo Repository) lockWonLeadPropertyForTrustedSystem(
 			&oldPublishedOnSiteRaw,
 			&oldAnnounceRaw,
 			&reservation.EventID,
+			&reservation.HistoricalWin,
 		)
 		if err == nil {
 			if oldStatusRaw.Valid {
