@@ -63,7 +63,7 @@ test("KPIs são acionáveis e informam o que contam em cada base de data", () =>
 
 test("gráfico diário usa o volume da API e distingue atrasos de realizações", () => {
   assert.match(overviewSource, /<AgendaDailyChart\s+data=\{data\.daily\}/);
-  assert.match(dailyChartSource, /Compromissos por dia/);
+  assert.match(overviewSource, /<Panel title="Compromissos por dia" aside=\{<AgendaDailyChartLegend/);
   assert.match(dailyChartSource, /remaining: total - completed - overdue/);
   assert.match(dailyChartSource, /dataKey="completed" stackId="daily"/);
   assert.match(dailyChartSource, /dataKey="overdue" stackId="daily"/);

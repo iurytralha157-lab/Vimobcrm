@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "9f76fd84c3d2503652c38da8e3be8a34b213c7e2131259c31913f9f385cf64cd",
-  "surfaceInventoryDigestSha256": "2e978a0ee0059e3e3d762be15b1b789fc62d75e0aceadf203267691587eb3305",
+  "sourceDigestSha256": "a9dd148f2da69235447491d710ac5d477d6969b6a0346ca66b957b6120cf0d96",
+  "surfaceInventoryDigestSha256": "4d96ca94e6b2eac39cb0719d0fe0bb1da02aebeaf905ef1cb7041a61c89d51dc",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 682,
@@ -1868,7 +1868,7 @@
     },
     {
       "file": "components/features/schedule/dashboard/AgendaDailyChart.tsx",
-      "line": 70,
+      "line": 82,
       "match": "shadow-lg",
       "priority": "P1",
       "rule": "heavy-shadow",

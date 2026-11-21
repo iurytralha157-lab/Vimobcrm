@@ -9,7 +9,7 @@ import type {
   ScheduleDashboardStatus,
 } from "@/lib/validation/schedule-dashboard";
 
-import { AgendaDailyChart } from "./AgendaDailyChart";
+import { AgendaDailyChart, AgendaDailyChartLegend } from "./AgendaDailyChart";
 import { AgendaDashboardKpis } from "./AgendaDashboardKpis";
 import { AgendaEventsPanel } from "./AgendaEventsPanel";
 import { AgendaDataQualityNotice } from "./AgendaDataQualityNotice";
@@ -55,12 +55,14 @@ export function AgendaOverviewTab({
           enabled={eventsEnabled}
         />
         <div className="min-w-0 space-y-3 @[920px]/agenda-dashboard:col-start-1 @[920px]/agenda-dashboard:row-start-1">
-          <AgendaDailyChart
-            data={data.daily}
-            dateFrom={data.period.date_from}
-            dateTo={data.period.date_to}
-            dateBasis={data.period.date_basis}
-          />
+          <Panel title="Compromissos por dia" aside={<AgendaDailyChartLegend />}>
+            <AgendaDailyChart
+              data={data.daily}
+              dateFrom={data.period.date_from}
+              dateTo={data.period.date_to}
+              dateBasis={data.period.date_basis}
+            />
+          </Panel>
           <AgendaCreatorRanking creators={data.creator_ranking} />
         </div>
       </div>

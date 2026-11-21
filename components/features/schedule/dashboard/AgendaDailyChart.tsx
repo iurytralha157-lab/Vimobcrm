@@ -5,7 +5,6 @@ import { eachDayOfInterval, format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
-import { Panel } from "@/components/features/marketing/marketing-ui";
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart";
 import type {
   ScheduleDashboardDailyPoint,
@@ -26,6 +25,19 @@ const CHART_CONFIG = {
   completed: { label: "Realizados", color: "var(--success)" },
   overdue: { label: "Em atraso", color: "var(--destructive)" },
 } satisfies ChartConfig;
+
+export function AgendaDailyChartLegend() {
+  return (
+    <ul className="flex flex-wrap gap-x-3 gap-y-1">
+      {Object.entries(CHART_CONFIG).map(([key, config]) => (
+        <li key={key} className="inline-flex items-center gap-1.5">
+          <span aria-hidden="true" className="size-2.5 rounded-[2px]" style={{ backgroundColor: config.color }} />
+          {config.label}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 function formatAxisDate(value: string) {
   return format(parseISO(value), "dd/MM", { locale: ptBR });
@@ -96,19 +108,7 @@ export function AgendaDailyChart({ data, dateFrom, dateTo, dateBasis }: AgendaDa
   ];
 
   return (
-    <Panel
-      title="Compromissos por dia"
-      aside={(
-        <ul className="flex flex-wrap gap-x-3 gap-y-1">
-          {Object.entries(CHART_CONFIG).map(([key, config]) => (
-            <li key={key} className="inline-flex items-center gap-1.5">
-              <span aria-hidden="true" className="size-2.5 rounded-[2px]" style={{ backgroundColor: config.color }} />
-              {config.label}
-            </li>
-          ))}
-        </ul>
-      )}
-    >
+    <>
       <ChartContainer
         config={CHART_CONFIG}
         className="h-[242px] w-full aspect-auto"
@@ -146,6 +146,6 @@ export function AgendaDailyChart({ data, dateFrom, dateTo, dateBasis }: AgendaDa
           </li>
         ))}
       </ul>
-    </Panel>
+    </>
   );
 }
