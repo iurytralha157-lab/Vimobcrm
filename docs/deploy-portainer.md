@@ -360,6 +360,15 @@ Se qualquer passo falhar, pare antes do seguinte. O rollback seguro mantem a nov
 
 A imagem da API usa `/healthz` como liveness depois de um periodo inicial de cinco minutos, compativel com o retry de conexao inicial ao banco. O gate operacional do deploy continua sendo `/readyz`, que tambem confirma acesso ao Postgres. Nao considere o canario pronto apenas porque o container esta `healthy`.
 
+Antes de atualizar para a entrega ordenada do SSE, aplique a migration
+`20261123043951_serialize_realtime_event_cursor_allocation.sql` pelo fluxo
+de banco da release. Ela serializa a alocação dos IDs de todos os gravadores
+do log até o commit. Acompanhe a espera por lock e o atraso do realtime
+durante o rollout. A migration também aceita os gravadores da imagem
+anterior e pode ficar instalada durante um rollback de imagem. A entrega
+ordenada passa a valer na conexão depois que a réplica que a atende recebe
+a nova API.
+
 No Portainer:
 
 1. `Stacks` -> `Add stack`.

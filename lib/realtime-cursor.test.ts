@@ -9,11 +9,15 @@ test("durable realtime cursor only advances for positive decimal ids", () => {
   assert.equal(nextRealtimeCursor("100", "connected"), "100");
   assert.equal(nextRealtimeCursor("100", "transient-1"), "100");
   assert.equal(nextRealtimeCursor("100", "0"), "100");
+  assert.equal(nextRealtimeCursor(null, "0"), "0");
+  assert.equal(nextRealtimeCursor("100", "23", true), "23");
+  assert.equal(nextRealtimeCursor("100", "0", true), "0");
+  assert.equal(nextRealtimeCursor("100", "transient-1", true), "100");
 });
 
 test("reconnect backoff has bounded jitter and a 15 second cap", () => {
-  assert.equal(realtimeReconnectDelay(0, 0), 750);
-  assert.equal(realtimeReconnectDelay(0, 1), 1_250);
-  assert.equal(realtimeReconnectDelay(8, 0), 11_250);
+  assert.equal(realtimeReconnectDelay(0, 0), 1_000);
+  assert.equal(realtimeReconnectDelay(0, 1), 9_000);
+  assert.equal(realtimeReconnectDelay(8, 0.5), 8_000);
   assert.equal(realtimeReconnectDelay(8, 1), 15_000);
 });

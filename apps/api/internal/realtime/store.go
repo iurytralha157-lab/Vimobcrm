@@ -12,6 +12,7 @@ import (
 )
 
 type EventStore interface {
+	// Committed event IDs must become visible in increasing order.
 	Append(context.Context, Event) (Event, error)
 	LatestID(context.Context) (uint64, error)
 	OldestID(context.Context) (uint64, error)
@@ -167,6 +168,7 @@ func (store *PostgresStore) list(
 		return []Event{}, nil
 	}
 
+	// Qualify the sort key to keep the bigint cursor order through the text DTO.
 	query := `
 		select
 			id::text,
@@ -179,7 +181,7 @@ func (store *PostgresStore) list(
 		from private.realtime_events
 		where id > $1
 		  and ($2::bigint = 0 or id <= $2)
-		order by id
+		order by realtime_events.id
 		limit $3
 	`
 	args := []any{afterID, throughID, limit}
@@ -198,7 +200,7 @@ func (store *PostgresStore) list(
 			  and ($2::bigint = 0 or id <= $2)
 			  and organization_id = $3::uuid
 			  and (audience_user_id is null or audience_user_id = $4::uuid)
-			order by id
+			order by realtime_events.id
 			limit $5
 		`
 		args = []any{afterID, throughID, organizationID, userID, limit}

@@ -221,6 +221,98 @@ func TestLatestTargetedMembershipEventSuppressesStaleReplayState(t *testing.T) {
 	}
 }
 
+func TestDurableStreamReplaysFirstEventAfterDisconnect(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	store := &sharedMemoryStore{}
+	replicaA := NewDurableHub(store, nil)
+	replicaB := NewDurableHub(store, nil)
+	for _, hub := range []*Hub{replicaA, replicaB} {
+		if err := hub.Start(ctx, false); err != nil {
+			t.Fatal(err)
+		}
+		defer hub.Close()
+	}
+	serverA := newDurableStreamServer(replicaA)
+	defer serverA.Close()
+	serverB := newDurableStreamServer(replicaB)
+	defer serverB.Close()
+
+	initial := openDurableStream(t, ctx, serverA, "")
+	connected := readSSEFrame(t, bufio.NewScanner(initial.Body))
+	initial.Body.Close()
+	if !strings.Contains(connected, "id: 0\nevent: realtime.connected") {
+		t.Fatalf("initial connection did not advertise an empty durable cursor: %s", connected)
+	}
+
+	replicaA.Publish(NewEvent("schedule.changed", "org-1", "", nil))
+	replicaA.Publish(NewEvent("schedule.changed", "other-organization", "", nil))
+	resumed := openDurableStream(t, ctx, serverB, "0")
+	defer resumed.Body.Close()
+	scanner := bufio.NewScanner(resumed.Body)
+	first := readSSEFrame(t, scanner)
+	if strings.Contains(first, "event: realtime.connected") {
+		// This replica may still be tailing the missed write when it accepts the stream.
+		first = readSSEFrame(t, scanner)
+	}
+	if !strings.Contains(first, "id: 1\nevent: schedule.changed") || !strings.Contains(first, `"organizationId":"org-1"`) {
+		t.Fatalf("first event was missing or outside the tenant: %s", first)
+	}
+}
+
+func TestDurableStreamResetsAheadCursorToEmptyLog(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	hub := NewDurableHub(&sharedMemoryStore{}, nil)
+	if err := hub.Start(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	defer hub.Close()
+	server := newDurableStreamServer(hub)
+	defer server.Close()
+	response := openDurableStream(t, ctx, server, "999")
+	defer response.Body.Close()
+	scanner := bufio.NewScanner(response.Body)
+	reset := readSSEFrame(t, scanner)
+	if !strings.Contains(reset, "id: 0\nevent: realtime.reset") || !strings.Contains(reset, "cursor_ahead_of_log") {
+		t.Fatalf("expected authoritative reset to 0: %s", reset)
+	}
+	if connected := readSSEFrame(t, scanner); !strings.Contains(connected, "id: 0\nevent: realtime.connected") {
+		t.Fatalf("expected new checkpoint after reset: %s", connected)
+	}
+	hub.Publish(NewEvent("schedule.changed", "org-1", "", nil))
+	if live := readSSEFrame(t, scanner); !strings.Contains(live, "id: 1\nevent: schedule.changed") {
+		t.Fatalf("event after reset was blocked by the old cursor: %s", live)
+	}
+}
+
+func newDurableStreamServer(hub *Hub) *httptest.Server {
+	handler, _ := newTestStreamHandler(hub)
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler.Events(w, r.WithContext(streamTestContext(r.Context(), "user")))
+	}))
+}
+
+func openDurableStream(t *testing.T, ctx context.Context, server *httptest.Server, cursor string) *http.Response {
+	t.Helper()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cursor != "" {
+		request.Header.Set("Last-Event-ID", cursor)
+	}
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK {
+		response.Body.Close()
+		t.Fatalf("unexpected SSE status %d", response.StatusCode)
+	}
+	return response
+}
+
 func readSSEFrame(t *testing.T, scanner *bufio.Scanner) string {
 	t.Helper()
 	lines := []string{}

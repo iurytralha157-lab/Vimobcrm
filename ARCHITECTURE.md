@@ -370,8 +370,12 @@ migração para a API Go (a presença grava no banco pelo navegador e depende de
 - Sete chaves de React Query não trazem a organização literal (`use-lead-history`,
   `use-lead-meta`, 2 em `use-sla-reports`, `use-whatsapp-groups`, 2 em
   `use-whatsapp-labels`). Não é vazamento comprovado, mas viola a regra 2.
-- Realtime: handler Go exige tenant; replay filtra organização e usuário;
-  tópicos do WhatsApp incluem organização e têm política SQL.
+- O handler de realtime exige sessão ativa e organização. A retomada filtra
+  organização e usuário. Os tópicos do WhatsApp incluem a organização e têm
+  política SQL.
+- As réplicas da API entregam os eventos duráveis na ordem numérica do log.
+  O banco serializa a alocação do cursor até o commit de cada escritor. A
+  primeira conexão recebe o cursor da réplica, inclusive quando o log está vazio.
 - Das 579 rotas Go, 40 não passam pelo wrapper de tenant/auth na mesma linha:
   health (2), auto-reply interno (1), ajuda pública (2), aceite de convite (1),
   webhooks Evolution (2), 29 públicas, push-config público (1), troca de senha
@@ -441,7 +445,7 @@ grandes (`roundrobin`, `leads`, `whatsapp`, `developments`, `automations`,
 
 | Trabalho | Intervalo | Coordenação |
 |---|---:|---|
-| Realtime (tail/prune) | 100 ms–1 s / 1 h | cursor durável |
+| Realtime (leitura/retenção) | 100 ms–1 s / 1 h | toda API lê, retenção segue o gate global |
 | Asaas billing | 5 min | lease 10 min |
 | Atenção | 30 s | advisory lock |
 | Gamificação | 5 s | `SKIP LOCKED`, lease 5 min |

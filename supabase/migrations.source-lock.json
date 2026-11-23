@@ -1166,6 +1166,10 @@
     {
       "file": "20261120145750_whatsapp_lead_handoff_markers.sql",
       "sha256": "f8786bdf5c2645538b9c29c65e3215fdcd606cdd2aed58e9b7335012caef1478"
+    },
+    {
+      "file": "20261123043951_serialize_realtime_event_cursor_allocation.sql",
+      "sha256": "01931ebd596ee72a13b4c91a10cbe4fbce279ffb7dffd6fd40faae1f81eb7064"
     }
   ]
 }

@@ -67,9 +67,12 @@ export function connectBackendRealtime(options: ConnectRealtimeOptions) {
         throw new Error(`Realtime stream failed with status ${response.status}.`)
       }
 
-      retryAttempt = 0
       await readSSEStream(response.body, (event) => {
-        lastEventId = nextRealtimeCursor(lastEventId, event.id)
+        if (event.organizationId !== organizationId) return
+        const authoritativeReset = event.type === 'realtime.reset' &&
+          (event.data?.reason === 'cursor_ahead_of_log' || event.data?.reason === 'replay_unavailable')
+        lastEventId = nextRealtimeCursor(lastEventId, event.id, authoritativeReset)
+        if (event.type === 'realtime.connected') retryAttempt = 0
         options.onEvent(event)
       }, controller.signal)
       if (active && !controller.signal.aborted) {

@@ -100,9 +100,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 
 	mux := http.NewServeMux()
 	realtimeHub := realtime.NewDurableHub(realtime.NewPostgresStore(postgres), logger)
-	if _, err := backgroundWorkers.RunWithError(func() error {
-		return realtimeHub.Start(ctx)
-	}); err != nil {
+	// Every API replica serves realtime. Only event retention follows the worker gate.
+	if err := realtimeHub.Start(ctx, cfg.BackgroundWorkersEnabled); err != nil {
 		postgres.Close()
 		authVerifier.Close()
 		return nil, err

@@ -41,7 +41,6 @@ func TestAppBackgroundWorkerStartsUseGlobalGate(t *testing.T) {
 	})
 
 	expected := map[string]int{
-		"realtimeHub.Start":                                       1,
 		"billingReconciler.Start":                                 1,
 		"attentionRepository.StartWorker":                         1,
 		"gamificationRepository.StartWorker":                      1,
@@ -76,11 +75,22 @@ func TestAppBackgroundWorkerStartsUseGlobalGate(t *testing.T) {
 		}
 
 		actual[key]++
+		if key == "realtimeHub.Start" {
+			if positionInsideAny(call.Pos(), gateRanges) || len(call.Args) != 2 {
+				t.Error("the realtime reader must start outside the worker gate with a retention argument")
+			} else if argument, _ := selectorKey(call.Args[1]); argument != "cfg.BackgroundWorkersEnabled" {
+				t.Error("realtime retention must follow the worker gate")
+			}
+			return true
+		}
 		if !positionInsideAny(call.Pos(), gateRanges) {
 			t.Errorf("%s is not enclosed by the API background-worker gate", key)
 		}
 		return true
 	})
+	if got := actual["realtimeHub.Start"]; got != 1 {
+		t.Errorf("realtime reader startup calls = %d, want 1", got)
+	}
 
 	for key, want := range expected {
 		if got := actual[key]; got != want {

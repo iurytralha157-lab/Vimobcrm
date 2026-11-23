@@ -121,10 +121,10 @@ func TestDurableHubFansOutAcrossTwoReplicas(t *testing.T) {
 
 	replicaA := NewDurableHub(store, slog.Default())
 	replicaB := NewDurableHub(store, slog.Default())
-	if err := replicaA.Start(ctx); err != nil {
+	if err := replicaA.Start(ctx, false); err != nil {
 		t.Fatalf("start replica A: %v", err)
 	}
-	if err := replicaB.Start(ctx); err != nil {
+	if err := replicaB.Start(ctx, false); err != nil {
 		t.Fatalf("start replica B: %v", err)
 	}
 	defer replicaA.Close()
@@ -158,6 +158,34 @@ func TestDurableReplayRespectsOrganizationAndTargetAudience(t *testing.T) {
 	}
 	if len(replay.Events) != 1 || replay.Events[0].AudienceUserID != "user-1" {
 		t.Fatalf("expected only the target user's event, got %#v", replay.Events)
+	}
+}
+
+func TestDurableTailDeliversRemoteWriteBeforeLocalWrite(t *testing.T) {
+	ctx := context.Background()
+	store := &sharedMemoryStore{}
+	hub := NewDurableHub(store, slog.Default())
+	events, unsubscribe, initial := hub.subscribe(ctx, "org-1", "user-1")
+	defer unsubscribe()
+	if initial != 0 {
+		t.Fatalf("initial checkpoint = %d, want 0", initial)
+	}
+	if _, err := store.Append(ctx, NewEvent("remote.updated", "org-1", "", nil)); err != nil {
+		t.Fatal(err)
+	}
+	hub.Publish(NewEvent("local.updated", "org-1", "", nil))
+
+	cursor := uint64(0)
+	if count, err := hub.drainStore(ctx, &cursor); err != nil || count != 2 {
+		t.Fatalf("drain = %d, %v, want two events", count, err)
+	}
+	assertEventType(t, events, "remote.updated")
+	assertEventType(t, events, "local.updated")
+
+	_, stop, checkpoint := hub.subscribe(ctx, "org-1", "user-2")
+	defer stop()
+	if checkpoint != 2 {
+		t.Fatalf("checkpoint after dispatch = %d, want 2", checkpoint)
 	}
 }
 

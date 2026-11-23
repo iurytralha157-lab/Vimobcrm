@@ -77,37 +77,33 @@ func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	events, unsubscribe := handler.hub.Subscribe(r.Context(), tenantContext.OrganizationID, tenantContext.UserID)
+	events, unsubscribe, checkpoint := handler.hub.subscribe(r.Context(), tenantContext.OrganizationID, tenantContext.UserID)
 	defer unsubscribe()
 
-	lastSentID := uint64(0)
+	lastSentID := checkpoint
 	replayedEvents := 0
 	resyncRequired := false
-	if replayCursor, ok := lastEventCursor(r.Header.Get("Last-Event-ID")); ok {
-		replay, err := handler.hub.Replay(
-			r.Context(),
-			tenantContext.OrganizationID,
-			tenantContext.UserID,
-			replayCursor,
-			defaultReplayLimit,
-		)
+	durable := handler.hub.store != nil
+	if replayCursor, ok := lastEventCursor(r.Header.Get("Last-Event-ID")); durable && ok && replayCursor != checkpoint {
+		var replay Replay
+		var err error
+		if replayCursor > checkpoint {
+			// A reconnect can reach a replica whose tail is behind the previous one.
+			replay, err = handler.hub.Replay(r.Context(), tenantContext.OrganizationID, tenantContext.UserID, replayCursor, defaultReplayLimit)
+		} else {
+			replay, err = handler.hub.replayThrough(r.Context(), tenantContext.OrganizationID, tenantContext.UserID, replayCursor, checkpoint, defaultReplayLimit)
+		}
 		if err != nil {
-			reset := newResetEvent(
-				tenantContext.OrganizationID,
-				replayCursor,
-				"replay_unavailable",
-				0,
-			)
-			if err := writeSSE(w, flusher, *reset); err != nil {
-				return
-			}
-			lastSentID = replayCursor
-			resyncRequired = true
-		} else if replay.Reset != nil {
+			replay = Replay{Cursor: checkpoint, Reset: newResetEvent(tenantContext.OrganizationID, checkpoint, "replay_unavailable", 0)}
+		}
+		if active, err := handler.sessionActive(r.Context(), user.ID, user.SessionID); err != nil || !active {
+			return
+		}
+		lastSentID = replay.Cursor
+		if replay.Reset != nil {
 			if err := writeSSE(w, flusher, *replay.Reset); err != nil {
 				return
 			}
-			lastSentID = replay.Cursor
 			resyncRequired = true
 		} else {
 			latestMembershipEventIndex := latestTargetedMembershipEventIndex(
@@ -115,17 +111,11 @@ func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
 				tenantContext.UserID,
 			)
 			for index, event := range replay.Events {
-				if eventID := parseCursor(event.ID); eventID > lastSentID {
-					lastSentID = eventID
-				}
 				// A durable replay can contain a revoke followed by a later
 				// reactivation. Only expose the latest membership state so an old
 				// revoke cannot redirect an already-reactivated user.
 				if isTargetedMembershipEvent(event, tenantContext.UserID) && index != latestMembershipEventIndex {
 					continue
-				}
-				if active, err := handler.sessionActive(r.Context(), user.ID, user.SessionID); err != nil || !active {
-					return
 				}
 				if err := writeSSE(w, flusher, event); err != nil {
 					return
@@ -134,19 +124,16 @@ func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
 				if membershipEventRevokesAccess(event, tenantContext.UserID) {
 					return
 				}
-			}
-			if replay.Cursor > lastSentID {
-				lastSentID = replay.Cursor
+				if active, err := handler.sessionActive(r.Context(), user.ID, user.SessionID); err != nil || !active {
+					return
+				}
 			}
 		}
 	}
 
 	connectedID := "connected"
-	if lastSentID > 0 {
+	if durable {
 		connectedID = strconv.FormatUint(lastSentID, 10)
-	}
-	if active, err := handler.sessionActive(r.Context(), user.ID, user.SessionID); err != nil || !active {
-		return
 	}
 	if err := writeSSE(w, flusher, Event{
 		ID:             connectedID,
@@ -179,19 +166,23 @@ func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			if active, err := handler.sessionActive(r.Context(), user.ID, user.SessionID); err != nil || !active {
-				return
-			}
 			if eventID := parseCursor(event.ID); eventID > 0 {
 				if eventID <= lastSentID {
 					continue
 				}
 				lastSentID = eventID
 			}
+			if active, err := handler.sessionActive(r.Context(), user.ID, user.SessionID); err != nil || !active {
+				return
+			}
 			if err := writeSSE(w, flusher, event); err != nil {
 				return
 			}
 			if membershipEventRevokesAccess(event, tenantContext.UserID) {
+				return
+			}
+			if event.Type == EventReset && event.Data["reason"] == "subscriber_backpressure" {
+				// A collapsed queue may include an access change. Reauthorize on reconnect.
 				return
 			}
 		case <-ticker.C:
@@ -255,7 +246,7 @@ func lastEventCursor(value string) (uint64, bool) {
 		return 0, false
 	}
 	cursor, err := strconv.ParseUint(value, 10, 64)
-	return cursor, err == nil && cursor > 0
+	return cursor, err == nil
 }
 
 func writeSSE(w http.ResponseWriter, flusher http.Flusher, event Event) error {

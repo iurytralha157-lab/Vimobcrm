@@ -19,7 +19,6 @@ const (
 	publishTimeout         = 2 * time.Second
 	startupTimeout         = 10 * time.Second
 	pruneInterval          = time.Hour
-	seenEventLimit         = 8192
 	tailerMinimumInterval  = 100 * time.Millisecond
 	tailerMaximumInterval  = time.Second
 )
@@ -42,19 +41,17 @@ type Replay struct {
 }
 
 type Hub struct {
-	mu            sync.RWMutex
+	mu            sync.Mutex
 	nextEventID   atomic.Uint64
 	subscriptions map[string]map[*subscription]struct{}
 	store         EventStore
 	logger        *slog.Logger
+	cursor        uint64
+	wake          chan struct{}
 
 	startMu sync.Mutex
 	started bool
 	cancel  context.CancelFunc
-
-	seenMu    sync.Mutex
-	seen      map[string]struct{}
-	seenOrder []string
 
 	published       atomic.Uint64
 	persisted       atomic.Uint64
@@ -91,24 +88,21 @@ func newHub(store EventStore, logger *slog.Logger) *Hub {
 		subscriptions: map[string]map[*subscription]struct{}{},
 		store:         store,
 		logger:        logger,
-		seen:          map[string]struct{}{},
+		wake:          make(chan struct{}, 1),
 	}
 }
 
-func (hub *Hub) Start(ctx context.Context) error {
+func (hub *Hub) Start(ctx context.Context, prune bool) error {
 	if hub == nil || hub.store == nil {
 		return nil
 	}
 
 	hub.startMu.Lock()
+	defer hub.startMu.Unlock()
 	if hub.started {
-		hub.startMu.Unlock()
 		return nil
 	}
 	tailerCtx, cancel := context.WithCancel(ctx)
-	hub.started = true
-	hub.cancel = cancel
-	hub.startMu.Unlock()
 
 	startCtx, startCancel := context.WithTimeout(tailerCtx, startupTimeout)
 	defer startCancel()
@@ -118,8 +112,15 @@ func (hub *Hub) Start(ctx context.Context) error {
 		return fmt.Errorf("initialize realtime tailer: %w", err)
 	}
 
+	hub.mu.Lock()
+	hub.cursor = cursor
+	hub.mu.Unlock()
+	hub.started = true
+	hub.cancel = cancel
 	go hub.tailLoop(tailerCtx, cursor)
-	go hub.pruneLoop(tailerCtx)
+	if prune {
+		go hub.pruneLoop(tailerCtx)
+	}
 	return nil
 }
 
@@ -136,6 +137,11 @@ func (hub *Hub) Close() {
 }
 
 func (hub *Hub) Subscribe(ctx context.Context, organizationID string, userID string) (<-chan Event, func()) {
+	events, unsubscribe, _ := hub.subscribe(ctx, organizationID, userID)
+	return events, unsubscribe
+}
+
+func (hub *Hub) subscribe(ctx context.Context, organizationID string, userID string) (<-chan Event, func(), uint64) {
 	sub := &subscription{
 		organizationID: strings.TrimSpace(organizationID),
 		userID:         strings.TrimSpace(userID),
@@ -148,6 +154,7 @@ func (hub *Hub) Subscribe(ctx context.Context, organizationID string, userID str
 		hub.subscriptions[sub.organizationID] = map[*subscription]struct{}{}
 	}
 	hub.subscriptions[sub.organizationID][sub] = struct{}{}
+	cursor := hub.cursor
 	hub.mu.Unlock()
 	hub.subscriberCount.Add(1)
 
@@ -177,7 +184,7 @@ func (hub *Hub) Subscribe(ctx context.Context, organizationID string, userID str
 		}
 	}()
 
-	return sub.events, unsubscribe
+	return sub.events, unsubscribe, cursor
 }
 
 func (hub *Hub) Publish(event Event) {
@@ -190,12 +197,12 @@ func (hub *Hub) Publish(event Event) {
 
 	if hub.store == nil {
 		event.ID = fmt.Sprintf("%d", hub.nextEventID.Add(1))
-		hub.dispatchOnce(event)
+		hub.dispatch(event, 0)
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), publishTimeout)
-	stored, err := hub.store.Append(ctx, event)
+	_, err := hub.store.Append(ctx, event)
 	cancel()
 	if err != nil {
 		hub.publishFailures.Add(1)
@@ -212,12 +219,16 @@ func (hub *Hub) Publish(event Event) {
 			"organization_id", event.OrganizationID,
 			"error", err,
 		)
-		hub.dispatchOnce(*reset)
+		hub.dispatch(*reset, 0)
 		return
 	}
 
 	hub.persisted.Add(1)
-	hub.dispatchOnce(stored)
+	// Only the tailer dispatches durable events, so a local write cannot overtake a remote one.
+	select {
+	case hub.wake <- struct{}{}:
+	default:
+	}
 }
 
 func (hub *Hub) Replay(
@@ -227,16 +238,20 @@ func (hub *Hub) Replay(
 	afterID uint64,
 	limit int,
 ) (Replay, error) {
-	if hub == nil || hub.store == nil || afterID == 0 {
+	if hub == nil || hub.store == nil {
 		return Replay{}, nil
-	}
-	if limit <= 0 || limit > defaultReplayLimit {
-		limit = defaultReplayLimit
 	}
 
 	latestID, err := hub.store.LatestID(ctx)
 	if err != nil {
 		return Replay{}, err
+	}
+	return hub.replayThrough(ctx, organizationID, userID, afterID, latestID, limit)
+}
+
+func (hub *Hub) replayThrough(ctx context.Context, organizationID, userID string, afterID, latestID uint64, limit int) (Replay, error) {
+	if limit <= 0 || limit > defaultReplayLimit {
+		limit = defaultReplayLimit
 	}
 	if latestID == afterID {
 		return Replay{Cursor: latestID, Events: []Event{}}, nil
@@ -252,7 +267,7 @@ func (hub *Hub) Replay(
 	if err != nil {
 		return Replay{}, err
 	}
-	if oldestID > 0 && afterID < oldestID {
+	if oldestID == 0 || afterID < oldestID-1 {
 		return Replay{
 			Cursor: latestID,
 			Reset:  newResetEvent(organizationID, latestID, "cursor_expired", 0),
@@ -312,6 +327,8 @@ func (hub *Hub) tailLoop(ctx context.Context, cursor uint64) {
 		case <-ctx.Done():
 			timer.Stop()
 			return
+		case <-hub.wake:
+			timer.Stop()
 		case <-timer.C:
 		}
 	}
@@ -333,10 +350,11 @@ func (hub *Hub) drainStore(ctx context.Context, cursor *uint64) (int, error) {
 			if err != nil {
 				return delivered, fmt.Errorf("invalid durable realtime cursor %q: %w", event.ID, err)
 			}
-			if eventID > *cursor {
-				*cursor = eventID
+			if eventID <= *cursor {
+				return delivered, fmt.Errorf("non-increasing durable realtime cursor %d after %d", eventID, *cursor)
 			}
-			hub.dispatchOnce(event)
+			hub.dispatch(event, eventID)
+			*cursor = eventID
 			delivered++
 		}
 		if len(events) < listenerBatchSize {
@@ -367,15 +385,12 @@ func (hub *Hub) pruneLoop(ctx context.Context) {
 	}
 }
 
-func (hub *Hub) dispatchOnce(event Event) {
-	if event.ID != "" && !hub.markSeen(event.ID) {
-		return
+func (hub *Hub) dispatch(event Event, cursor uint64) {
+	// Registering a subscriber uses the same lock as the cursor update and snapshot.
+	hub.mu.Lock()
+	if cursor > hub.cursor {
+		hub.cursor = cursor
 	}
-	hub.dispatch(event)
-}
-
-func (hub *Hub) dispatch(event Event) {
-	hub.mu.RLock()
 	subscribers := make([]*subscription, 0, len(hub.subscriptions[event.OrganizationID]))
 	for sub := range hub.subscriptions[event.OrganizationID] {
 		if event.AudienceUserID != "" && !strings.EqualFold(event.AudienceUserID, sub.userID) {
@@ -383,7 +398,7 @@ func (hub *Hub) dispatch(event Event) {
 		}
 		subscribers = append(subscribers, sub)
 	}
-	hub.mu.RUnlock()
+	hub.mu.Unlock()
 
 	for _, sub := range subscribers {
 		delivered, dropped := sub.enqueue(event)
@@ -442,23 +457,6 @@ func (sub *subscription) enqueue(event Event) (bool, int) {
 			}
 		}
 	}
-}
-
-func (hub *Hub) markSeen(eventID string) bool {
-	hub.seenMu.Lock()
-	defer hub.seenMu.Unlock()
-
-	if _, exists := hub.seen[eventID]; exists {
-		return false
-	}
-	hub.seen[eventID] = struct{}{}
-	hub.seenOrder = append(hub.seenOrder, eventID)
-	if len(hub.seenOrder) > seenEventLimit {
-		oldest := hub.seenOrder[0]
-		delete(hub.seen, oldest)
-		hub.seenOrder = hub.seenOrder[1:]
-	}
-	return true
 }
 
 func normalizeEvent(event Event) Event {
