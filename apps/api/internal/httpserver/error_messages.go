@@ -33,6 +33,7 @@ var exactUserErrorMessages = map[string]string{
 	"lead_creation_workflow_unavailable":   "A criação de contatos ganhos ainda precisa da atualização do fluxo comercial. Nenhum contato foi gravado; preserve os dados e contate o administrador.",
 	"lead_destination_unavailable":         "O funil selecionado precisa ter uma coluna ativa. Revise o destino do lead e tente novamente.",
 	"lead_destination_busy":                "O destino do lead está sendo alterado em outra sessão. Aguarde e revise a coluna antes de tentar novamente.",
+	"lead_realtime_busy":                   "A atualização do lead está temporariamente ocupada. Aguarde um instante e tente novamente.",
 	"lead_intake_destination_unavailable":  "Não foi possível receber o contato neste momento. Tente novamente mais tarde.",
 	"lead_phone_conflict":                  "Já existe um lead cadastrado com este telefone.",
 	"marketing_capacity_unavailable":       "O serviço de dados atingiu o limite temporário de conexões. Aguarde alguns instantes e tente novamente.",

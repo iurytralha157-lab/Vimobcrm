@@ -3,6 +3,7 @@ package meta
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 )
@@ -10,6 +11,7 @@ import (
 const (
 	metaWebhookWorkerInterval               = 15 * time.Second
 	metaWebhookWorkerBatch                  = 10
+	metaWebhookDatabaseTimeout              = 5 * time.Second
 	metaWebhookSubscriptionReconcileTimeout = 30 * time.Second
 )
 
@@ -31,18 +33,22 @@ func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logg
 		defer timer.Stop()
 
 		for {
+			var err error
 			select {
 			case <-ctx.Done():
 				return
+			case <-handler.wake:
+				err = handler.processPendingWebhookQueue(ctx)
 			case <-timer.C:
-				if err := handler.ProcessPendingWebhookEvents(ctx); err != nil && !errors.Is(err, context.Canceled) {
-					if errors.Is(err, errMetaWebhookSubscriptionReconcile) {
-						logger.Warn("meta webhook subscription reconciliation incomplete", "error", err)
-					} else {
-						logger.Error("meta webhook worker failed", "error", err)
-					}
-				}
+				err = handler.ProcessPendingWebhookEvents(ctx)
 				timer.Reset(metaWebhookWorkerInterval)
+			}
+			if err != nil && ctx.Err() == nil {
+				if errors.Is(err, errMetaWebhookSubscriptionReconcile) {
+					logger.Warn("meta webhook subscription reconciliation incomplete", "error", err)
+				} else {
+					logger.Error("meta webhook worker failed", "error", err)
+				}
 			}
 		}
 	}()
@@ -80,20 +86,8 @@ func (handler Handler) StartConversionFeedbackWorker(ctx context.Context, logger
 }
 
 func (handler Handler) ProcessPendingWebhookEvents(ctx context.Context) error {
-	jobs, err := handler.repo.ClaimPendingWebhookEvents(ctx, metaWebhookWorkerBatch, webhookEventLease)
-	if err != nil {
+	if err := handler.processPendingWebhookQueue(ctx); err != nil {
 		return err
-	}
-
-	for _, job := range jobs {
-		processCtx, cancel := context.WithTimeout(ctx, webhookProcessTimeout)
-		response, err := handler.repo.ProcessWebhookPayload(processCtx, job.ID, job.Payload)
-		cancel()
-		if err != nil {
-			_ = handler.repo.FinishWebhookEvent(context.Background(), job.ID, "", "failed", err.Error())
-			continue
-		}
-		handler.publishWebhookResults(response)
 	}
 
 	if reconciler, ok := handler.repo.(webhookSubscriptionReconciler); ok {
@@ -105,5 +99,46 @@ func (handler Handler) ProcessPendingWebhookEvents(ctx context.Context) error {
 		}
 	}
 
+	return nil
+}
+
+func (handler Handler) processPendingWebhookQueue(ctx context.Context) error {
+	for i := 0; i < metaWebhookWorkerBatch; i++ {
+		// Reserve only when a processor is available. Rows waiting behind a
+		// slow provider call must not start their lease as part of a batch.
+		claimCtx, cancel := context.WithTimeout(ctx, metaWebhookDatabaseTimeout)
+		job, err := handler.repo.ClaimPendingWebhookEvent(claimCtx, webhookEventLease)
+		cancel()
+		if err != nil || job == nil {
+			return err
+		}
+		if err := handler.processWebhookJob(ctx, *job); err != nil {
+			return err
+		}
+	}
+
+	// Continue without waiting for the poll when the queue was busy.
+	handler.wakeWebhookWorker()
+	return nil
+}
+
+func (handler Handler) processWebhookJob(ctx context.Context, job webhookEventJob) error {
+	processCtx, cancel := context.WithTimeout(ctx, webhookProcessTimeout)
+	response, err := handler.repo.ProcessWebhookPayload(processCtx, job)
+	cancel()
+	if err == nil {
+		handler.publishWebhookResults(response)
+		return nil
+	}
+	if errors.Is(err, errWebhookClaimLost) {
+		return nil
+	}
+
+	finishCtx, cancelFinish := context.WithTimeout(context.WithoutCancel(ctx), metaWebhookDatabaseTimeout)
+	defer cancelFinish()
+	finishErr := handler.repo.FinishWebhookEvent(finishCtx, job.Claim, "", "failed", err.Error())
+	if finishErr != nil && !errors.Is(finishErr, errWebhookClaimLost) {
+		return fmt.Errorf("finish failed Meta webhook event: %w", finishErr)
+	}
 	return nil
 }

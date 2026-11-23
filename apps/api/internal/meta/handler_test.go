@@ -19,17 +19,15 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 )
 
-var errTestDeferredProcessing = errors.New("defer webhook processing")
-
 type fakeWebhookRepository struct {
 	insertCalls          int
 	finishCalls          int
-	markCalls            int
+	claimCalls           int
 	processCalls         int
 	insertEventID        string
 	insertSignatureValid bool
 	insertPayload        map[string]any
-	markError            error
+	insertError          error
 }
 
 func (repo *fakeWebhookRepository) InsertWebhookEvent(
@@ -41,24 +39,20 @@ func (repo *fakeWebhookRepository) InsertWebhookEvent(
 	repo.insertCalls++
 	repo.insertSignatureValid = signatureValid
 	repo.insertPayload = payload
-	return repo.insertEventID, nil
+	return repo.insertEventID, repo.insertError
 }
 
-func (repo *fakeWebhookRepository) FinishWebhookEvent(context.Context, string, string, string, string) error {
+func (repo *fakeWebhookRepository) FinishWebhookEvent(context.Context, webhookEventClaim, string, string, string) error {
 	repo.finishCalls++
 	return nil
 }
 
-func (repo *fakeWebhookRepository) MarkWebhookEventProcessing(context.Context, string, time.Duration) error {
-	repo.markCalls++
-	return repo.markError
-}
-
-func (*fakeWebhookRepository) ClaimPendingWebhookEvents(context.Context, int, time.Duration) ([]webhookEventJob, error) {
+func (repo *fakeWebhookRepository) ClaimPendingWebhookEvent(context.Context, time.Duration) (*webhookEventJob, error) {
+	repo.claimCalls++
 	return nil, nil
 }
 
-func (repo *fakeWebhookRepository) ProcessWebhookPayload(context.Context, string, map[string]any) (WebhookResponse, error) {
+func (repo *fakeWebhookRepository) ProcessWebhookPayload(context.Context, webhookEventJob) (WebhookResponse, error) {
 	repo.processCalls++
 	return WebhookResponse{OK: true}, nil
 }
@@ -79,12 +73,12 @@ func TestMetaWebhookRejectsInvalidSignatureBeforePersistence(t *testing.T) {
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, response.Code, response.Body.String())
 	}
-	if repo.insertCalls != 0 || repo.finishCalls != 0 || repo.markCalls != 0 || repo.processCalls != 0 {
+	if repo.insertCalls != 0 || repo.finishCalls != 0 || repo.claimCalls != 0 || repo.processCalls != 0 {
 		t.Fatalf(
-			"invalid signature reached persistence or processing: insert=%d finish=%d mark=%d process=%d",
+			"invalid signature reached persistence or processing: insert=%d finish=%d claim=%d process=%d",
 			repo.insertCalls,
 			repo.finishCalls,
-			repo.markCalls,
+			repo.claimCalls,
 			repo.processCalls,
 		)
 	}
@@ -101,14 +95,12 @@ func TestMetaWebhookRejectsInvalidSignatureBeforePersistence(t *testing.T) {
 func TestMetaWebhookPersistsValidSignedPayload(t *testing.T) {
 	const appSecret = "meta-secret"
 	raw := []byte(`{"object":"page","entry":[]}`)
-	repo := &fakeWebhookRepository{
-		insertEventID: "event-1",
-		markError:     errTestDeferredProcessing,
-	}
+	repo := &fakeWebhookRepository{insertEventID: "event-1"}
 	handler := Handler{
 		repo:      repo,
 		config:    Config{AppSecret: appSecret},
 		publisher: realtime.NoopPublisher{},
+		wake:      make(chan struct{}, 1),
 	}
 	request := httptest.NewRequest(http.MethodPost, "/v1/webhooks/meta", bytes.NewReader(raw))
 	request.Header.Set("X-Hub-Signature-256", signMetaWebhook(raw, appSecret))
@@ -128,19 +120,38 @@ func TestMetaWebhookPersistsValidSignedPayload(t *testing.T) {
 	if repo.insertPayload["object"] != "page" {
 		t.Fatalf("unexpected persisted payload %#v", repo.insertPayload)
 	}
-	if repo.markCalls != 1 {
-		t.Fatalf("expected one processing claim, got %d", repo.markCalls)
+	if repo.claimCalls != 0 || repo.processCalls != 0 || repo.finishCalls != 0 {
+		t.Fatalf("receipt was processed by the handler: claim=%d process=%d finish=%d",
+			repo.claimCalls, repo.processCalls, repo.finishCalls)
 	}
-	if repo.processCalls != 0 {
-		t.Fatalf("deferred event was processed synchronously: %d calls", repo.processCalls)
+	select {
+	case <-handler.wake:
+	default:
+		t.Fatal("persisted event did not wake the local worker")
 	}
 
 	var body WebhookResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode webhook response: %v", err)
 	}
-	if !body.OK || body.EventID != "event-1" {
+	if !body.OK || body.EventID != "event-1" || len(body.Warnings) != 1 || body.Warnings[0] != "queued" {
 		t.Fatalf("unexpected webhook response %#v", body)
+	}
+}
+
+func TestMetaWebhookDoesNotAcknowledgeOrWakeWithoutDurableReceipt(t *testing.T) {
+	const appSecret = "meta-secret"
+	raw := []byte(`{"object":"page","entry":[]}`)
+	repo := &fakeWebhookRepository{insertError: errors.New("inbox not available")}
+	handler := Handler{repo: repo, config: Config{AppSecret: appSecret}, wake: make(chan struct{}, 1)}
+	request := httptest.NewRequest(http.MethodPost, "/v1/webhooks/meta", bytes.NewReader(raw))
+	request.Header.Set("X-Hub-Signature-256", signMetaWebhook(raw, appSecret))
+	response := httptest.NewRecorder()
+
+	handler.Webhook(response, request)
+
+	if response.Code != http.StatusServiceUnavailable || len(handler.wake) != 0 {
+		t.Fatalf("failed insert produced status=%d wake=%d", response.Code, len(handler.wake))
 	}
 }
 

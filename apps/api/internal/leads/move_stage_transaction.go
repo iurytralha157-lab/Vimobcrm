@@ -7,8 +7,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
+
+var errLeadRealtimeBusy = errors.New("realtime cursor is held by another transaction")
 
 func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Context, leadID string, input moveStageInput) (moveStageResult, error) {
 	leadID, ok := normalizeUUID(leadID)
@@ -24,12 +27,51 @@ func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Conte
 	if err != nil {
 		return moveStageResult{}, err
 	}
+	if err := appendLeadStageEvent(ctx, tx, tenantContext, transition.Result, ""); err != nil {
+		return moveStageResult{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return moveStageResult{}, err
 	}
 	repo.dispatchDealStatusSideEffects(tenantContext, transition.Before, transition.StatusInput)
 	repo.hydrateMutationLeadAvatar(tenantContext.OrganizationID, &transition.Result.Lead)
 	return transition.Result, nil
+}
+
+func appendLeadStageEvent(ctx context.Context, tx pgx.Tx, actor tenant.Context, result moveStageResult, executionID string) error {
+	eventType := "lead.reordered"
+	if result.StageChanged {
+		eventType = "lead.stage_moved"
+	}
+	data := map[string]any{
+		"leadId":     result.Lead.ID,
+		"pipelineId": result.Lead.PipelineID,
+		"stageId":    result.Lead.StageID,
+	}
+	if executionID != "" {
+		data["origin"] = "automation"
+		data["executionId"] = executionID
+		return appendLeadRealtimeEvent(ctx, tx, actor, eventType, data)
+	}
+	return appendManualLeadRealtimeEvent(ctx, tx, actor, eventType, data)
+}
+
+func appendManualLeadRealtimeEvent(ctx context.Context, tx pgx.Tx, actor tenant.Context, eventType string, data map[string]any) error {
+	acquired, err := realtime.TryLockEventCursor(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if !acquired {
+		return errLeadRealtimeBusy
+	}
+	return appendLeadRealtimeEvent(ctx, tx, actor, eventType, data)
+}
+
+func appendLeadRealtimeEvent(ctx context.Context, tx pgx.Tx, actor tenant.Context, eventType string, data map[string]any) error {
+	// The feed must survive the same commit as the stage or order change.
+	_, err := tx.Exec(ctx, `insert into private.realtime_events (organization_id, user_id, event_type, data, created_at)
+		values ($1::uuid, nullif($2, '')::uuid, $3, $4::jsonb, now())`, actor.OrganizationID, actor.UserID, eventType, jsonb(data))
+	return err
 }
 
 type moveStageTransition struct {

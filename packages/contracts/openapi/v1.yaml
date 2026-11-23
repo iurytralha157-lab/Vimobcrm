@@ -3166,6 +3166,12 @@ paths:
           $ref: "#/components/responses/APIError"
         "404":
           $ref: "#/components/responses/APIError"
+        "503":
+          description: A pipeline or stage edit rolled back after `lead_realtime_busy`. Retry the same edit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIErrorEnvelope"
     delete:
       summary: Delete a lead in the current organization
       parameters:
@@ -3338,6 +3344,12 @@ paths:
           description: >-
             The lead revision or expected stage changed. Refresh the lead and ask for a new decision; do not retry the stale move.
             Closed leads moving between stages require expectedUpdatedAt. An outcome change can also conflict with the property reservation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIErrorEnvelope"
+        "503":
+          description: The move was not saved. `lead_realtime_busy` permits a retry of the same move.
           content:
             application/json:
               schema:

@@ -3,8 +3,11 @@ package meta
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func (repo Repository) InsertWebhookEvent(ctx context.Context, eventContext webhookEventContext, payload map[string]any, signatureValid bool) (string, error) {
@@ -24,29 +27,15 @@ func (repo Repository) InsertWebhookEvent(ctx context.Context, eventContext webh
 			raw_payload,
 			signature_valid,
 			status,
-			received_at
+			received_at,
+			attempts,
+			next_retry_at
 		)
-		values ($1, $2, $3, $4, $5::jsonb, $6, 'received', now())
+		values ($1, $2, $3, $4, $5::jsonb, $6, 'received', now(), 0, null)
 		returning id::text
 	`, nullableString(eventContext.Object), nullableString(eventContext.PageID), nullableString(eventContext.FormID), nullableString(eventContext.LeadgenID), payloadJSON, signatureValid).Scan(&eventID)
-	if err == nil {
-		return eventID, nil
-	}
-	if !isUndefinedColumn(err) {
-		return "", err
-	}
-
-	err = repo.db.Pool().QueryRow(ctx, `
-		insert into public.meta_webhook_events (
-			object_type,
-			event_type,
-			provider_event_id,
-			payload,
-			created_at
-		)
-		values ($1, $2, $3, $4::jsonb, now())
-		returning id::text
-	`, nullableString(eventContext.Object), nullableString(eventContext.EventType), nullableString(firstNonEmpty(eventContext.LeadgenID, eventContext.ProviderEventID)), payloadJSON).Scan(&eventID)
+	// The worker needs the canonical inbox schema. A legacy insert here
+	// would acknowledge a receipt that the queue cannot recover.
 	return eventID, err
 }
 
@@ -93,13 +82,17 @@ func (repo Repository) webhookPayloadForStorage(ctx context.Context, payload map
 	})
 }
 
-func (repo Repository) FinishWebhookEvent(ctx context.Context, eventID string, organizationID string, status string, errorMessage string) error {
-	if strings.TrimSpace(eventID) == "" {
-		return nil
+var errWebhookClaimLost = errors.New("Meta webhook processing lease was lost")
+
+type webhookEventClaimContextKey struct{}
+
+func (repo Repository) FinishWebhookEvent(ctx context.Context, claim webhookEventClaim, organizationID string, status string, errorMessage string) error {
+	if claim.ID == "" || claim.ExpiresAt.IsZero() {
+		return errWebhookClaimLost
 	}
 	retryableFailure := isRetryableMetaWebhookFailure(status, errorMessage)
 
-	_, err := repo.db.Pool().Exec(ctx, `
+	updated, err := repo.db.Pool().Exec(ctx, `
 		update public.meta_webhook_events
 		set organization_id = coalesce($2::uuid, organization_id),
 		    status = $3,
@@ -126,22 +119,17 @@ func (repo Repository) FinishWebhookEvent(ctx context.Context, eventID string, o
 		      else null
 		    end
 		where id = $1::uuid
-	`, eventID, nullableString(organizationID), status, nullableString(errorMessage), retryableFailure)
-	if err == nil {
-		return nil
-	}
-	if !isUndefinedColumn(err) {
+		  and status = 'processing'
+		  and next_retry_at = $6::timestamptz
+		  and next_retry_at > clock_timestamp()
+	`, claim.ID, nullableString(organizationID), status, nullableString(errorMessage), retryableFailure, claim.ExpiresAt)
+	if err != nil {
 		return err
 	}
-
-	_, err = repo.db.Pool().Exec(ctx, `
-		update public.meta_webhook_events
-		set organization_id = coalesce($2::uuid, organization_id),
-		    error_message = $3,
-		    processed_at = now()
-		where id = $1::uuid
-	`, eventID, nullableString(organizationID), nullableString(errorMessage))
-	return err
+	if updated.RowsAffected() != 1 {
+		return errWebhookClaimLost
+	}
+	return nil
 }
 
 func isRetryableMetaWebhookFailure(status string, errorMessage string) bool {
@@ -169,27 +157,6 @@ func isRetryableMetaWebhookFailure(status string, errorMessage string) bool {
 	return true
 }
 
-func (repo Repository) MarkWebhookEventProcessing(ctx context.Context, eventID string, lease time.Duration) error {
-	if strings.TrimSpace(eventID) == "" {
-		return nil
-	}
-	leaseSeconds := int(lease / time.Second)
-	if leaseSeconds < 1 {
-		leaseSeconds = 300
-	}
-
-	_, err := repo.db.Pool().Exec(ctx, `
-		update public.meta_webhook_events
-		set status = 'processing',
-		    next_retry_at = now() + ($2::int * interval '1 second')
-		where id = $1::uuid
-	`, eventID, leaseSeconds)
-	if err != nil && isUndefinedColumn(err) {
-		return nil
-	}
-	return err
-}
-
 const claimPendingWebhookEventsQuery = `
 	with picked as (
 		select id
@@ -213,70 +180,50 @@ const claimPendingWebhookEventsQuery = `
 		      and coalesce(next_retry_at, received_at, created_at, now()) <= now()
 		    )
 		  )
-		order by coalesce(received_at, created_at) asc
-		limit $1
+		order by coalesce(received_at, created_at) asc, id
+		limit 1
 		for update skip locked
 	)
 	update public.meta_webhook_events event
 	set status = 'processing',
-	    next_retry_at = now() + ($2::int * interval '1 second')
+	    next_retry_at = clock_timestamp() + ($1::int * interval '1 second')
 	from picked
 	where event.id = picked.id
-	returning event.id::text, coalesce(event.raw_payload, '{}'::jsonb)
+	returning event.id::text, event.next_retry_at, coalesce(event.raw_payload, '{}'::jsonb)
 `
 
-func (repo Repository) ClaimPendingWebhookEvents(ctx context.Context, limit int, lease time.Duration) ([]webhookEventJob, error) {
-	if limit <= 0 {
-		limit = 10
-	}
+func (repo Repository) ClaimPendingWebhookEvent(ctx context.Context, lease time.Duration) (*webhookEventJob, error) {
 	leaseSeconds := int(lease / time.Second)
 	if leaseSeconds < 1 {
-		leaseSeconds = 300
+		leaseSeconds = int(webhookEventLease / time.Second)
 	}
 
-	rows, err := repo.db.Pool().Query(ctx, claimPendingWebhookEventsQuery, limit, leaseSeconds)
+	var job webhookEventJob
+	var payload []byte
+	err := repo.db.Pool().QueryRow(ctx, claimPendingWebhookEventsQuery, leaseSeconds).Scan(&job.Claim.ID, &job.Claim.ExpiresAt, &payload)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
-		if isUndefinedColumn(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	defer rows.Close()
-
-	jobs := []webhookEventJob{}
-	for rows.Next() {
-		var job webhookEventJob
-		var payload []byte
-		if err := rows.Scan(&job.ID, &payload); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(payload, &job.Payload); err != nil || job.Payload == nil {
-			job.Payload = map[string]any{}
-		}
-		jobs = append(jobs, job)
+	if err := json.Unmarshal(payload, &job.Payload); err != nil || job.Payload == nil {
+		job.Payload = map[string]any{}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return jobs, nil
+	return &job, nil
 }
 
-func (repo Repository) ProcessWebhookPayload(ctx context.Context, eventID string, payload map[string]any) (WebhookResponse, error) {
-	changes := extractLeadgenChanges(payload)
-	messagingEvents := extractMessagingEvents(payload)
-	if len(changes) == 0 && len(messagingEvents) == 0 {
-		_ = repo.FinishWebhookEvent(ctx, eventID, "", "skipped", "No supported Meta changes found")
-		return WebhookResponse{
-			OK:        true,
-			EventID:   eventID,
-			Processed: 0,
-			Warnings:  []string{"no_supported_changes"},
-		}, nil
+func (repo Repository) ProcessWebhookPayload(ctx context.Context, job webhookEventJob) (WebhookResponse, error) {
+	if job.Claim.ID == "" || job.Claim.ExpiresAt.IsZero() {
+		return WebhookResponse{}, errWebhookClaimLost
 	}
+	ctx = context.WithValue(ctx, webhookEventClaimContextKey{}, job.Claim)
 
+	changes := extractLeadgenChanges(job.Payload)
+	messagingEvents := extractMessagingEvents(job.Payload)
 	results := make([]LeadgenResult, 0, len(changes))
 	for _, change := range changes {
-		results = append(results, repo.processLeadgenChange(ctx, payload, change))
+		results = append(results, repo.processLeadgenChange(ctx, job.Payload, change))
 	}
 	messagingResults := make([]MessagingResult, 0, len(messagingEvents))
 	for _, event := range messagingEvents {
@@ -284,15 +231,55 @@ func (repo Repository) ProcessWebhookPayload(ctx context.Context, eventID string
 	}
 
 	status, organizationID, errorMessage, processed := aggregateWebhookResults(results, messagingResults)
-	if err := repo.FinishWebhookEvent(ctx, eventID, organizationID, status, errorMessage); err != nil {
+	var warnings []string
+	if len(changes) == 0 && len(messagingEvents) == 0 {
+		errorMessage = "No supported Meta changes found"
+		warnings = []string{"no_supported_changes"}
+	}
+	if err := repo.FinishWebhookEvent(ctx, job.Claim, organizationID, status, errorMessage); err != nil {
 		return WebhookResponse{}, err
 	}
 
 	return WebhookResponse{
 		OK:               true,
-		EventID:          eventID,
+		EventID:          job.Claim.ID,
 		Processed:        processed,
 		Results:          results,
 		MessagingResults: messagingResults,
+		Warnings:         warnings,
 	}, nil
+}
+
+// Hold the receipt row through domain writes so a takeover cannot happen
+// between the ownership check and commit. Graph calls happen before this lock.
+func (repo Repository) beginWebhookMutation(ctx context.Context) (pgx.Tx, error) {
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	claim, ok := ctx.Value(webhookEventClaimContextKey{}).(webhookEventClaim)
+	if !ok {
+		return tx, nil
+	}
+
+	var owned bool
+	err = tx.QueryRow(ctx, `
+		select coalesce(status = 'processing'
+			and next_retry_at = $2::timestamptz
+			and next_retry_at > clock_timestamp(), false)
+		from (
+			select status, next_retry_at
+			from public.meta_webhook_events
+			where id = $1::uuid
+			for update
+		) as receipt
+	`, claim.ID, claim.ExpiresAt).Scan(&owned)
+	if err == nil && owned {
+		return tx, nil
+	}
+	_ = tx.Rollback(ctx)
+	if err == nil || errors.Is(err, pgx.ErrNoRows) {
+		return nil, errWebhookClaimLost
+	}
+	return nil, err
 }

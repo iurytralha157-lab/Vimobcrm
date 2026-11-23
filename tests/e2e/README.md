@@ -66,3 +66,27 @@ $env:E2E_SUPABASE_SERVICE_ROLE_KEY = 'discovery-only'
 $env:E2E_SKIP_WEB_SERVER = 'true'
 npx playwright test --list
 ```
+
+## Protected release journey
+
+After installing project dependencies and Chromium, run:
+
+```sh
+npx playwright install chromium
+node scripts/tests/release-journey.mjs
+```
+
+The runner needs a local Docker engine and four available loopback ports.
+It creates an owned temporary PostgreSQL cluster from the reviewed schema
+baseline and applies the reviewed forwards. Real GoTrue and PostgREST serve
+synthetic accounts. The runner builds the current Web and API Dockerfiles
+with the same source revision and fixture-only public Web settings. The
+registry images are built after this check with deployment settings.
+
+The browser signs in, creates and moves a lead, and schedules a linked
+meeting. The test checks the database and reloads the Agenda view. It then
+exercises the real WhatsApp attendance, outbound queue, inbound webhook and
+history endpoints, with a synthetic Evolution provider and two organizations.
+This run covers WhatsApp delivery and readback through Go. The dedicated
+WhatsApp tests cover realtime and extra surfaces separately. The runner removes
+its own containers, temporary database and credentials when it exits.

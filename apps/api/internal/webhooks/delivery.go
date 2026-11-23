@@ -27,6 +27,7 @@ const (
 	webhookDeliveryWorkers   = 8
 	webhookDeliveryInterval  = 2 * time.Second
 	webhookRequestTimeout    = 10 * time.Second
+	webhookExpiryInterval    = time.Minute
 )
 
 var blockedWebhookNetworkPrefixes = []netip.Prefix{
@@ -58,9 +59,12 @@ type webhookDelivery struct {
 // behind the global background-worker gate, so API-only replicas can opt out.
 func (repo Repository) StartDeliveryWorker(ctx context.Context, logger *slog.Logger) {
 	workerID := newWebhookWorkerID()
+	repo.closeExpiredFinalDeliveries(ctx, logger)
 	repo.processWebhookDeliveries(ctx, logger, workerID)
 	ticker := time.NewTicker(webhookDeliveryInterval)
 	defer ticker.Stop()
+	expiryTicker := time.NewTicker(webhookExpiryInterval)
+	defer expiryTicker.Stop()
 
 	for {
 		select {
@@ -68,8 +72,45 @@ func (repo Repository) StartDeliveryWorker(ctx context.Context, logger *slog.Log
 			return
 		case <-ticker.C:
 			repo.processWebhookDeliveries(ctx, logger, workerID)
+		case <-expiryTicker.C:
+			repo.closeExpiredFinalDeliveries(ctx, logger)
 		}
 	}
+}
+
+func (repo Repository) closeExpiredFinalDeliveries(ctx context.Context, logger *slog.Logger) {
+	count, err := repo.expireFinalWebhookAttempts(ctx)
+	if err != nil && logger != nil && ctx.Err() == nil {
+		logger.Error("close expired final webhook delivery attempts", "error", err)
+	}
+	if count > 0 && logger != nil {
+		logger.Warn("outgoing webhooks require delivery reconciliation", "count", count)
+	}
+}
+
+func (repo Repository) expireFinalWebhookAttempts(ctx context.Context) (int64, error) {
+	result, err := repo.db.Pool().Exec(ctx, `
+		with expired as (
+			select id
+			from private.webhook_delivery_outbox
+			where status = 'delivering'
+			  and lease_until < now()
+			  and attempts >= max_attempts
+			order by lease_until, id
+			limit $1
+			for update skip locked
+		)
+		update private.webhook_delivery_outbox delivery
+		set status = 'dead',
+		    last_error = 'delivery_outcome_unknown',
+		    response_status = null,
+		    lease_owner = null,
+		    lease_until = null,
+		    updated_at = now()
+		from expired
+		where delivery.id = expired.id
+	`, webhookDeliveryBatchSize)
+	return result.RowsAffected(), err
 }
 
 func (repo Repository) processWebhookDeliveries(ctx context.Context, logger *slog.Logger, workerID string) {

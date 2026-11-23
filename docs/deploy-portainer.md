@@ -369,6 +369,27 @@ anterior e pode ficar instalada durante um rollback de imagem. A entrega
 ordenada passa a valer na conexão depois que a réplica que a atende recebe
 a nova API.
 
+Os movimentos manuais e as edições de etapa ou funil gravam o aviso de
+tempo real na mesma transação. Se outro produtor estiver com o lock do
+cursor, a transação libera os locks do lead antes de tentar novamente.
+Depois das tentativas internas, `lead_realtime_busy` indica que a tentativa
+foi revertida e pode ser repetida com a mesma revisão observada.
+
+O ingresso da Meta confirma a gravação do recibo e sinaliza o worker local.
+Mantenha `API_BACKGROUND_WORKERS_ENABLED=true` e
+`META_WEBHOOK_WORKER_ENABLED=true` nas réplicas que consomem a fila.
+Durante a troca de versões, acompanhe recibos pendentes e sua idade. A
+proteção contra conclusões antigas entra em vigor após a saída dos
+processos da versão anterior.
+
+Em webhooks de saída, o aviso `outgoing webhooks require delivery reconciliation`
+indica que uma última tentativa expirou sem resultado persistido. O worker
+encerra a reserva com `last_error = 'delivery_outcome_unknown'`. Para investigar,
+use o identificador durável da entrega (`X-Vimob-Delivery`) e a chave de
+idempotência para conferir o recebimento com o destino. Um 2xx pode ter chegado
+antes da interrupção da API. Resolva o resultado com evidência do destino antes
+de decidir por um reenvio.
+
 No Portainer:
 
 1. `Stacks` -> `Add stack`.

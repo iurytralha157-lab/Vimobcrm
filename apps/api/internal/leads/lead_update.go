@@ -13,6 +13,7 @@ import (
 )
 
 func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context, leadID string, input updateInput) (Lead, error) {
+	destinationProvided := input.PipelineID.Set || input.StageID.Set
 	leadID, ok := normalizeUUID(leadID)
 	if !ok {
 		return Lead{}, ErrLeadNotFound
@@ -382,6 +383,11 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return Lead{}, err
 	}
 	updatedLead.FinancialReviewRequired = financialReviewRequired
+	if destinationProvided {
+		if err := appendManualLeadRealtimeEvent(ctx, tx, tenantContext, "lead.updated", leadUpdatedRealtimeData(updatedLead)); err != nil {
+			return Lead{}, err
+		}
+	}
 
 	commitStartedAt := time.Now()
 	if err := tx.Commit(ctx); err != nil {
@@ -394,6 +400,15 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	repo.hydrateMutationLeadAvatar(tenantContext.OrganizationID, &updatedLead)
 
 	return updatedLead, nil
+}
+
+func leadUpdatedRealtimeData(lead Lead) map[string]any {
+	return map[string]any{
+		"leadId":         lead.ID,
+		"pipelineId":     lead.PipelineID,
+		"stageId":        lead.StageID,
+		"assignedUserId": lead.AssignedUserID,
+	}
 }
 
 func hasLeadColumnAssignment(assignments []string, column string) bool {

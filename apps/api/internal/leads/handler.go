@@ -1,12 +1,14 @@
 package leads
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
@@ -165,18 +167,17 @@ func (handler Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lead, err := handler.repo.Update(r.Context(), tenantContext, r.PathValue("id"), input)
+	lead, err := retryLeadRealtimeWrite(r.Context(), func() (Lead, error) {
+		return handler.repo.Update(r.Context(), tenantContext, r.PathValue("id"), input)
+	})
 	if err != nil {
 		writeLeadError(w, r, err)
 		return
 	}
 
-	handler.publishLeadEvent(tenantContext, "lead.updated", lead.ID, map[string]any{
-		"leadId":         lead.ID,
-		"pipelineId":     lead.PipelineID,
-		"stageId":        lead.StageID,
-		"assignedUserId": lead.AssignedUserID,
-	})
+	if !input.PipelineID.Set && !input.StageID.Set {
+		handler.publishLeadEvent(tenantContext, "lead.updated", lead.ID, leadUpdatedRealtimeData(lead))
+	}
 	httpserver.WriteJSON(w, http.StatusOK, map[string]Lead{
 		"data": lead,
 	})
@@ -217,24 +218,33 @@ func (handler Handler) MoveStage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := handler.repo.MoveStage(r.Context(), tenantContext, r.PathValue("id"), input)
+	result, err := retryLeadRealtimeWrite(r.Context(), func() (moveStageResult, error) {
+		return handler.repo.MoveStage(r.Context(), tenantContext, r.PathValue("id"), input)
+	})
 	if err != nil {
 		writeLeadError(w, r, err)
 		return
 	}
 
-	eventName := "lead.reordered"
-	if result.StageChanged {
-		eventName = "lead.stage_moved"
-	}
-	handler.publishLeadEvent(tenantContext, eventName, result.Lead.ID, map[string]any{
-		"leadId":     result.Lead.ID,
-		"pipelineId": result.Lead.PipelineID,
-		"stageId":    result.Lead.StageID,
-	})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]Lead{
 		"data": result.Lead,
 	})
+}
+
+func retryLeadRealtimeWrite[T any](ctx context.Context, write func() (T, error)) (T, error) {
+	for _, delay := range [...]time.Duration{20 * time.Millisecond, 50 * time.Millisecond, 100 * time.Millisecond} {
+		result, err := write()
+		if !errors.Is(err, errLeadRealtimeBusy) {
+			return result, err
+		}
+		// The repository rolled the transaction back before reporting this error.
+		select {
+		case <-ctx.Done():
+			return result, ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+	return write()
 }
 
 func (handler Handler) Assign(w http.ResponseWriter, r *http.Request) {
@@ -430,6 +440,8 @@ func writeLeadError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "no_lead_changes", "No lead changes were provided.")
 	case errors.Is(err, ErrLeadStageChanged):
 		httpserver.WriteError(w, r, http.StatusConflict, "lead_stage_changed", "O lead mudou de etapa em outra sessão. Atualize e tente novamente.")
+	case errors.Is(err, errLeadRealtimeBusy):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "lead_realtime_busy", "Lead change was not saved because the realtime cursor was busy.")
 	case errors.Is(err, ErrTagAlreadyExists):
 		httpserver.WriteError(w, r, http.StatusConflict, "tag_already_exists", "Tag is already attached to this lead.")
 	case errors.Is(err, ErrTagNameAlreadyExists):

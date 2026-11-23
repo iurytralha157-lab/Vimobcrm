@@ -262,6 +262,28 @@ jobs:
           go test -count=1 -v ./apps/api/internal/settings
           -run '^TestRoleLifecycleProtectsSystemRolesAndTenantScope$'
 
+      - name: Test manual Pipeline moves with durable realtime publication
+        env:
+          VIMOB_RUN_AUTOMATION_STAGE_DB_TESTS: LOCAL_WRITE_TEST
+          AUTOMATION_STAGE_TEST_DATABASE_URL: postgresql://postgres:membership_test@127.0.0.1:5432/postgres?sslmode=disable
+        run: >-
+          go test -count=1 -v ./apps/api/internal/leads
+          -run '^(TestManualMoveStageCommitsWithRealtimeEvent|TestMoveStageOutcomeLocalPostgres)$'
+
+      - name: Test durable Meta intake leases on disposable PostgreSQL
+        env:
+          META_INTAKE_TEST_DATABASE_URL: postgresql://postgres:membership_test@127.0.0.1:5432/postgres?sslmode=disable
+        run: >-
+          go test -count=1 -v ./apps/api/internal/meta
+          -run '^(TestMetaWebhookLeaseExclusiveOnReceiptAndTakeover|TestMetaWebhookClaimDoesNotLetTenPermanentFailuresStarveReceived)$'
+
+      - name: Test terminal webhook reconciliation on a fresh database
+        env:
+          WEBHOOK_DELIVERY_TEST_DATABASE_URL: postgresql://postgres:membership_test@127.0.0.1:5432/vimob_webhook_delivery_test?sslmode=disable
+        run: |
+          docker exec "${{ job.services.postgres.id }}" createdb -U postgres vimob_webhook_delivery_test
+          go test -count=1 -v ./apps/api/internal/webhooks -run '^TestExpiredFinalWebhookAttemptsNeedReconciliation$'
+
   whatsapp-contracts:
     needs: validate-staging
     name: WhatsApp disposable PostgreSQL and mobile contracts
@@ -340,9 +362,35 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  protected-release-journey:
+    needs: validate-staging
+    name: Protected Web and Go release journey
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Prepare the local browser
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Exercise the protected release journey
+        run: node scripts/tests/release-journey.mjs
+
   build-and-push:
     name: Build and push staging images
-    needs: [validate-staging, release-gates, invitation-integration, membership-access-integration, whatsapp-contracts]
+    needs: [validate-staging, release-gates, invitation-integration, membership-access-integration, whatsapp-contracts, protected-release-journey]
     if: github.ref == 'refs/heads/homologacao'
     runs-on: ubuntu-latest
     timeout-minutes: 90

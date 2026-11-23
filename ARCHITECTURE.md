@@ -462,7 +462,7 @@ grandes (`roundrobin`, `leads`, `whatsapp`, `developments`, `automations`,
 | WhatsApp mídia (padrão desligado) | 2 s | lease 5 min |
 | WhatsApp avatar | 2 s | lease 3 min |
 | Supervisor de sessões | 1 min | leader lock |
-| Webhooks de saída | 2 s | lease 90 s |
+| Webhooks de saída | 2 s | lease 90 s. A varredura de última tentativa expirada roda a cada minuto e sinaliza resultado indeterminado para conferência. |
 | Meta webhook | 15 s | lease 5 min |
 | Meta conversion feedback | 5 s | `SKIP LOCKED` |
 | Grupo OLX import report | 2 s | `SKIP LOCKED`, advisory por integração |

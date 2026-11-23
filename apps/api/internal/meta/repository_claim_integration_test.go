@@ -2,6 +2,10 @@ package meta
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
@@ -11,7 +15,8 @@ import (
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
-func TestMetaWebhookClaimDoesNotLetTenPermanentFailuresStarveReceived(t *testing.T) {
+func newMetaIntakeLocalPostgres(t *testing.T) (context.Context, *dbpkg.Postgres) {
+	t.Helper()
 	databaseURL := strings.TrimSpace(os.Getenv("META_INTAKE_TEST_DATABASE_URL"))
 	if databaseURL == "" {
 		t.Skip("set META_INTAKE_TEST_DATABASE_URL to run the Meta webhook claim contract")
@@ -27,7 +32,7 @@ func TestMetaWebhookClaimDoesNotLetTenPermanentFailuresStarveReceived(t *testing
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	postgres, err := dbpkg.NewPostgres(ctx, dbpkg.Config{
 		URL:           databaseURL,
 		MaxConns:      4,
@@ -38,6 +43,11 @@ func TestMetaWebhookClaimDoesNotLetTenPermanentFailuresStarveReceived(t *testing
 	}
 	t.Cleanup(postgres.Close)
 
+	return ctx, postgres
+}
+
+func TestMetaWebhookClaimDoesNotLetTenPermanentFailuresStarveReceived(t *testing.T) {
+	ctx, postgres := newMetaIntakeLocalPostgres(t)
 	pool := postgres.Pool()
 	marker := "meta-claim-" + strings.ReplaceAll(time.Now().UTC().Format("20060102T150405.000000000"), ".", "")
 	t.Cleanup(func() {
@@ -46,7 +56,6 @@ func TestMetaWebhookClaimDoesNotLetTenPermanentFailuresStarveReceived(t *testing
 		_, _ = pool.Exec(cleanupCtx, `delete from public.meta_webhook_events where page_id = $1`, marker)
 	})
 
-	poisonIDs := map[string]struct{}{}
 	rows, err := pool.Query(ctx, `
 		insert into public.meta_webhook_events (
 		  object, page_id, form_id, leadgen_id, raw_payload,
@@ -71,7 +80,6 @@ func TestMetaWebhookClaimDoesNotLetTenPermanentFailuresStarveReceived(t *testing
 			rows.Close()
 			t.Fatalf("scan permanent Meta failure: %v", err)
 		}
-		poisonIDs[id] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -96,18 +104,114 @@ func TestMetaWebhookClaimDoesNotLetTenPermanentFailuresStarveReceived(t *testing
 	}
 
 	repository := NewRepository(postgres, Config{})
-	claimed, err := repository.ClaimPendingWebhookEvents(ctx, 10, 5*time.Minute)
+	claimed, err := repository.ClaimPendingWebhookEvent(ctx, 5*time.Minute)
 	if err != nil {
-		t.Fatalf("claim Meta webhook events: %v", err)
+		t.Fatalf("claim Meta webhook event: %v", err)
 	}
-	foundReceived := false
-	for _, job := range claimed {
-		if _, poison := poisonIDs[job.ID]; poison {
-			t.Fatalf("permanent Meta failure %s was automatically reclaimed", job.ID)
+	if claimed == nil || claimed.Claim.ID != receivedID {
+		t.Fatalf("received Meta event %s was starved by ten permanent failures: %#v", receivedID, claimed)
+	}
+}
+
+func TestMetaWebhookLeaseExclusiveOnReceiptAndTakeover(t *testing.T) {
+	ctx, postgres := newMetaIntakeLocalPostgres(t)
+	pool := postgres.Pool()
+	const appSecret = "meta-lease-test-secret"
+	repository := NewRepository(postgres, Config{AppSecret: appSecret})
+	handler := NewHandler(repository)
+	raw := []byte(`{"object":"page","entry":[]}`)
+	request := httptest.NewRequest(http.MethodPost, "/v1/public/integrations/meta/webhook", strings.NewReader(string(raw)))
+	request.Header.Set("X-Hub-Signature-256", signMetaWebhook(raw, appSecret))
+	response := httptest.NewRecorder()
+	handler.Webhook(response, request)
+	var ack WebhookResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &ack); err != nil || response.Code != http.StatusOK || !ack.OK || ack.EventID == "" {
+		t.Fatalf("signed receipt acknowledgement = %d %#v, error = %v", response.Code, ack, err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = pool.Exec(cleanupCtx, "delete from public.meta_webhook_events where id = $1::uuid", ack.EventID)
+	})
+
+	var status string
+	if err := pool.QueryRow(ctx, "select status from public.meta_webhook_events where id = $1::uuid", ack.EventID).Scan(&status); err != nil || status != "received" {
+		t.Fatalf("after HTTP acknowledgement status = %q, error = %v", status, err)
+	}
+
+	type claimResult struct {
+		job *webhookEventJob
+		err error
+	}
+	begin := make(chan struct{})
+	claims := make(chan claimResult, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			<-begin
+			job, err := repository.ClaimPendingWebhookEvent(ctx, time.Second)
+			claims <- claimResult{job, err}
+		}()
+	}
+	close(begin)
+	var first *webhookEventJob
+	for i := 0; i < 2; i++ {
+		result := <-claims
+		if result.err != nil {
+			t.Fatal(result.err)
 		}
-		foundReceived = foundReceived || job.ID == receivedID
+		if result.job != nil {
+			if first != nil || result.job.Claim.ID != ack.EventID {
+				t.Fatalf("two workers obtained a claim or another receipt was selected: %#v", result.job)
+			}
+			first = result.job
+		}
 	}
-	if !foundReceived {
-		t.Fatalf("received Meta event %s was starved by ten permanent failures", receivedID)
+	if first == nil {
+		t.Fatal("neither worker obtained the queued receipt")
+	}
+
+	ownedCtx := context.WithValue(ctx, webhookEventClaimContextKey{}, first.Claim)
+	tx, err := repository.beginWebhookMutation(ownedCtx)
+	if err != nil {
+		t.Fatalf("owner could not lock its receipt for a domain mutation: %v", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, "select pg_sleep(1.05)"); err != nil {
+		t.Fatal(err)
+	}
+	if stolen, err := repository.ClaimPendingWebhookEvent(ctx, webhookEventLease); err != nil || stolen != nil {
+		t.Fatalf("takeover while the first mutation holds the expired row: %#v, %v", stolen, err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := repository.ClaimPendingWebhookEvent(ctx, webhookEventLease)
+	if err != nil || second == nil || second.Claim.ID != first.Claim.ID || second.Claim.ExpiresAt.Equal(first.Claim.ExpiresAt) {
+		t.Fatalf("expired lease was not replaced by a new claim: %#v, %v", second, err)
+	}
+	if _, err := repository.beginWebhookMutation(ownedCtx); !errors.Is(err, errWebhookClaimLost) {
+		t.Fatalf("superseded mutation = %v, want lost lease", err)
+	}
+	if err := repository.FinishWebhookEvent(ctx, first.Claim, "", "failed", "stale attempt"); !errors.Is(err, errWebhookClaimLost) {
+		t.Fatalf("superseded finish = %v, want lost lease", err)
+	}
+	result, err := repository.ProcessWebhookPayload(ctx, *second)
+	if err != nil || result.EventID != ack.EventID {
+		t.Fatalf("new owner did not settle the receipt: %#v, %v", result, err)
+	}
+	if err := repository.FinishWebhookEvent(ctx, first.Claim, "", "failed", "late stale attempt"); !errors.Is(err, errWebhookClaimLost) {
+		t.Fatalf("late stale finish = %v, want lost lease", err)
+	}
+
+	var attempts int
+	var retryScheduled bool
+	if err := pool.QueryRow(ctx, `
+		select status, attempts, next_retry_at is not null
+		from public.meta_webhook_events
+		where id = $1::uuid
+	`, ack.EventID).Scan(&status, &attempts, &retryScheduled); err != nil ||
+		status != "skipped" || attempts != 1 || retryScheduled {
+		t.Fatalf("settled receipt status=%q attempts=%d retry=%t error=%v", status, attempts, retryScheduled, err)
 	}
 }

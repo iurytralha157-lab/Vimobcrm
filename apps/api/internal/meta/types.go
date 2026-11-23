@@ -73,8 +73,15 @@ type webhookEventContext struct {
 	EventType       string
 }
 
+// While the receipt is processing, the database's retry timestamp is the
+// lease expiry and identifies the attempt that may commit or settle it.
+type webhookEventClaim struct {
+	ID        string
+	ExpiresAt time.Time
+}
+
 type webhookEventJob struct {
-	ID      string
+	Claim   webhookEventClaim
 	Payload map[string]any
 }
 

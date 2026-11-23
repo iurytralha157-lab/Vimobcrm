@@ -55,13 +55,7 @@ func completeAutomationStageEffect(ctx context.Context, tx pgx.Tx, input automat
 	if !result.StageChanged {
 		return nil
 	}
-	// Durable feed append belongs to the same transaction, so a process failure
-	// after COMMIT cannot lose the UI refresh or publish it again on retry.
-	_, err := tx.Exec(ctx, `insert into private.realtime_events(organization_id,user_id,event_type,data,created_at)
- values($1::uuid,$2::uuid,'lead.stage_moved',$3::jsonb,now())`, input.OrganizationID, actor.UserID, jsonb(map[string]any{
-		"leadId": result.Lead.ID, "pipelineId": result.Lead.PipelineID, "stageId": result.Lead.StageID, "origin": "automation", "executionId": input.ExecutionID,
-	}))
-	return err
+	return appendLeadStageEvent(ctx, tx, actor, result, input.ExecutionID)
 }
 
 func completeAutomationCommandEffect(ctx context.Context, tx pgx.Tx, input automationStageCommand, effectID, response string) error {

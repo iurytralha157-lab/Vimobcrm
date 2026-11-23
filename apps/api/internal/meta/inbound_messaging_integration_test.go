@@ -31,7 +31,7 @@ func TestInboundMessagingPersistsMessengerAndInstagramIdempotently(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	t.Cleanup(database.Close)
 
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	pageID := "messaging-page-" + suffix
@@ -54,6 +54,7 @@ func TestInboundMessagingPersistsMessengerAndInstagramIdempotently(t *testing.T)
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cleanupCancel()
+		_, _ = database.Pool().Exec(cleanupCtx, "delete from public.meta_webhook_events where page_id = $1", pageID)
 		_, _ = database.Pool().Exec(cleanupCtx, `
 			delete from public.organizations
 			where id in ($1::uuid, $2::uuid)
@@ -74,6 +75,19 @@ func TestInboundMessagingPersistsMessengerAndInstagramIdempotently(t *testing.T)
 	}
 
 	repository := NewRepository(database, Config{})
+	process := func(payload map[string]any) (WebhookResponse, error) {
+		t.Helper()
+		job := webhookEventJob{Payload: payload}
+		err := database.Pool().QueryRow(ctx, `
+			insert into public.meta_webhook_events (page_id, raw_payload, status, next_retry_at)
+			values ($1, $2::jsonb, 'processing', clock_timestamp() + interval '5 minutes')
+			returning id::text, next_retry_at
+		`, pageID, jsonb(payload)).Scan(&job.Claim.ID, &job.Claim.ExpiresAt)
+		if err != nil {
+			t.Fatalf("seed a claimed receipt: %v", err)
+		}
+		return repository.ProcessWebhookPayload(ctx, job)
+	}
 	messengerPayload := map[string]any{
 		"object":          "page",
 		"organization_id": foreignOrganizationID, // Must never influence routing.
@@ -89,11 +103,11 @@ func TestInboundMessagingPersistsMessengerAndInstagramIdempotently(t *testing.T)
 		}},
 	}
 
-	first, err := repository.ProcessWebhookPayload(ctx, "", messengerPayload)
+	first, err := process(messengerPayload)
 	if err != nil || len(first.MessagingResults) != 1 || first.MessagingResults[0].Status != "processed" {
 		t.Fatalf("first Messenger result = %#v, error = %v", first, err)
 	}
-	second, err := repository.ProcessWebhookPayload(ctx, "", messengerPayload)
+	second, err := process(messengerPayload)
 	if err != nil || len(second.MessagingResults) != 1 || second.MessagingResults[0].Status != "duplicate" {
 		t.Fatalf("replayed Messenger result = %#v, error = %v", second, err)
 	}
@@ -148,7 +162,7 @@ func TestInboundMessagingPersistsMessengerAndInstagramIdempotently(t *testing.T)
 			}},
 		}},
 	}
-	instagramResponse, err := repository.ProcessWebhookPayload(ctx, "", instagramPayload)
+	instagramResponse, err := process(instagramPayload)
 	if err != nil || len(instagramResponse.MessagingResults) != 1 || instagramResponse.MessagingResults[0].Status != "processed" {
 		t.Fatalf("Instagram result = %#v, error = %v", instagramResponse, err)
 	}
@@ -199,7 +213,7 @@ func TestInboundMessagingPersistsMessengerAndInstagramIdempotently(t *testing.T)
 			}},
 		}},
 	}
-	ambiguousResponse, err := repository.ProcessWebhookPayload(ctx, "", ambiguousPayload)
+	ambiguousResponse, err := process(ambiguousPayload)
 	if err != nil || len(ambiguousResponse.MessagingResults) != 1 || ambiguousResponse.MessagingResults[0].Status != "failed" ||
 		!strings.Contains(ambiguousResponse.MessagingResults[0].Error, ErrAmbiguousMessagingIntegration.Error()) {
 		t.Fatalf("ambiguous result = %#v, error = %v", ambiguousResponse, err)

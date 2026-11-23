@@ -4,11 +4,12 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { load } = require('js-yaml');
-const workflow = load(readFileSync(new URL('../../.github/workflows/docker-images.yml', import.meta.url), 'utf8'));
+const readWorkflow = file => load(readFileSync(new URL('../../.github/workflows/' + file, import.meta.url), 'utf8'));
+const workflow = readWorkflow('docker-images.yml');
 
-test('image publication waits for every existing gate and the WhatsApp gate', () => {
+test('image publication waits for each release gate', () => {
   assert.deepEqual(workflow.jobs['build-and-push'].needs,
-    ['release-gates', 'invitation-integration', 'membership-access-integration', 'whatsapp-contracts']);
+    ['release-gates', 'invitation-integration', 'membership-access-integration', 'whatsapp-contracts', 'protected-release-journey']);
   assert.equal(workflow.jobs['build-and-push'].permissions.packages, 'write');
   const staticCommands = workflow.jobs['release-gates'].steps.map(step => step.run || '').join('\n');
   for (const command of ['npm run audit:check', 'npm run validation:test', 'npm run typecheck', 'npm run lint',
@@ -34,4 +35,15 @@ test('WhatsApp gate is secret-free, uses explicit PG17/pgTAP and cleans even aft
   assert.equal(artifact.if, 'always()');
   assert.deepEqual(artifact.with.path.trim().split('\n'), ['log', 'json', 'jsonl', 'tap'].map(ext => '${{ runner.temp }}/vimob-whatsapp-ci/results/*.' + ext));
   assert.doesNotMatch(artifact.with.path, /\.sql|runtime|password|data\//);
+});
+
+test('both image workflows require the isolated browser journey without remote credentials', () => {
+  for (const file of ['docker-images.yml', 'staging-images.yml']) {
+    const { jobs } = readWorkflow(file);
+    assert.ok(jobs['build-and-push'].needs.includes('protected-release-journey'), file);
+    const gate = jobs['protected-release-journey'];
+    assert.deepEqual(gate.permissions, { contents: 'read' });
+    assert.doesNotMatch(JSON.stringify(gate), /secrets\.|DATABASE_URL|SERVICE_ROLE|docker\/login|build-push-action/);
+    assert.ok(gate.steps.some(step => step.run === 'node scripts/tests/release-journey.mjs'));
+  }
 });

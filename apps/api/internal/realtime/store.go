@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
@@ -27,6 +28,15 @@ type PostgresStore struct {
 
 func NewPostgresStore(db *dbpkg.Postgres) *PostgresStore {
 	return &PostgresStore{db: db}
+}
+
+// TryLockEventCursor takes the same transaction lock as the INSERT trigger.
+// A transaction holding domain rows can roll back instead of waiting on a writer that needs them.
+func TryLockEventCursor(ctx context.Context, tx pgx.Tx) (bool, error) {
+	var acquired bool
+	err := tx.QueryRow(ctx, `select pg_catalog.pg_try_advisory_xact_lock(
+		pg_catalog.hashtextextended('vimob.private.realtime_events.cursor', 0))`).Scan(&acquired)
+	return acquired, err
 }
 
 func (store *PostgresStore) Append(ctx context.Context, event Event) (Event, error) {

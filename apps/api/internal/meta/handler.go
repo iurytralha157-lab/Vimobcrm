@@ -25,16 +25,16 @@ const (
 
 type webhookRepository interface {
 	InsertWebhookEvent(context.Context, webhookEventContext, map[string]any, bool) (string, error)
-	FinishWebhookEvent(context.Context, string, string, string, string) error
-	MarkWebhookEventProcessing(context.Context, string, time.Duration) error
-	ClaimPendingWebhookEvents(context.Context, int, time.Duration) ([]webhookEventJob, error)
-	ProcessWebhookPayload(context.Context, string, map[string]any) (WebhookResponse, error)
+	FinishWebhookEvent(context.Context, webhookEventClaim, string, string, string) error
+	ClaimPendingWebhookEvent(context.Context, time.Duration) (*webhookEventJob, error)
+	ProcessWebhookPayload(context.Context, webhookEventJob) (WebhookResponse, error)
 }
 
 type Handler struct {
 	repo      webhookRepository
 	config    Config
 	publisher realtime.Publisher
+	wake      chan struct{}
 }
 
 func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {
@@ -42,7 +42,7 @@ func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {
 	if len(publishers) > 0 && publishers[0] != nil {
 		publisher = publishers[0]
 	}
-	return Handler{repo: repo, config: repo.config, publisher: publisher}
+	return Handler{repo: repo, config: repo.config, publisher: publisher, wake: make(chan struct{}, 1)}
 }
 
 func (handler Handler) Webhook(w http.ResponseWriter, r *http.Request) {
@@ -116,33 +116,21 @@ func (handler Handler) receiveWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claimCtx, cancelClaim := contextWithTimeout(r.Context(), 2*time.Second)
-	claimErr := handler.repo.MarkWebhookEventProcessing(claimCtx, eventID, webhookEventLease)
-	cancelClaim()
-	warnings := []string{"queued"}
-	if claimErr == nil {
-		go handler.processWebhookPayloadAsync(eventID, payload)
-	} else {
-		warnings = append(warnings, "deferred_processing")
-	}
-
+	// The notification only wakes the local worker. The PostgreSQL inbox
+	// and its periodic poll own processing even if this replica stops here.
+	handler.wakeWebhookWorker()
 	httpserver.WriteJSON(w, http.StatusOK, WebhookResponse{
 		OK:       true,
 		EventID:  eventID,
-		Warnings: warnings,
+		Warnings: []string{"queued"},
 	})
 }
 
-func (handler Handler) processWebhookPayloadAsync(eventID string, payload map[string]any) {
-	ctx, cancel := context.WithTimeout(context.Background(), webhookProcessTimeout)
-	defer cancel()
-
-	response, err := handler.repo.ProcessWebhookPayload(ctx, eventID, payload)
-	if err != nil {
-		_ = handler.repo.FinishWebhookEvent(context.Background(), eventID, "", "failed", err.Error())
-		return
+func (handler Handler) wakeWebhookWorker() {
+	select {
+	case handler.wake <- struct{}{}:
+	default:
 	}
-	handler.publishWebhookResults(response)
 }
 
 func (handler Handler) publishWebhookResults(response WebhookResponse) {

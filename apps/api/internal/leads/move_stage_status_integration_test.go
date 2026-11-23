@@ -1,10 +1,161 @@
 package leads
 
 import (
+	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 )
+
+func TestManualMoveStageCommitsWithRealtimeEvent(t *testing.T) {
+	f := newAutomationStageFixture(t, "commissions", "financial_entries")
+	migration, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "supabase", "migrations", "20261123043951_serialize_realtime_event_cursor_allocation.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, function, hasFunction := strings.Cut(string(migration), "create function")
+	function, _, hasPermissions := strings.Cut(function, "revoke all on function")
+	_, trigger, hasTrigger := strings.Cut(string(migration), "create trigger")
+	trigger, _, hasCommit := strings.Cut(trigger, "commit;")
+	if !hasFunction || !hasPermissions || !hasTrigger || !hasCommit {
+		t.Fatal("cannot locate the production cursor function and trigger statements")
+	}
+	f.exec(t, "create function"+function+"create trigger"+trigger)
+
+	actor, err := f.resolver.Resolve(f.ctx, f.user, f.org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination, leadID := pipelinePostgresID(720), pipelinePostgresID(721)
+	f.exec(t, `insert into public.stages(id,organization_id,pipeline_id,name,stage_key)
+		values($1,$2,$3,'Ordinary','ordinary')`, destination, f.org, f.pipeline)
+	f.exec(t, `insert into public.leads(id,organization_id,name,source,deal_status,pipeline_id,stage_id,assigned_user_id)
+		values($1,$2,'Synthetic lead','manual','open',$3,$4,$5)`, leadID, f.org, f.pipeline, f.open, f.user)
+
+	store := realtime.NewPostgresStore(f.db)
+	f.exec(t, `alter table private.realtime_events add constraint fail_test_publish check (event_type <> 'lead.stage_moved')`)
+	if _, err := f.repo.MoveStage(f.ctx, actor, leadID, moveStageInput{StageID: destination}); err == nil {
+		t.Fatal("expected failed event append to abort the stage move")
+	}
+	if status, stage := f.status(t, leadID); status != "open" || stage != f.open {
+		t.Fatalf("stage/status after failed append = %s/%s", stage, status)
+	}
+	if count := f.count(t, "private.realtime_events"); count != 0 {
+		t.Fatalf("failed move left %d realtime events", count)
+	}
+	f.exec(t, `alter table private.realtime_events drop constraint fail_test_publish`)
+
+	// Match the inbound order: write to the feed first, then try to update the lead.
+	competitor, err := f.conn.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer competitor.Rollback(f.ctx)
+	if _, err := competitor.Exec(f.ctx, `insert into private.realtime_events (organization_id,event_type,data,created_at)
+		values ($1,'test.inbound','{}',now())`, f.org); err != nil {
+		t.Fatal(err)
+	}
+	attempts := 0
+	move := moveStageInput{StageID: destination}
+	_, err = retryLeadRealtimeWrite(f.ctx, func() (moveStageResult, error) {
+		attempts++
+		ctx, cancel := context.WithTimeout(f.ctx, time.Second)
+		defer cancel()
+		result, moveErr := f.repo.MoveStage(ctx, actor, leadID, move)
+		if attempts == 1 {
+			if !errors.Is(moveErr, errLeadRealtimeBusy) {
+				t.Fatalf("move must release the lead while the feed is locked: %v", moveErr)
+			}
+			if _, err := competitor.Exec(ctx, `update public.leads set name = name where id = $1`, leadID); err != nil {
+				t.Fatalf("inbound transaction could not acquire the lead after rollback: %v", err)
+			}
+			if err := competitor.Rollback(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return result, moveErr
+	})
+	if err != nil || attempts != 2 {
+		t.Fatalf("move after cursor release: attempts=%d, err=%v", attempts, err)
+	}
+	if _, err := f.repo.MoveStage(f.ctx, actor, leadID, move); err != nil {
+		t.Fatal(err)
+	}
+	cursor, err := store.LatestID(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.ListSubscriberAfter(f.ctx, f.org, f.user, 0, cursor, 10)
+	if err != nil || len(events) != 2 {
+		t.Fatalf("expected two stored realtime events, got %d, %v", len(events), err)
+	}
+	for i, eventType := range []string{"lead.stage_moved", "lead.reordered"} {
+		event := events[i]
+		if event.Type != eventType || event.UserID != f.user || event.Data["leadId"] != leadID || event.Data["stageId"] != destination || event.Data["pipelineId"] != f.pipeline {
+			t.Fatalf("unexpected realtime event %d: %+v", i, event)
+		}
+	}
+	crossTenant, err := store.ListSubscriberAfter(f.ctx, pipelinePostgresID(99), f.user, 0, cursor, 10)
+	if err != nil || len(crossTenant) != 0 {
+		t.Fatalf("another organization got %d events, %v", len(crossTenant), err)
+	}
+
+	update := updateInput{StageID: patchString{Set: true, Value: &f.open}}
+	f.exec(t, `alter table private.realtime_events add constraint fail_test_publish check (event_type <> 'lead.updated')`)
+	if _, err := f.repo.Update(f.ctx, actor, leadID, update); err == nil {
+		t.Fatal("expected failed event append to abort the patch")
+	}
+	if _, stage := f.status(t, leadID); stage != destination {
+		t.Fatalf("stage after failed patch = %s, want %s", stage, destination)
+	}
+	f.exec(t, `alter table private.realtime_events drop constraint fail_test_publish`)
+	if _, err := f.repo.Update(f.ctx, actor, leadID, update); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := store.LatestID(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err = store.ListSubscriberAfter(f.ctx, f.org, f.user, cursor, latest, 10)
+	if err != nil || len(events) != 1 || events[0].Type != "lead.updated" || events[0].Data["stageId"] != f.open || events[0].Data["assignedUserId"] != f.user {
+		t.Fatalf("unexpected patch event: %+v, %v", events, err)
+	}
+
+	const batchSize = 30
+	results := make(chan error, batchSize)
+	start := make(chan struct{})
+	for i := range batchSize {
+		id := pipelinePostgresID(730 + i)
+		f.exec(t, `insert into public.leads(id,organization_id,name,source,deal_status,pipeline_id,stage_id,assigned_user_id)
+			values($1,$2,'Synthetic concurrent lead','manual','open',$3,$4,$5)`, id, f.org, f.pipeline, f.open, f.user)
+		go func() {
+			<-start
+			_, err := retryLeadRealtimeWrite(f.ctx, func() (moveStageResult, error) {
+				return f.repo.MoveStage(f.ctx, actor, id, move)
+			})
+			results <- err
+		}()
+	}
+	close(start)
+	for range batchSize {
+		if err := <-results; err != nil {
+			t.Errorf("concurrent move: %v", err)
+		}
+	}
+	last, err := store.LatestID(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err = store.ListSubscriberAfter(f.ctx, f.org, f.user, latest, last, batchSize+1)
+	if err != nil || len(events) != batchSize {
+		t.Fatalf("concurrent moves yielded %d events, want %d, error %v", len(events), batchSize, err)
+	}
+}
 
 func TestMoveStageOutcomeLocalPostgres(t *testing.T) {
 	f := newAutomationStageFixture(t, "commissions", "financial_entries")

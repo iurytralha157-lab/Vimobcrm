@@ -54,7 +54,7 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 }
 
 func (repo Repository) persistLeadWithIdentityMode(ctx context.Context, webhookPayload map[string]any, details map[string]any, change leadgenChange, integration metaIntegration, formConfig metaFormConfig, lead leadData, detailsError string, pendingReentry *pendingMetaLeadReentry, forceLegacyIdentity *bool) (string, bool, error) {
-	tx, err := repo.db.Pool().Begin(ctx)
+	tx, err := repo.beginWebhookMutation(ctx)
 	if err != nil {
 		return "", false, err
 	}
@@ -572,7 +572,7 @@ func (repo Repository) enrichPendingMetaLead(
 	leadID string,
 	lead leadData,
 ) error {
-	tx, err := repo.db.Pool().Begin(ctx)
+	tx, err := repo.beginWebhookMutation(ctx)
 	if err != nil {
 		return err
 	}

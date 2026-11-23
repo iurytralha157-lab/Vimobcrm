@@ -386,7 +386,7 @@ func (repo Repository) processMessagingEvent(ctx context.Context, event messagin
 		Platform:          event.Platform,
 	}
 
-	tx, err := repo.db.Pool().Begin(ctx)
+	tx, err := repo.beginWebhookMutation(ctx)
 	if err != nil {
 		result.Error = err.Error()
 		return result
