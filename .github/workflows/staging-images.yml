@@ -272,10 +272,12 @@ jobs:
 
       - name: Test durable Meta intake leases on disposable PostgreSQL
         env:
-          META_INTAKE_TEST_DATABASE_URL: postgresql://postgres:membership_test@127.0.0.1:5432/postgres?sslmode=disable
-        run: >-
-          go test -count=1 -v ./apps/api/internal/meta
-          -run '^(TestMetaWebhookLeaseExclusiveOnReceiptAndTakeover|TestMetaWebhookClaimDoesNotLetTenPermanentFailuresStarveReceived)$'
+          META_INTAKE_TEST_DATABASE_URL: postgresql://postgres:membership_test@127.0.0.1:5432/vimob_meta_intake_test?sslmode=disable
+        run: |
+          set -o pipefail
+          docker exec "${{ job.services.postgres.id }}" createdb -U postgres vimob_meta_intake_test
+          node scripts/tests/meta-inbox-ci-schema.mjs | docker exec -i "${{ job.services.postgres.id }}" psql -X -v ON_ERROR_STOP=1 -U postgres -d vimob_meta_intake_test
+          go test -count=1 -v ./apps/api/internal/meta -run '^(TestMetaWebhookLeaseExclusiveOnReceiptAndTakeover|TestMetaWebhookClaimDoesNotLetTenPermanentFailuresStarveReceived)$'
 
       - name: Test terminal webhook reconciliation on a fresh database
         env:
