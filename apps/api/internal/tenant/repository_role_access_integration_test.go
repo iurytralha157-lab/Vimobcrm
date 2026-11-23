@@ -187,6 +187,85 @@ func TestRoleDeactivationRevalidatesCachedAccessAcrossOrganizations(t *testing.T
 		assertColdParity(t, userID, orgA, ErrOrganizationAccessDenied)
 		assertColdParity(t, roleA, orgB, ErrUserProfileNotFound)
 	})
+	t.Run("member profile read saves one acquisition and keeps access checks", func(t *testing.T) {
+		want, err := NewRepository(database).Resolve(ctx, userID, orgB)
+		if err != nil {
+			t.Fatal(err)
+		}
+		candidate := NewRepository(database).WithMemberProfileRead()
+		for _, state := range []string{"cold", "warm"} {
+			before := database.Pool().Stat().AcquireCount()
+			got, err := candidate.Resolve(ctx, userID, orgB)
+			if err != nil || !reflect.DeepEqual(got, want) {
+				t.Fatalf("%s member profile context %#v (%v), want %#v", state, got, err, want)
+			}
+			if acquired := database.Pool().Stat().AcquireCount() - before; acquired != 1 {
+				t.Fatalf("%s member profile resolution acquired %d connections, want one", state, acquired)
+			}
+		}
+		if _, err := candidate.Resolve(ctx, userID, orgA); !errors.Is(err, ErrOrganizationAccessDenied) {
+			t.Fatalf("inactive organization A membership must still be denied, got %v", err)
+		}
+		if _, err := candidate.Resolve(ctx, roleA, orgB); !errors.Is(err, ErrUserProfileNotFound) {
+			t.Fatalf("absent profile must still be distinguished from missing membership, got %v", err)
+		}
+		if _, err := database.Pool().Exec(ctx, `delete from public.user_permission_overrides where organization_id=$1 and user_id=$2 and permission_key='settings_users'`, orgB, userID); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if _, err := database.Pool().Exec(ctx, `insert into public.user_permission_overrides values ($1,$2,'settings_users',false)`, orgB, userID); err != nil {
+				t.Error(err)
+			}
+		})
+		got, err := candidate.Resolve(ctx, userID, orgB)
+		if err != nil || !got.HasPermission(permissions.UsersManage) {
+			t.Fatalf("warm Agenda resolver must read current overrides, got %#v (%v)", got, err)
+		}
+	})
+	t.Run("member profile read falls back for a super-admin even with membership", func(t *testing.T) {
+		const superID = "99999999-9999-4999-8999-999999999999"
+		if _, err := database.Pool().Exec(ctx, `insert into public.users (id,role,organization_id) values ($1,'super_admin',$2)`, superID, orgB); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Pool().Exec(ctx, `insert into public.organization_members (organization_id,user_id) values ($1,$2)`, orgB, superID); err != nil {
+			t.Fatal(err)
+		}
+		want, err := NewRepository(database).Resolve(ctx, superID, orgB)
+		if err != nil || !want.IsSuperAdmin {
+			t.Fatalf("super-admin fixture failed: %#v (%v)", want, err)
+		}
+		candidate := NewRepository(database).WithMemberProfileRead()
+		got, err := candidate.Resolve(ctx, superID, orgB)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("super-admin context %#v (%v), want %#v", got, err, want)
+		}
+		if _, err := database.Pool().Exec(ctx, `update public.users set is_active=false where id=$1`, superID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := candidate.Resolve(ctx, superID, orgB); !errors.Is(err, ErrUserInactive) {
+			t.Fatalf("inactive profile must still be distinguished, got %v", err)
+		}
+		if _, err := database.Pool().Exec(ctx, `update public.users set is_active=true, role='' where id=$1`, superID); err != nil {
+			t.Fatal(err)
+		}
+		want, err = NewRepository(database).Resolve(ctx, superID, orgB)
+		if err != nil || want.UserRole != "" || want.IsSuperAdmin {
+			t.Fatalf("empty role fixture failed: %#v (%v)", want, err)
+		}
+		got, err = NewRepository(database).WithMemberProfileRead().Resolve(ctx, superID, orgB)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("empty role context %#v (%v), want %#v", got, err, want)
+		}
+		if _, err := database.Pool().Exec(ctx, `alter table public.users alter column role drop not null`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Pool().Exec(ctx, `update public.users set role=null where id=$1`, superID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := NewRepository(database).WithMemberProfileRead().Resolve(ctx, superID, orgB); !errors.Is(err, ErrTenantResolutionUnhealthy) {
+			t.Fatalf("null role must preserve the original profile scan error, got %v", err)
+		}
+	})
 	t.Run("older schema keeps the existing cold fallback", func(t *testing.T) {
 		if _, err := database.Pool().Exec(ctx, `alter table public.user_permission_overrides rename to synthetic_old_permission_overrides`); err != nil {
 			t.Fatal(err)
@@ -197,6 +276,10 @@ func TestRoleDeactivationRevalidatesCachedAccessAcrossOrganizations(t *testing.T
 		cold, _ := assertColdParity(t, userID, orgB, nil)
 		if !cold.HasPermission(permissions.UsersManage) {
 			t.Fatal("older schema lost the active role grant")
+		}
+		candidate, err := NewRepository(database).WithMemberProfileRead().Resolve(ctx, userID, orgB)
+		if err != nil || !reflect.DeepEqual(candidate, cold) {
+			t.Fatalf("member profile read legacy fallback %#v (%v), want %#v", candidate, err, cold)
 		}
 	})
 }

@@ -34,9 +34,10 @@ const (
 )
 
 type Repository struct {
-	db          *dbpkg.Postgres
-	cache       *resolveCache
-	transaction tenantQuerier
+	db                *dbpkg.Postgres
+	cache             *resolveCache
+	transaction       tenantQuerier
+	memberProfileRead bool
 }
 
 type userProfile struct {
@@ -58,6 +59,12 @@ type resolveCacheEntry struct {
 
 func NewRepository(db *dbpkg.Postgres) Repository {
 	return Repository{db: db, cache: &resolveCache{}}
+}
+
+// WithMemberProfileRead resolves a cold explicit member from one database snapshot.
+func (repo Repository) WithMemberProfileRead() Repository {
+	repo.memberProfileRead = true
+	return repo
 }
 
 func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrganizationID string) (Context, error) {
@@ -97,6 +104,15 @@ func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrga
 }
 
 func (repo Repository) resolveFull(ctx context.Context, userID string, requestedOrganizationID string, cacheKey string) (Context, error) {
+	if repo.memberProfileRead && requestedOrganizationID != "" && repo.transaction == nil {
+		resolved, err := repo.readMemberContext(ctx, userID, requestedOrganizationID, true)
+		if err == nil && resolved.UserRole != "" && resolved.UserRole != "super_admin" {
+			repo.storeCachedContext(cacheKey, resolved)
+			return resolved, nil
+		}
+		// The regular resolver distinguishes profile, access and legacy-schema failures.
+		repo.memberProfileRead = false
+	}
 	profile, err := repo.getUserProfile(ctx, userID)
 	if err != nil {
 		return Context{}, err
@@ -294,8 +310,9 @@ func (repo Repository) readMemberContext(ctx context.Context, userID, organizati
 	var billing billingSnapshot
 	var roleGrantsCSV, overridesJSON string
 	var organizationName, logoURL pgtype.Text
+	var userRole pgtype.Text
 	var modules []string
-	err := repo.queries().QueryRow(ctx, `
+	query := `
 		with led_teams as (
 			select distinct tm.team_id
 			from public.team_members tm
@@ -371,18 +388,8 @@ func (repo Repository) readMemberContext(ctx context.Context, userID, organizati
 				from public.organization_modules
 				where organization_id = o.id and coalesce(is_enabled, false) = true
 				order by lower(trim(module_name))
-			) end
-		from public.organization_members om
-		join public.users u on u.id = om.user_id
-		join public.organizations o on o.id = om.organization_id
-		where om.user_id = $1::uuid
-		  and om.organization_id = $2::uuid
-		  and coalesce(om.is_active, false) = true
-		  and om.deleted_at is null
-		  and coalesce(u.is_active, false) = true
-		  and coalesce(o.is_active, true) = true
-		limit 1
-	`, userID, organizationID, includeOrganization).Scan(
+			) end`
+	destinations := []any{
 		&resolved.MemberRole,
 		&billing.Status,
 		&billing.Type,
@@ -396,7 +403,24 @@ func (repo Repository) readMemberContext(ctx context.Context, userID, organizati
 		&organizationName,
 		&logoURL,
 		&modules,
-	)
+	}
+	if repo.memberProfileRead && includeOrganization {
+		query += ", u.role"
+		destinations = append(destinations, &userRole)
+	}
+	query += `
+		from public.organization_members om
+		join public.users u on u.id = om.user_id
+		join public.organizations o on o.id = om.organization_id
+		where om.user_id = $1::uuid
+		  and om.organization_id = $2::uuid
+		  and coalesce(om.is_active, false) = true
+		  and om.deleted_at is null
+		  and coalesce(u.is_active, false) = true
+		  and coalesce(o.is_active, true) = true
+		limit 1
+	`
+	err := repo.queries().QueryRow(ctx, query, userID, organizationID, includeOrganization).Scan(destinations...)
 	if err != nil {
 		return Context{}, err
 	}
@@ -414,6 +438,7 @@ func (repo Repository) readMemberContext(ctx context.Context, userID, organizati
 		}
 		resolved.OrganizationName = organizationName.String
 		resolved.OrganizationLogo = logoURL.String
+		resolved.UserRole = userRole.String
 		resolved.EnabledModules = []string{}
 		for _, module := range modules {
 			if name := strings.TrimSpace(module); name != "" {

@@ -7,6 +7,10 @@ import (
 
 func TestScheduleRoutesRequireAgendaModuleAndDedicatedPermission(t *testing.T) {
 	source := readAppWiringSource(t)
+	if !strings.Contains(source, `tenant.RequireOrganization(tenant.RequireModule("agenda", tenant.RequirePermission(permissions.ScheduleView, handler)))`) ||
+		!strings.Contains(source, `return withActiveTenantResolver(agendaDashboardResolver,`) {
+		t.Fatal("dashboard reads must use the active tenant chain with Agenda module and view permission")
+	}
 
 	routes := []struct {
 		methodPath string
@@ -30,6 +34,9 @@ func TestScheduleRoutesRequireAgendaModuleAndDedicatedPermission(t *testing.T) {
 
 	for _, route := range routes {
 		expected := `mux.Handle("` + route.methodPath + `", withActiveModulePermission("agenda", ` + route.permission
+		if route.methodPath == "GET /v1/schedule/dashboard" || route.methodPath == "GET /v1/schedule/dashboard/events" {
+			expected = `mux.Handle("` + route.methodPath + `", withAgendaDashboardRead(`
+		}
 		if !strings.Contains(source, expected) {
 			t.Fatalf("schedule route must require an active session, the agenda module and its dedicated permission: %s", route.methodPath)
 		}

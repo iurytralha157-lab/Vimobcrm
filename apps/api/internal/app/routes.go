@@ -161,13 +161,16 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 		"GET /v1/help/articles/{slug}",
 		"POST /v1/help/search",
 	)
-	withActiveAuthTenant := func(handler http.Handler) http.Handler {
+	withActiveTenantResolver := func(resolver tenant.Resolver, handler http.Handler) http.Handler {
 		return withActiveAuth(
 			tenant.Attach(
-				tenantRepository,
+				resolver,
 				tenant.RequireBillingAccess(billingAccessAllowlist, handler),
 			),
 		)
+	}
+	withActiveAuthTenant := func(handler http.Handler) http.Handler {
+		return withActiveTenantResolver(tenantRepository, handler)
 	}
 	// Tenant routes reject revoked sessions before resolving organization access.
 	withAuthTenant := withActiveAuthTenant
@@ -427,9 +430,17 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 			),
 		),
 	)
+	agendaDashboardResolver := tenantRepository
+	if repository, ok := tenantRepository.(tenant.Repository); ok {
+		agendaDashboardResolver = repository.WithMemberProfileRead()
+	}
+	withAgendaDashboardRead := func(handler http.Handler) http.Handler {
+		return withActiveTenantResolver(agendaDashboardResolver,
+			tenant.RequireOrganization(tenant.RequireModule("agenda", tenant.RequirePermission(permissions.ScheduleView, handler))))
+	}
 	mux.Handle("GET /v1/schedule/capabilities", withActiveModulePermission("agenda", permissions.ScheduleView, http.HandlerFunc(scheduleHandler.ShowCapabilities)))
-	mux.Handle("GET /v1/schedule/dashboard", withActiveModulePermission("agenda", permissions.ScheduleView, http.HandlerFunc(scheduleHandler.ShowDashboard)))
-	mux.Handle("GET /v1/schedule/dashboard/events", withActiveModulePermission("agenda", permissions.ScheduleView, http.HandlerFunc(scheduleHandler.ListDashboardEvents)))
+	mux.Handle("GET /v1/schedule/dashboard", withAgendaDashboardRead(http.HandlerFunc(scheduleHandler.ShowDashboard)))
+	mux.Handle("GET /v1/schedule/dashboard/events", withAgendaDashboardRead(http.HandlerFunc(scheduleHandler.ListDashboardEvents)))
 	mux.Handle("GET /v1/schedule/events", withActiveModulePermission("agenda", permissions.ScheduleView, http.HandlerFunc(scheduleHandler.ListEvents)))
 	mux.Handle("POST /v1/schedule/events", withActiveModulePermission("agenda", permissions.ScheduleManage, http.HandlerFunc(scheduleHandler.CreateEvent)))
 	mux.Handle("PATCH /v1/schedule/events/{id}", withActiveModulePermission("agenda", permissions.ScheduleManage, http.HandlerFunc(scheduleHandler.UpdateEvent)))
