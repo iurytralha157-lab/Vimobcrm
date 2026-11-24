@@ -11,7 +11,9 @@ import (
 )
 
 const marketingSyncCampaignFields = "id,name,status,effective_status,objective,buying_type,daily_budget,lifetime_budget,budget_remaining,updated_time"
+const marketingSyncCampaignFallbackFields = "id,name,status,effective_status,objective,daily_budget,lifetime_budget"
 const marketingSyncAdsetFields = "id,name,campaign_id,status,effective_status,optimization_goal,billing_event,daily_budget,lifetime_budget,bid_amount,updated_time"
+const marketingSyncAdsetFallbackFields = "id,name,campaign_id,status,effective_status,optimization_goal,daily_budget,lifetime_budget"
 const marketingSyncAdFields = "id,name,campaign_id,adset_id,status,effective_status,preview_shareable_link,updated_time,creative{id,name,title,body,effective_image_url,image_url,thumbnail_url,video_id,effective_object_story_id,object_url}"
 const marketingSyncAdFallbackFields = "id,name,campaign_id,adset_id,status,effective_status,creative"
 const marketingSyncCreativeFields = "id,name,title,body,effective_image_url,image_url,thumbnail_url,video_id,effective_object_story_id,object_url,object_story_spec,asset_feed_spec"
@@ -81,8 +83,8 @@ func fetchMarketingSyncEntityCatalog(ctx context.Context, graph *marketingSyncGr
 		fallback string
 	}
 	requests := []request{
-		{accountID + "/campaigns", marketingSyncCampaignFields, "id,name,status,effective_status,objective,daily_budget,lifetime_budget"},
-		{accountID + "/adsets", marketingSyncAdsetFields, "id,name,campaign_id,status,effective_status,optimization_goal,daily_budget,lifetime_budget"},
+		{accountID + "/campaigns", marketingSyncCampaignFields, marketingSyncCampaignFallbackFields},
+		{accountID + "/adsets", marketingSyncAdsetFields, marketingSyncAdsetFallbackFields},
 		{accountID + "/ads", marketingSyncAdFields, marketingSyncAdFallbackFields},
 	}
 	type response struct {
@@ -112,6 +114,80 @@ func fetchMarketingSyncEntityCatalog(ctx context.Context, graph *marketingSyncGr
 		Creatives: make(map[string]map[string]any),
 		Errors:    errorsList,
 	}
+	return hydrateMarketingSyncCatalogCreatives(ctx, graph, catalog)
+}
+
+// Date-bounded Insights supply the identities needed to hydrate an exclusive ad account.
+func fetchMarketingSyncInsightCatalog(ctx context.Context, graph *marketingSyncGraphClient, accountID string, dateRange marketingSyncDateRange, insights []marketingSyncInsightResult) marketingSyncEntityCatalog {
+	catalog := marketingSyncEntityCatalog{
+		Campaigns: make(map[string]map[string]any),
+		Adsets:    make(map[string]map[string]any),
+		Ads:       make(map[string]map[string]any),
+		Creatives: make(map[string]map[string]any),
+	}
+	type request struct {
+		id       string
+		fields   string
+		fallback string
+		records  map[string]map[string]any
+	}
+	var requests []request
+	queue := func(id string, fields string, fallback string, records map[string]map[string]any) {
+		if _, exists := records[id]; !exists && marketingSyncAdAccountPattern.MatchString(id) {
+			records[id] = nil
+			requests = append(requests, request{id: id, fields: fields, fallback: fallback, records: records})
+		}
+	}
+	for _, result := range insights {
+		for _, row := range result.Items {
+			if !marketingSyncInsightInScope(row, accountID, dateRange) {
+				continue
+			}
+			queue(marketingSyncText(row["campaign_id"]), marketingSyncCampaignFields, marketingSyncCampaignFallbackFields, catalog.Campaigns)
+			queue(marketingSyncText(row["adset_id"]), marketingSyncAdsetFields, marketingSyncAdsetFallbackFields, catalog.Adsets)
+			queue(marketingSyncText(row["ad_id"]), marketingSyncAdFields, marketingSyncAdFallbackFields, catalog.Ads)
+		}
+	}
+	type response struct {
+		item map[string]any
+		err  error
+	}
+	responses := marketingSyncMapLimited(ctx, requests, marketingSyncCreativeWorkers, func(ctx context.Context, request request, _ int) response {
+		item, err := graph.object(ctx, request.id, map[string]any{"fields": request.fields})
+		if err != nil && request.fallback != "" && marketingSyncErrorCode(err) == "meta_unsupported_parameter" {
+			item, err = graph.object(ctx, request.id, map[string]any{"fields": request.fallback})
+		}
+		return response{item: item, err: err}
+	})
+	for index, response := range responses {
+		request := requests[index]
+		if response.err != nil {
+			catalog.Errors = append(catalog.Errors, marketingSyncScopedError("entity_"+request.id, response.err))
+		}
+		if marketingSyncText(response.item["id"]) != request.id {
+			if response.err == nil && ctx.Err() == nil {
+				catalog.Errors = append(catalog.Errors, "entity_"+request.id+":meta_invalid_response")
+			}
+			delete(request.records, request.id)
+			continue
+		}
+		request.records[request.id] = response.item
+	}
+	catalog = hydrateMarketingSyncCatalogCreatives(ctx, graph, catalog)
+	if len(requests) > 0 && ctx.Err() != nil {
+		catalog.Errors = append(catalog.Errors, "catalog_enrichment_timeout")
+	}
+	return catalog
+}
+
+func marketingSyncInsightInScope(row map[string]any, accountID string, dateRange marketingSyncDateRange) bool {
+	date, err := time.Parse(time.DateOnly, marketingSyncText(row["date_start"]))
+	providerAccount := marketingSyncText(row["account_id"])
+	return err == nil && !date.Before(dateRange.From) && !date.After(dateRange.To) &&
+		(providerAccount == "" || normalizeMarketingSyncAccountID(providerAccount) == accountID)
+}
+
+func hydrateMarketingSyncCatalogCreatives(ctx context.Context, graph *marketingSyncGraphClient, catalog marketingSyncEntityCatalog) marketingSyncEntityCatalog {
 	creativeIDs := make([]string, 0)
 	seenCreatives := make(map[string]struct{})
 	creativeAds := make(map[string]map[string]any)

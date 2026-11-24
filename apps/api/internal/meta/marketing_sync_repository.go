@@ -402,12 +402,12 @@ func (service *MarketingSyncService) upsertMarketingSyncPerformance(ctx context.
 		  adset_name = excluded.adset_name,
 		  ad_id = excluded.ad_id,
 		  ad_name = excluded.ad_name,
-		  status = excluded.status,
-		  objective = excluded.objective,
-		  optimization_goal = excluded.optimization_goal,
-		  buying_type = excluded.buying_type,
-		  budget = excluded.budget,
-		  budget_type = excluded.budget_type,
+		  status = case when $46 then coalesce(excluded.status, marketing_performance_daily.status) else excluded.status end,
+		  objective = case when $46 then coalesce(excluded.objective, marketing_performance_daily.objective) else excluded.objective end,
+		  optimization_goal = case when $46 then coalesce(excluded.optimization_goal, marketing_performance_daily.optimization_goal) else excluded.optimization_goal end,
+		  buying_type = case when $46 then coalesce(excluded.buying_type, marketing_performance_daily.buying_type) else excluded.buying_type end,
+		  budget = case when $46 then coalesce(excluded.budget, marketing_performance_daily.budget) else excluded.budget end,
+		  budget_type = case when $46 then coalesce(excluded.budget_type, marketing_performance_daily.budget_type) else excluded.budget_type end,
 		  currency = excluded.currency,
 		  timezone_name = excluded.timezone_name,
 		  spend = excluded.spend,
@@ -427,11 +427,15 @@ func (service *MarketingSyncService) upsertMarketingSyncPerformance(ctx context.
 		  cpl = excluded.cpl,
 		  frequency = excluded.frequency,
 		  hook_rate = case when $45 then excluded.hook_rate else marketing_performance_daily.hook_rate end,
-		  creative_id = excluded.creative_id,
-		  creative_url = excluded.creative_url,
-		  creative_video_url = excluded.creative_video_url,
-		  creative_permalink_url = excluded.creative_permalink_url,
-		  thumbnail_url = excluded.thumbnail_url,
+		  creative_id = case when $46 then coalesce(excluded.creative_id, marketing_performance_daily.creative_id) else excluded.creative_id end,
+		  creative_url = case when $46 and (excluded.creative_id is null or excluded.creative_id = marketing_performance_daily.creative_id)
+		    then coalesce(excluded.creative_url, marketing_performance_daily.creative_url) else excluded.creative_url end,
+		  creative_video_url = case when $46 and (excluded.creative_id is null or excluded.creative_id = marketing_performance_daily.creative_id)
+		    then coalesce(excluded.creative_video_url, marketing_performance_daily.creative_video_url) else excluded.creative_video_url end,
+		  creative_permalink_url = case when $46 and (excluded.creative_id is null or excluded.creative_id = marketing_performance_daily.creative_id)
+		    then coalesce(excluded.creative_permalink_url, marketing_performance_daily.creative_permalink_url) else excluded.creative_permalink_url end,
+		  thumbnail_url = case when $46 and (excluded.creative_id is null or excluded.creative_id = marketing_performance_daily.creative_id)
+		    then coalesce(excluded.thumbnail_url, marketing_performance_daily.thumbnail_url) else excluded.thumbnail_url end,
 		  raw_actions = case
 		    when $45 then excluded.raw_actions
 		    else coalesce(marketing_performance_daily.raw_actions, '{}'::jsonb)
@@ -468,7 +472,7 @@ func (service *MarketingSyncService) upsertMarketingSyncPerformance(ctx context.
 			nullableMarketingSyncText(row.CreativeID), nullableMarketingSyncText(row.CreativeURL),
 			nullableMarketingSyncText(row.CreativeVideoURL), nullableMarketingSyncText(row.CreativePermalinkURL),
 			nullableMarketingSyncText(row.ThumbnailURL), marketingSyncJSON(row.RawActions), row.FetchedAt,
-			row.VideoMetricsAvailable,
+			row.VideoMetricsAvailable, row.IntegrationID == "",
 		)
 	})
 }
@@ -572,20 +576,28 @@ func (service *MarketingSyncService) upsertMarketingSyncMedia(ctx context.Contex
 		  integration_id = excluded.integration_id,
 		  external_account_id = excluded.external_account_id,
 		  source_kind = excluded.source_kind,
-		  media_type = excluded.media_type,
+		  media_type = case when $25 and excluded.creative_id = marketing_media_assets.creative_id
+		    and marketing_media_assets.media_type = 'video' then marketing_media_assets.media_type else excluded.media_type end,
 		  title = excluded.title,
-		  caption = excluded.caption,
+		  caption = case when $25 and excluded.creative_id = marketing_media_assets.creative_id
+		    then coalesce(excluded.caption, marketing_media_assets.caption) else excluded.caption end,
 		  campaign_id = excluded.campaign_id,
-		  campaign_name = excluded.campaign_name,
+		  campaign_name = case when $25 and excluded.campaign_id = marketing_media_assets.campaign_id
+		    then coalesce(excluded.campaign_name, marketing_media_assets.campaign_name) else excluded.campaign_name end,
 		  adset_id = excluded.adset_id,
-		  adset_name = excluded.adset_name,
+		  adset_name = case when $25 and excluded.adset_id = marketing_media_assets.adset_id
+		    then coalesce(excluded.adset_name, marketing_media_assets.adset_name) else excluded.adset_name end,
 		  ad_id = excluded.ad_id,
 		  ad_name = excluded.ad_name,
 		  creative_id = excluded.creative_id,
-		  thumbnail_url = excluded.thumbnail_url,
-		  media_url = excluded.media_url,
-		  video_url = excluded.video_url,
-		  permalink_url = excluded.permalink_url,
+		  thumbnail_url = case when $25 and excluded.creative_id = marketing_media_assets.creative_id
+		    then coalesce(excluded.thumbnail_url, marketing_media_assets.thumbnail_url) else excluded.thumbnail_url end,
+		  media_url = case when $25 and excluded.creative_id = marketing_media_assets.creative_id
+		    then coalesce(excluded.media_url, marketing_media_assets.media_url) else excluded.media_url end,
+		  video_url = case when $25 and excluded.creative_id = marketing_media_assets.creative_id
+		    then coalesce(excluded.video_url, marketing_media_assets.video_url) else excluded.video_url end,
+		  permalink_url = case when $25 and excluded.creative_id = marketing_media_assets.creative_id
+		    then coalesce(excluded.permalink_url, marketing_media_assets.permalink_url) else excluded.permalink_url end,
 		  published_at = excluded.published_at,
 		  -- Partial metric groups intentionally omit unavailable keys. Merge the
 		  -- fresh keys so a transient Graph failure cannot replace known values
@@ -608,6 +620,7 @@ func (service *MarketingSyncService) upsertMarketingSyncMedia(ctx context.Contex
 			nullableMarketingSyncText(row.MediaURL), nullableMarketingSyncText(row.VideoURL),
 			nullableMarketingSyncText(row.PermalinkURL), row.PublishedAt,
 			marketingSyncJSON(row.Metrics), marketingSyncJSON(row.RawMetadata), row.SyncedAt,
+			row.IntegrationID == "" && row.Provider == "meta" && row.SourceKind == "paid",
 		)
 	})
 }

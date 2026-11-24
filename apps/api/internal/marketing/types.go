@@ -28,7 +28,6 @@ var metaLoginScopes = []string{
 	"ads_read",
 	"pages_show_list",
 	"pages_read_engagement",
-	"read_insights",
 	"instagram_basic",
 	"instagram_manage_insights",
 }

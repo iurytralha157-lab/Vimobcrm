@@ -84,6 +84,10 @@ func TestPostgresStoreIsolatesTenantsAndCleansSecrets(t *testing.T) {
 	if _, err := scopedStore.LoadSyncTarget(ctx, organizationA, connectionID); failureOf(err).Code != "invalid_asset_selection" {
 		t.Fatalf("unapproved pre-existing sync selection: %v", err)
 	}
+	oldTarget, err := store.LoadSyncTarget(ctx, organizationA, connectionID)
+	if err != nil {
+		t.Fatalf("load sync target before reconnect: %v", err)
+	}
 
 	// Reconnecting keeps earlier choices, drops lost assets and rotates the secret.
 	input.AccessToken = "second-" + externalUser
@@ -95,6 +99,31 @@ func TestPostgresStoreIsolatesTenantsAndCleansSecrets(t *testing.T) {
 	mine = findConnection(t, store, organizationA, connectionID)
 	if len(mine.Assets) != 1 || !mine.Assets[0].IsSelected {
 		t.Fatalf("assets after reconnect = %+v", mine.Assets)
+	}
+	if err := store.MarkSyncResult(ctx, organizationA, connectionID, oldTarget.credentialRef, "expired", "meta_access_token_invalid"); err != nil {
+		t.Fatalf("mark result for old credential: %v", err)
+	}
+	mine = findConnection(t, store, organizationA, connectionID)
+	if mine.Status != "active" || mine.LastError != "" {
+		t.Fatalf("old sync changed new credential: status=%q error=%q", mine.Status, mine.LastError)
+	}
+	target, err := store.LoadSyncTarget(ctx, organizationA, connectionID)
+	if err != nil {
+		t.Fatalf("load new sync target: %v", err)
+	}
+	if err := store.MarkSyncResult(ctx, organizationA, connectionID, target.credentialRef, "active", "act_1:meta_rate_limited"); err != nil {
+		t.Fatalf("mark rate limit: %v", err)
+	}
+	limited := findConnection(t, store, organizationA, connectionID)
+	if limited.Status != "active" || limited.LastError != "act_1:meta_rate_limited" ||
+		limited.LastValidatedAt == nil || mine.LastValidatedAt == nil || !limited.LastValidatedAt.Equal(*mine.LastValidatedAt) {
+		t.Fatalf("rate limit changed credential validation: status=%q error=%q", limited.Status, limited.LastError)
+	}
+	if err := store.MarkSyncResult(ctx, organizationA, connectionID, target.credentialRef, "expired", "act_1:meta_access_token_invalid"); err != nil {
+		t.Fatalf("mark expired credential: %v", err)
+	}
+	if _, err := store.LoadSyncTarget(ctx, organizationA, connectionID); failureOf(err).Code != "meta_access_token_invalid" {
+		t.Fatalf("expired credential reached sync: %v", err)
 	}
 	if count := countSecrets(t, pool, input.AccessToken); count != 1 {
 		t.Fatalf("new secret count = %d", count)

@@ -107,6 +107,9 @@ func (client *metaClient) tokenRequest(ctx context.Context, query url.Values) (m
 	if err != nil {
 		return nil, newFailure("meta_request_failed", http.StatusBadGateway)
 	}
+	if isMetaRateLimited(status, metaErrorCode(payload)) {
+		return nil, newFailure("meta_rate_limited", http.StatusTooManyRequests)
+	}
 	if status != http.StatusOK {
 		return nil, newFailure("meta_code_exchange_failed", http.StatusBadGateway)
 	}
@@ -141,18 +144,33 @@ func (client *metaClient) fetchGrantedScopes(ctx context.Context, token string) 
 
 // fetchAssets lists what the login can see. It never requests a Page
 // access_token, so no Page token can be stored by this package.
-func (client *metaClient) fetchAssets(ctx context.Context, token string) ([]DiscoveredAsset, error) {
-	accounts, err := client.collection(ctx, "me/adaccounts", token, url.Values{
-		"fields": {"account_id,name,account_status,currency,timezone_name"},
-	})
+func (client *metaClient) fetchAssets(ctx context.Context, token string, approvedAccounts []string, approvedPages []string) ([]DiscoveredAsset, error) {
+	accounts, err := client.fetchAdAccounts(ctx, token, approvedAccounts)
 	if err != nil {
 		return nil, err
 	}
-	pages, err := client.collection(ctx, "me/accounts", token, url.Values{
-		"fields": {"id,name,instagram_business_account{id,username}"},
-	})
-	if err != nil {
-		return nil, err
+	pageFields := url.Values{"fields": {"id,name,instagram_business_account{id,username}"}}
+	var pages []map[string]any
+	if approvedPages == nil {
+		pages, err = client.collection(ctx, "me/accounts", token, pageFields)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Meta may omit business-owned Pages from /me/accounts even when exact Page reads work.
+		for _, pageID := range approvedPages {
+			page, err := client.graphGet(ctx, pageID, token, pageFields)
+			if isPermissionDenied(err) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if stringValue(page["id"]) != pageID {
+				return nil, newFailure("meta_request_failed", http.StatusBadGateway)
+			}
+			pages = append(pages, page)
+		}
 	}
 	assets := make([]DiscoveredAsset, 0, len(accounts)+len(pages)*2)
 	for _, item := range accounts {
@@ -184,6 +202,28 @@ func (client *metaClient) fetchAssets(ctx context.Context, token string) ([]Disc
 		}
 	}
 	return assets, nil
+}
+
+func (client *metaClient) fetchAdAccounts(ctx context.Context, token string, approvedAccounts []string) ([]map[string]any, error) {
+	fields := url.Values{"fields": {"account_id,name,account_status,currency,timezone_name"}}
+	if approvedAccounts == nil {
+		return client.collection(ctx, "me/adaccounts", token, fields)
+	}
+	accounts := make([]map[string]any, 0, len(approvedAccounts))
+	for _, id := range approvedAccounts {
+		account, err := client.graphGet(ctx, "act_"+id, token, fields)
+		if isPermissionDenied(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if stringValue(account["account_id"]) != id {
+			return nil, newFailure("meta_request_failed", http.StatusBadGateway)
+		}
+		accounts = append(accounts, account)
+	}
+	return accounts, nil
 }
 
 func (client *metaClient) collection(ctx context.Context, path string, token string, query url.Values) ([]map[string]any, error) {
@@ -221,20 +261,34 @@ func (client *metaClient) graphGet(ctx context.Context, path string, token strin
 	if err != nil {
 		return nil, newFailure("meta_request_failed", http.StatusBadGateway)
 	}
+	code := metaErrorCode(payload)
+	if isMetaRateLimited(status, code) {
+		return nil, newFailure("meta_rate_limited", http.StatusTooManyRequests)
+	}
 	if status == http.StatusOK {
 		return payload, nil
 	}
-	providerError, _ := payload["error"].(map[string]any)
-	code, _ := providerError["code"].(float64)
 	switch {
 	case status == http.StatusUnauthorized || code == 190:
 		return nil, newFailure("meta_access_token_invalid", http.StatusUnauthorized)
 	case code == 10 || (code >= 200 && code <= 299):
 		return nil, newFailure("meta_permission_denied", http.StatusForbidden)
-	case code == 4 || code == 17 || code == 32 || code == 613:
-		return nil, newFailure("meta_rate_limited", http.StatusTooManyRequests)
 	}
 	return nil, newFailure("meta_request_failed", http.StatusBadGateway)
+}
+
+func metaErrorCode(payload map[string]any) int {
+	providerError, _ := payload["error"].(map[string]any)
+	code, _ := providerError["code"].(float64)
+	return int(code)
+}
+
+func isMetaRateLimited(status int, code int) bool {
+	switch code {
+	case 4, 17, 32, 613, 80000, 80004:
+		return true
+	}
+	return status == http.StatusTooManyRequests
 }
 
 // get is the only network call of this client, and it is always a GET. Errors

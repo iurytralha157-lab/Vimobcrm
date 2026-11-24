@@ -65,3 +65,19 @@ func (allowlist MetaAssetAllowlist) allows(organizationID string, assetType stri
 	}
 	return slices.Contains(keys, key)
 }
+
+// discoveryIDs returns nil for an unscoped organization and an empty slice
+// when no assets of this type may be queried.
+func (allowlist MetaAssetAllowlist) discoveryIDs(organizationID string, assetType string) []string {
+	keys, scoped := allowlist[strings.ToLower(organizationID)]
+	if !scoped {
+		return nil
+	}
+	ids := make([]string, 0)
+	for _, key := range keys {
+		if id, ok := strings.CutPrefix(key, assetType+":"); ok && metaAssetIDPattern.MatchString(id) && !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}

@@ -176,7 +176,9 @@ func deleteSecret(ctx context.Context, tx pgx.Tx, secretRef string) error {
 
 func (store *PostgresStore) ListConnections(ctx context.Context, organizationID string) ([]Connection, error) {
 	rows, err := store.pool.Query(ctx, `
-		select id::text, provider, coalesce(external_user_name, ''), status, granted_scopes,
+		select id::text, provider, coalesce(external_user_name, ''),
+		       case when status = 'expired' or token_expires_at <= now() then 'expired'
+		            when status = 'error' then 'active' else status end, granted_scopes,
 		       token_expires_at, last_validated_at, coalesce(last_error, ''), created_at
 		from public.marketing_connections
 		where organization_id = $1::uuid
@@ -339,18 +341,23 @@ func (store *PostgresStore) LoadSyncTarget(ctx context.Context, organizationID s
 		return SyncTarget{}, newFailure("marketing_connection_not_found", http.StatusNotFound)
 	}
 	target := SyncTarget{}
+	var expired bool
 	err := store.pool.QueryRow(ctx, `
-		select secret.decrypted_secret
+		select secret.decrypted_secret, connection.access_token_secret_ref::text,
+		       connection.status = 'expired' or coalesce(connection.token_expires_at <= now(), false)
 		from public.marketing_connections as connection
 		join vault.decrypted_secrets as secret
 		  on secret.id = connection.access_token_secret_ref
 		where connection.id = $1::uuid and connection.organization_id = $2::uuid
-	`, connectionID, organizationID).Scan(&target.AccessToken)
+	`, connectionID, organizationID).Scan(&target.AccessToken, &target.credentialRef, &expired)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SyncTarget{}, newFailure("marketing_connection_not_found", http.StatusNotFound)
 	}
 	if err != nil {
 		return SyncTarget{}, newFailure("marketing_store_failed", http.StatusInternalServerError)
+	}
+	if expired {
+		return SyncTarget{}, newFailure("meta_access_token_invalid", http.StatusConflict)
 	}
 	rows, err := store.pool.Query(ctx, `
 		select asset_type, external_id, coalesce(name, ''), coalesce(metadata->>'page_id', '')
@@ -383,15 +390,16 @@ func (store *PostgresStore) LoadSyncTarget(ctx context.Context, organizationID s
 	return target, nil
 }
 
-func (store *PostgresStore) MarkSyncResult(ctx context.Context, organizationID string, connectionID string, status string, lastError string) error {
+func (store *PostgresStore) MarkSyncResult(ctx context.Context, organizationID string, connectionID string, credentialRef string, status string, lastError string) error {
 	if _, err := store.pool.Exec(ctx, `
 		update public.marketing_connections
-		set status = $3,
-		    last_error = nullif($4, ''),
-		    last_validated_at = case when $3 = 'active' then now() else last_validated_at end,
+		set status = $4,
+		    last_error = nullif($5, ''),
+		    last_validated_at = case when $4 = 'active' and $5 = '' then now() else last_validated_at end,
 		    updated_at = now()
 		where id = $1::uuid and organization_id = $2::uuid
-	`, connectionID, organizationID, status, lastError); err != nil {
+		  and access_token_secret_ref = $3::uuid and status <> 'expired'
+	`, connectionID, organizationID, credentialRef, status, lastError); err != nil {
 		return storeFailure(err)
 	}
 	return nil

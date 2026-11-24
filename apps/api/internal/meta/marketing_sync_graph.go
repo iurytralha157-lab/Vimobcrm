@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -42,10 +43,12 @@ type marketingSyncGraphCollection struct {
 }
 
 type marketingSyncGraphClient struct {
-	service     *MarketingSyncService
-	accessToken string
-	deadline    time.Time
-	semaphore   chan struct{}
+	service       *MarketingSyncService
+	accessToken   string
+	deadline      time.Time
+	semaphore     chan struct{}
+	dedicatedPaid bool
+	rateLimited   atomic.Bool
 }
 
 func (service *MarketingSyncService) newMarketingSyncGraphClient(accessToken string, deadline time.Time, semaphore chan struct{}) *marketingSyncGraphClient {
@@ -92,10 +95,16 @@ func (client *marketingSyncGraphClient) collection(ctx context.Context, path str
 		if record == nil {
 			return marketingSyncGraphCollection{}, newMarketingSyncGraphFailure("meta_invalid_response", http.StatusBadGateway, marketingSyncGraphErrorPayload{})
 		}
-		data, _ := record["data"].([]any)
+		data, validData := record["data"].([]any)
+		if client.dedicatedPaid && !validData {
+			return marketingSyncGraphCollection{}, newMarketingSyncGraphFailure("meta_invalid_response", http.StatusBadGateway, marketingSyncGraphErrorPayload{})
+		}
 		for _, value := range data {
 			item := marketingSyncRecord(value)
 			if item == nil {
+				if client.dedicatedPaid {
+					return marketingSyncGraphCollection{}, newMarketingSyncGraphFailure("meta_invalid_response", http.StatusBadGateway, marketingSyncGraphErrorPayload{})
+				}
 				continue
 			}
 			items = append(items, item)
@@ -138,6 +147,14 @@ func (client *marketingSyncGraphClient) request(ctx context.Context, path string
 				return payload, nil
 			}
 			failure := classifyMarketingSyncGraphFailure(response.StatusCode, graphError)
+			if client.dedicatedPaid && (marketingSyncErrorCode(failure) == "meta_rate_limited" ||
+				(graphError != nil && (graphError.Code == 80000 || graphError.Code == 80004) && graphError.Subcode == 2446079)) {
+				client.rateLimited.Store(true)
+				if graphError != nil {
+					return nil, newMarketingSyncGraphFailure("meta_rate_limited", http.StatusTooManyRequests, *graphError)
+				}
+				return nil, failure
+			}
 			lastFailure = failure
 			if !shouldRetryMarketingSyncGraph(response.StatusCode, graphError) || attempt == 2 {
 				return nil, failure
@@ -149,6 +166,9 @@ func (client *marketingSyncGraphClient) request(ctx context.Context, path string
 		}
 
 		lastFailure = requestErr
+		if client.rateLimited.Load() {
+			return nil, newMarketingSyncGraphFailure("meta_rate_limited", http.StatusTooManyRequests, marketingSyncGraphErrorPayload{})
+		}
 		var syncFailure *MarketingSyncFailure
 		if errors.As(requestErr, &syncFailure) && syncFailure.Code == "sync_runtime_exceeded" {
 			return nil, requestErr
@@ -229,6 +249,9 @@ func (client *marketingSyncGraphClient) requestOnce(ctx context.Context, endpoin
 		return nil, nil, newMarketingSyncFailure("meta_request_failed", http.StatusBadGateway, err)
 	}
 	defer client.release()
+	if client.rateLimited.Load() {
+		return nil, nil, newMarketingSyncGraphFailure("meta_rate_limited", http.StatusTooManyRequests, marketingSyncGraphErrorPayload{})
+	}
 
 	httpClient := *client.service.httpClient
 	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {

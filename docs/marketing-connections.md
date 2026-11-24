@@ -22,6 +22,11 @@ entrada de leads.
 `integration_id` e não atualiza `meta_integrations`. O botão Sincronizar antigo
 continua gravando nessa tabela: use-o só onde a integração de leads já o usa.
 
+Na conexão dedicada, os Insights do período são lidos antes dos detalhes dos
+anúncios e criativos. O erro de sincronização é exibido separadamente da
+validade do login. Um limite informado pela Meta encerra as requisições
+pendentes da conta e interrompe os demais intervalos daquela tentativa.
+
 ## Rotas
 
 Todas exigem o módulo `campaigns` e a permissão de integrações, menos o callback.
@@ -51,9 +56,11 @@ Use IDs da Meta sem `act_` e inclua a página vinculada ao Instagram.
 {"11111111-1111-4111-8111-111111111111":["ad_account:101","page:202","instagram_account:303:202"]}
 ```
 
-O login pode descobrir vários ativos. O CRM só salva, lista, seleciona e sincroniza
-os ativos autorizados para a organização. Escolha contas de anúncios exclusivas
-da organização porque a sincronização carrega os dados da conta inteira.
+Com a lista por organização, o login consulta diretamente as contas de anúncios
+e as páginas aprovadas. O Instagram só é disponibilizado se a Meta o devolver
+vinculado à página autorizada e se o par constar na lista. Escolha contas de
+anúncios exclusivas da organização porque a sincronização carrega os dados da
+conta inteira.
 
 As variáveis são separadas de `META_APP_ID`. Na homologação, preencha só as de
 Marketing: o OAuth de leads continua desligado e nada desconecta uma Página real.

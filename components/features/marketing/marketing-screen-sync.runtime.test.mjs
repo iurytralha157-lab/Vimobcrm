@@ -101,6 +101,15 @@ test("com ativos selecionados, sincroniza o período pela conexão dedicada", ()
   assert.deepEqual(screen.calls, [{ connectionId: "marketing-connection", dateStart: "2026-11-01", dateStop: "2026-11-22" }]);
 });
 
+test("uma conexão dedicada expirada leva à configuração sem recorrer ao login de leads", () => {
+  const screen = renderMarketing({ data: { enabled: true, connections: [
+    { id: "expired", status: "expired", assets: [{ type: "ad_account", is_selected: true }] },
+  ] } });
+  assert.match(screen.html, /href="\/settings\/integrations\/meta-marketing"/);
+  assert.doesNotMatch(screen.html, /href="\/settings\/integrations\/meta"/);
+  assert.equal(screen.syncActions.length, 0);
+});
+
 test("organizações com a conexão dedicada desativada mantêm a sincronização existente", () => {
   const screen = renderMarketing({ data: { enabled: false, connections: [] } });
   assert.match(screen.html, /href="\/settings\/integrations\/meta"/);

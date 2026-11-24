@@ -17,23 +17,22 @@ import {
   useUpdateMarketingConnectionAssets,
 } from "@/hooks/marketing";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
+import { getMarketingSyncErrorMessage } from "@/lib/analytics/marketing-connection-error";
 import type { MarketingConnection, MarketingConnectionAsset } from "@/lib/api/marketing-connections";
+import { cn } from "@/lib/utils";
 
 const GROUPS: Array<{ type: MarketingConnectionAsset["type"]; title: string; hint: string }> = [
   { type: "ad_account", title: "Contas de anúncios", hint: "Campanhas, criativos e resultados." },
   { type: "instagram_account", title: "Instagram", hint: "Seguidores, alcance e publicações." },
 ];
 
-const STATUS_LABEL: Record<string, string> = {
-  active: "Conectada",
-  expired: "Login expirado",
-  error: "Com erro",
-};
-
 const LOGIN_ERRORS: Record<string, string> = {
   meta_login_cancelled: "O login foi cancelado na Meta.",
   meta_code_exchange_failed: "A Meta recusou o login. Confira o endereço de retorno no app.",
+  meta_rate_limited: "A Meta limitou as solicitações temporariamente. Aguarde antes de tentar conectar de novo.",
 };
+
+const SECONDARY_BUTTON_CLASS = "h-8 rounded-[6px] bg-[var(--app-surface-soft)] px-3 text-[12px] font-light text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]";
 
 function ConnectionCard({ connection, onReconnect, reconnecting }: { connection: MarketingConnection; onReconnect: () => void; reconnecting: boolean }) {
   const saved = useMemo(() => connection.assets.filter((asset) => asset.is_selected).map((asset) => asset.id), [connection.assets]);
@@ -42,7 +41,8 @@ function ConnectionCard({ connection, onReconnect, reconnecting }: { connection:
   const sync = useSyncMarketingConnection();
   const disconnect = useDisconnectMarketingConnection();
   const dirty = selected.length !== saved.length || selected.some((id) => !saved.includes(id));
-  const syncable = connection.assets.some((asset) => asset.is_selected && asset.type !== "page");
+  const needsReconnect = connection.status === "expired";
+  const syncable = !needsReconnect && connection.assets.some((asset) => asset.is_selected && asset.type !== "page");
 
   const toggle = (id: string, checked: boolean) =>
     setSelected((current) => (checked ? [...current, id] : current.filter((item) => item !== id)));
@@ -57,19 +57,19 @@ function ConnectionCard({ connection, onReconnect, reconnecting }: { connection:
   };
 
   return (
-    <section className="rounded-[12px] bg-[var(--app-surface-solid)] p-4">
+    <section className="rounded-[12px] bg-[var(--app-surface-solid)] p-4 sm:p-5">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <h2 className="truncate text-[14px] font-normal text-[var(--app-text-primary)]">{connection.external_user_name || "Login da Meta"}</h2>
-          <p className="text-[12px] font-light text-[var(--app-text-secondary)]">{STATUS_LABEL[connection.status] ?? connection.status}</p>
+          <p className="text-[12px] font-light text-[var(--app-text-secondary)]">{needsReconnect ? "Login expirado" : "Conectada"}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {connection.status !== "active" ? (
+          {needsReconnect ? (
             <Button type="button" onClick={onReconnect} disabled={reconnecting} className="h-8 rounded-[6px] border-0 bg-primary/50 px-3 text-[12px] font-light text-primary-foreground hover:bg-primary">
               Entrar de novo
             </Button>
           ) : null}
-          <Button type="button" variant="ghost" onClick={runSync} disabled={!syncable || dirty || sync.isPending} className="h-8 rounded-[6px] px-3 text-[12px] font-light">
+          <Button type="button" variant="ghost" onClick={runSync} disabled={!syncable || dirty || sync.isPending} className={SECONDARY_BUTTON_CLASS}>
             <RefreshCw className={sync.isPending ? "mr-1.5 h-3.5 w-3.5 animate-spin" : "mr-1.5 h-3.5 w-3.5"} aria-hidden="true" />
             {sync.isPending ? "Sincronizando" : "Sincronizar 30 dias"}
           </Button>
@@ -78,7 +78,7 @@ function ConnectionCard({ connection, onReconnect, reconnecting }: { connection:
             variant="ghost"
             onClick={() => disconnect.mutate(connection.id)}
             disabled={disconnect.isPending}
-            className="h-8 rounded-[6px] px-3 text-[12px] font-light text-[var(--app-text-secondary)]"
+            className={SECONDARY_BUTTON_CLASS}
           >
             Desconectar
           </Button>
@@ -89,31 +89,41 @@ function ConnectionCard({ connection, onReconnect, reconnecting }: { connection:
           Permissões não concedidas: {connection.missing_scopes.join(", ")}. Alguns dados podem não aparecer.
         </p>
       ) : null}
-      {connection.last_error ? (
-        <p className="mt-3 rounded-[8px] bg-destructive/10 px-3 py-2 text-[12px] font-light text-[var(--app-text-primary)]">
-          Último erro: {connection.last_error}
+      {connection.last_error && !needsReconnect ? (
+        <p className="mt-3 rounded-[8px] bg-amber-500/10 px-3 py-2 text-[12px] font-light text-[var(--app-text-primary)]">
+          {getMarketingSyncErrorMessage(connection.last_error)}
         </p>
       ) : null}
       <div className="mt-4 grid gap-4 md:grid-cols-2">
         {GROUPS.map((group) => {
           const assets = connection.assets.filter((asset) => asset.type === group.type);
           return (
-            <div key={group.type} className="min-w-0">
+            <div key={group.type} className="min-w-0 rounded-[8px] border border-[var(--app-border)] p-3">
               <h3 className="text-[12px] font-normal text-[var(--app-text-primary)]">{group.title}</h3>
               <p className="mb-2 text-[11px] font-light text-[var(--app-text-tertiary)]">{group.hint}</p>
               {assets.length === 0 ? (
                 <p className="text-[12px] font-light text-[var(--app-text-tertiary)]">Nada encontrado neste login.</p>
               ) : (
                 <ul className="max-h-64 space-y-1 overflow-y-auto">
-                  {assets.map((asset) => (
-                    <li key={asset.id}>
-                      <label className="flex cursor-pointer items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] font-light text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]">
-                        <Checkbox checked={selected.includes(asset.id)} onCheckedChange={(value) => toggle(asset.id, value === true)} />
-                        <span className="min-w-0 truncate">{asset.name || asset.external_id}</span>
-                        <span className="ml-auto shrink-0 text-[10px] text-[var(--app-text-tertiary)]">{asset.external_id}</span>
-                      </label>
-                    </li>
-                  ))}
+                  {assets.map((asset) => {
+                    const checked = selected.includes(asset.id);
+                    return (
+                      <li key={asset.id}>
+                        <label className={cn(
+                          "flex cursor-pointer items-center gap-2 rounded-[6px] border px-2.5 py-2 text-[12px] text-[var(--app-text-primary)]",
+                          checked
+                            ? "border-primary/25 bg-primary/5"
+                            : "border-transparent bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-hover)]",
+                        )}>
+                          <Checkbox checked={checked} onCheckedChange={(value) => toggle(asset.id, value === true)} />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-medium">{asset.name || asset.external_id}</span>
+                            {asset.name && <span className="block text-[10px] tabular-nums text-[var(--app-text-tertiary)]">{asset.external_id}</span>}
+                          </span>
+                        </label>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
@@ -151,7 +161,7 @@ export default function MarketingConnectionsScreen() {
       toast.success("Login concluído. Escolha as contas e sincronize.");
     } else {
       const code = params.get("marketing_error") ?? "";
-      toast.error(LOGIN_ERRORS[code] ?? `A conexão falhou (${code || "erro desconhecido"}).`);
+      toast.error(LOGIN_ERRORS[code] ?? "Não foi possível conectar com a Meta. Tente novamente mais tarde.");
     }
     window.history.replaceState(null, "", window.location.pathname);
   }, []);
@@ -160,8 +170,8 @@ export default function MarketingConnectionsScreen() {
 
   return (
     <AppLayout title="Meta Marketing" borderless>
-      <div className="mx-auto w-full max-w-4xl space-y-3 pb-8 sm:pt-1">
-        <section className="rounded-[12px] bg-[var(--app-surface-solid)] p-4">
+      <div className="mx-auto w-full max-w-4xl space-y-4 px-3 pb-8 pt-2 sm:px-5 sm:pt-4">
+        <section className="rounded-[12px] bg-[var(--app-surface-solid)] p-4 sm:p-5">
           <h2 className="text-[14px] font-normal text-[var(--app-text-primary)]">Dados de campanhas, criativos e Instagram</h2>
           <p className="mt-1 text-[12px] font-light leading-5 text-[var(--app-text-secondary)]">
             Este login só lê dados para a dashboard de Marketing. Ele é separado da integração Meta que recebe os leads, que continua como está.

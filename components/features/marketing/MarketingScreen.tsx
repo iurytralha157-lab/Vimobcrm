@@ -146,7 +146,7 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
   const usesLegacyMeta = !connectionsQuery.isError && connectionsQuery.data?.enabled === false;
   const syncableConnection = !connectionsQuery.isError && connectionsQuery.data?.enabled
     ? connectionsQuery.data.connections.find((connection) =>
-        connection.assets.some((asset) => asset.is_selected && asset.type !== "page"),
+        connection.status !== "expired" && connection.assets.some((asset) => asset.is_selected && asset.type !== "page"),
       )
     : undefined;
   const integrationHref = usesLegacyMeta ? "/settings/integrations/meta" : MARKETING_CONNECTION_HREF;

@@ -101,6 +101,23 @@ func (service *MarketingSyncService) SyncConnection(ctx context.Context, request
 	}
 
 	graphSemaphore := make(chan struct{}, marketingSyncGraphConcurrency)
+	// Ads and Instagram share the same request limit but do not have to wait on each other's reports.
+	socialResults := make(chan marketingSyncAggregate, 1)
+	go func() {
+		social := marketingSyncAggregate{}
+		for _, profile := range request.Instagram {
+			target := base
+			target.InstagramBusinessAccountID = profile.ID
+			target.InstagramUsername = profile.Username
+			target.PageID = profile.PageID
+			profileResult := service.syncMarketingInstagram(syncCtx, target, dateRange, deadline, graphSemaphore)
+			social.SocialSynced += profileResult.SocialSynced
+			social.MediaSynced += profileResult.MediaSynced
+			social.Errors = append(social.Errors, profileResult.Errors...)
+		}
+		socialResults <- social
+	}()
+
 	result := marketingSyncAggregate{}
 	accounts := marketingSyncMapLimited(syncCtx, normalizeConnectionAccounts(request.AdAccounts), marketingSyncAccountConcurrency, func(ctx context.Context, accountID string, _ int) marketingSyncAccountResult {
 		return service.syncMarketingAdAccount(ctx, base, accountID, dateRange, deadline, graphSemaphore)
@@ -110,16 +127,10 @@ func (service *MarketingSyncService) SyncConnection(ctx context.Context, request
 		result.MediaSynced += account.MediaSynced
 		result.Errors = append(result.Errors, account.Errors...)
 	}
-	for _, profile := range request.Instagram {
-		target := base
-		target.InstagramBusinessAccountID = profile.ID
-		target.InstagramUsername = profile.Username
-		target.PageID = profile.PageID
-		social := service.syncMarketingInstagram(syncCtx, target, dateRange, deadline, graphSemaphore)
-		result.SocialSynced += social.SocialSynced
-		result.MediaSynced += social.MediaSynced
-		result.Errors = append(result.Errors, social.Errors...)
-	}
+	social := <-socialResults
+	result.SocialSynced += social.SocialSynced
+	result.MediaSynced += social.MediaSynced
+	result.Errors = append(result.Errors, social.Errors...)
 	if errors.Is(syncCtx.Err(), context.DeadlineExceeded) {
 		result.Errors = append(result.Errors, "sync_runtime_exceeded")
 	}

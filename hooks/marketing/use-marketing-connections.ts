@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { useAuth } from "@/contexts/AuthContext";
+import { getMarketingSyncErrorMessage, shouldPauseMarketingSync } from "@/lib/analytics/marketing-connection-error";
 import { marketingConnectionsAPI } from "@/lib/api/marketing-connections";
 import { splitMarketingSyncRange } from "@/hooks/use-campaign-insights";
 
@@ -66,19 +67,25 @@ export function useSyncMarketingConnection() {
         total.media += result.media_synced;
         total.social += result.social_synced;
         total.errors.push(...(result.errors ?? []));
+        if (result.errors?.some(shouldPauseMarketingSync)) break;
       }
       return total;
     },
     onSuccess: (total) => {
       const summary = `${total.synced} registros de mídia, ${total.media} criativos e ${total.social} dias de Instagram`;
       if (total.errors.length > 0) {
-        toast.warning(`${summary}. ${total.errors.length} item(ns) com erro.`);
+        const message = getMarketingSyncErrorMessage(total.errors.find(shouldPauseMarketingSync) ?? total.errors[0]);
+        if (total.synced || total.media || total.social) {
+          toast.warning(`Sincronização parcial. ${summary}. ${message}`);
+        } else {
+          toast.error(message);
+        }
       } else {
         toast.success(`Sincronizado: ${summary}.`);
       }
     },
     onError: (error: Error) => {
-      toast.error(`Erro ao sincronizar: ${error.message}`);
+      toast.error(getMarketingSyncErrorMessage(error));
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey });

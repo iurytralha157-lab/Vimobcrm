@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -151,6 +152,7 @@ func (service *MarketingSyncService) syncMarketingIntegration(ctx context.Contex
 
 func (service *MarketingSyncService) syncMarketingAdAccount(ctx context.Context, target marketingSyncTarget, accountID string, dateRange marketingSyncDateRange, deadline time.Time, graphSemaphore chan struct{}) marketingSyncAccountResult {
 	graph := service.newMarketingSyncGraphClient(target.AccessToken, deadline, graphSemaphore)
+	graph.dedicatedPaid = target.AccountWide
 	account, err := graph.object(ctx, accountID, map[string]any{
 		"fields": "id,account_id,name,account_status,currency,timezone_name,business_name",
 	})
@@ -175,7 +177,10 @@ func (service *MarketingSyncService) syncMarketingAdAccount(ctx context.Context,
 		return marketingSyncAccountResult{Errors: []string{marketingSyncScopedError(accountID, err)}}
 	}
 
-	catalog := fetchMarketingSyncEntityCatalog(ctx, graph, accountID)
+	var catalog marketingSyncEntityCatalog
+	if !target.AccountWide {
+		catalog = fetchMarketingSyncEntityCatalog(ctx, graph, accountID)
+	}
 	accountCatalog := catalog
 	// A CRM owner count alone cannot prove exclusive ownership of an external
 	// agency account. Inspect the provider catalog on every run and switch to
@@ -194,10 +199,6 @@ func (service *MarketingSyncService) syncMarketingAdAccount(ctx context.Context,
 			return marketingSyncAccountResult{Errors: []string{code}}
 		}
 	}
-	errorsList := make([]string, 0, len(catalog.Errors))
-	for _, item := range catalog.Errors {
-		errorsList = append(errorsList, accountID+":"+item)
-	}
 	levels := []string{"account", "campaign", "adset", "ad"}
 	if target.PageScopedPaidData || target.FormScopedPaidData {
 		// Account/campaign/adset insights can contain ads belonging to another
@@ -205,13 +206,37 @@ func (service *MarketingSyncService) syncMarketingAdAccount(ctx context.Context,
 		// the only provider rows that can be filtered by creative + form scope.
 		levels = []string{"ad"}
 	}
-	insights := marketingSyncMapLimited(ctx, levels, len(levels), func(ctx context.Context, level string, _ int) marketingSyncInsightResult {
+	insightCtx := ctx
+	if target.AccountWide {
+		// Reserve time for writing completed levels even when one Insights request is slow.
+		var cancel context.CancelFunc
+		insightCtx, cancel = context.WithDeadline(ctx, deadline.Add(-20*time.Second))
+		defer cancel()
+	}
+	insights := marketingSyncMapLimited(insightCtx, levels, len(levels), func(ctx context.Context, level string, _ int) marketingSyncInsightResult {
 		return fetchMarketingSyncInsights(ctx, graph, accountID, level, dateRange)
 	})
+	if target.AccountWide && !graph.rateLimited.Load() {
+		metadataDeadline := deadline.Add(-15 * time.Second)
+		if cap := time.Now().Add(15 * time.Second); cap.Before(metadataDeadline) {
+			metadataDeadline = cap
+		}
+		metadataCtx, cancel := context.WithDeadline(ctx, metadataDeadline)
+		catalog = fetchMarketingSyncInsightCatalog(metadataCtx, graph, accountID, dateRange, insights)
+		cancel()
+	}
+	errorsList := make([]string, 0, len(catalog.Errors))
+	for _, item := range catalog.Errors {
+		errorsList = append(errorsList, accountID+":"+item)
+	}
 	performance := make([]marketingSyncPerformanceRow, 0)
 	completeSnapshots := make(map[string][]marketingSyncPerformanceRow, len(levels))
 	for index, insightResult := range insights {
 		level := levels[index]
+		if target.AccountWide && insightCtx.Err() != nil && insightResult.Err == nil && !insightResult.Complete && len(insightResult.Items) == 0 && insightResult.Warning == "" {
+			errorsList = append(errorsList, accountID+"_"+level+":sync_runtime_exceeded")
+			continue
+		}
 		if insightResult.Err != nil {
 			errorsList = append(errorsList, marketingSyncScopedError(accountID+"_"+level, insightResult.Err))
 			continue
@@ -232,12 +257,20 @@ func (service *MarketingSyncService) syncMarketingAdAccount(ctx context.Context,
 			}
 		}
 		levelRows := make([]marketingSyncPerformanceRow, 0, len(insightResult.Items))
+		outOfScope := false
 		for _, insight := range insightResult.Items {
+			if target.AccountWide && !marketingSyncInsightInScope(insight, accountID, dateRange) {
+				outOfScope = true
+				continue
+			}
 			row, ok := marketingSyncPerformanceRowFromInsight(insight, level, target, accountID, account, catalog, now)
 			if ok {
 				performance = append(performance, row)
 				levelRows = append(levelRows, row)
 			}
+		}
+		if outOfScope {
+			errorsList = append(errorsList, accountID+"_"+level+":invalid_insight_scope")
 		}
 		if marketingSyncInsightSnapshotComplete(insightResult, len(levelRows)) {
 			completeSnapshots[level] = levelRows
@@ -270,8 +303,13 @@ func (service *MarketingSyncService) syncMarketingAdAccount(ctx context.Context,
 	}
 	mediaSynced := 0
 	_, adSnapshotComplete := completeSnapshots["ad"]
-	if adSnapshotComplete {
+	if adSnapshotComplete && (!target.AccountWide || err == nil) {
 		mediaRows := buildMarketingSyncPaidMedia(target, accountID, catalog, performance, now)
+		if target.AccountWide {
+			mediaRows = slices.DeleteFunc(mediaRows, func(row marketingSyncMediaRow) bool {
+				return row.CreativeID == "" || (row.ThumbnailURL == "" && row.MediaURL == "" && row.VideoURL == "" && row.PermalinkURL == "")
+			})
+		}
 		mediaSynced, err = service.upsertMarketingSyncMedia(ctx, mediaRows)
 		if err != nil {
 			errorsList = append(errorsList, marketingSyncScopedError(accountID+"_media", err))

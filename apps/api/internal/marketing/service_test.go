@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -53,7 +54,7 @@ func (store *fakeStore) LoadSyncTarget(context.Context, string, string) (SyncTar
 	return store.target, nil
 }
 
-func (store *fakeStore) MarkSyncResult(_ context.Context, _ string, _ string, status string, lastError string) error {
+func (store *fakeStore) MarkSyncResult(_ context.Context, _ string, _ string, _ string, status string, lastError string) error {
 	store.marked = status + "|" + lastError
 	return nil
 }
@@ -157,21 +158,38 @@ func TestCompleteOnlyUsesGetAndStoresReadOnlyLogin(t *testing.T) {
 
 func TestScopedMetaMarketingOnlyUsesApprovedAssets(t *testing.T) {
 	graph, store, syncer := newGraph(t), &fakeStore{}, &fakeSyncer{}
-	graph.bodies["/v25.0/me/adaccounts"] = `{"data":[{"account_id":"1404"},{"account_id":"9999"}]}`
-	graph.bodies["/v25.0/me/accounts"] = `{"data":[{"id":"503","instagram_business_account":{"id":"178"}},{"id":"504","instagram_business_account":{"id":"178"}}]}`
+	delete(graph.bodies, "/v25.0/me/adaccounts")
+	graph.bodies["/v25.0/act_1404"] = `{"account_id":"1404"}`
+	delete(graph.bodies, "/v25.0/me/accounts")
+	graph.bodies["/v25.0/503"] = `{"id":"503","instagram_business_account":{"id":"178"}}`
 	service := newTestServiceWithSyncer(store, syncer, graph.URL, "*")
-	policy, err := ParseMetaAssetAllowlist(`{"` + testOrganizationID + `":["ad_account:1404","page:503","instagram_account:178:503"]}`)
+	otherOrganizationID := "22222222-2222-4222-8222-222222222222"
+	policy, err := ParseMetaAssetAllowlist(`{"` + testOrganizationID + `":["ad_account:1404","ad_account:1404","page:503","page:503","instagram_account:178:503"],"` + otherOrganizationID + `":["ad_account:9999","page:504"]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	service.config.MetaAssets = policy
 	service.config.RequireMetaAssets = true
-	if enabled, _ := service.Availability("22222222-2222-4222-8222-222222222222"); enabled {
+	if enabled, _ := service.Availability("33333333-3333-4333-8333-333333333333"); enabled {
 		t.Fatal("organization without an asset policy is enabled")
 	}
 	ctx := context.Background()
 	if _, err := service.CompleteMeta(ctx, startFlow(t, service), "code", ""); err != nil {
 		t.Fatal(err)
+	}
+	var pageReads, accountReads int
+	for _, path := range graph.paths {
+		switch path {
+		case "/v25.0/503":
+			pageReads++
+		case "/v25.0/act_1404":
+			accountReads++
+		case "/v25.0/me/accounts", "/v25.0/me/adaccounts", "/v25.0/504", "/v25.0/act_9999":
+			t.Fatalf("read off-policy endpoint %s", path)
+		}
+	}
+	if pageReads != 1 || accountReads != 1 {
+		t.Fatalf("expected one read per approved asset, got %d page reads and %d ad account reads", pageReads, accountReads)
 	}
 	if len(store.saved) != 1 || len(store.saved[0].Assets) != 3 {
 		t.Fatal("OAuth saved additional assets or dropped an approved asset")
@@ -202,6 +220,27 @@ func TestScopedMetaMarketingOnlyUsesApprovedAssets(t *testing.T) {
 	}
 }
 
+func TestScopedPageDiscoveryDoesNotSaveAnUnapprovedLinkedInstagram(t *testing.T) {
+	graph, store := newGraph(t), &fakeStore{}
+	delete(graph.bodies, "/v25.0/me/accounts")
+	delete(graph.bodies, "/v25.0/me/adaccounts")
+	graph.bodies["/v25.0/act_1404"] = `{"account_id":"1404"}`
+	graph.bodies["/v25.0/503"] = `{"id":"503","instagram_business_account":{"id":"179"}}`
+	service := newTestService(store, graph.URL, testOrganizationID)
+	service.config.MetaAssets = MetaAssetAllowlist{testOrganizationID: {"ad_account:1404", "page:503", "instagram_account:178:503"}}
+	if _, err := service.CompleteMeta(context.Background(), startFlow(t, service), "code", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.saved) != 1 || len(store.saved[0].Assets) != 2 {
+		t.Fatal("login did not retain the approved ads and Page only")
+	}
+	for _, asset := range store.saved[0].Assets {
+		if asset.Type == AssetInstagram {
+			t.Fatal("login saved the unapproved linked Instagram")
+		}
+	}
+}
+
 func TestMetaAssetAllowlistRejectsInvalidPolicy(t *testing.T) {
 	for _, keys := range []string{`null`, `["ad_account:*"]`, `["instagram_account:178:503"]`, `["page:503","instagram_account:178:504"]`} {
 		t.Run(keys, func(t *testing.T) {
@@ -212,21 +251,51 @@ func TestMetaAssetAllowlistRejectsInvalidPolicy(t *testing.T) {
 	}
 }
 
+func TestApprovedAccountDiscoveryPreservesMetaRateLimits(t *testing.T) {
+	for _, test := range []struct {
+		status int
+		body   string
+	}{
+		{http.StatusTooManyRequests, `{}`},
+		{http.StatusBadRequest, `{"error":{"code":80004}}`},
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/v25.0/act_1404" {
+				t.Errorf("unexpected discovery endpoint %s", r.URL.Path)
+			}
+			w.WriteHeader(test.status)
+			_, _ = io.WriteString(w, test.body)
+		}))
+		client := newMetaClient(MetaConfig{AppSecret: "s", GraphVersion: "v25.0", GraphBaseURL: server.URL}, nil)
+		_, err := client.fetchAssets(context.Background(), "token", []string{"1404"}, []string{})
+		server.Close()
+		if failure := failureOf(err); failure.Code != "meta_rate_limited" || failure.Status != http.StatusTooManyRequests {
+			t.Fatalf("status %d: got %+v, want a rate-limit error", test.status, failure)
+		}
+	}
+}
+
 func TestAssetDiscoveryNeverAsksForPageToken(t *testing.T) {
-	var query string
+	queries := map[string]string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v25.0/me/accounts" {
-			query = r.URL.Query().Get("fields")
+		queries[r.URL.Path] = r.URL.Query().Get("fields")
+		if r.URL.Path == "/v25.0/503" {
+			_, _ = io.WriteString(w, `{"id":"503"}`)
+			return
 		}
 		_, _ = io.WriteString(w, `{"data":[]}`)
 	}))
 	defer server.Close()
 	client := newMetaClient(MetaConfig{AppSecret: "s", GraphVersion: "v25.0", GraphBaseURL: server.URL}, nil)
-	if _, err := client.fetchAssets(context.Background(), "token"); err != nil {
-		t.Fatal(err)
+	for _, approvedPages := range [][]string{nil, {"503"}} {
+		if _, err := client.fetchAssets(context.Background(), "token", nil, approvedPages); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if query == "" || strings.Contains(query, "access_token") {
-		t.Fatalf("fields = %q", query)
+	for _, path := range []string{"/v25.0/me/accounts", "/v25.0/503"} {
+		if fields := queries[path]; fields == "" || strings.Contains(fields, "access_token") {
+			t.Fatalf("%s fields = %q", path, fields)
+		}
 	}
 }
 
@@ -349,7 +418,8 @@ func TestHandlerListHasNoTokenField(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if !payload.Enabled || len(payload.Connections[0].MissingScopes) != len(metaLoginScopes)-1 {
+	if !payload.Enabled || len(payload.Connections[0].MissingScopes) != len(metaLoginScopes)-1 ||
+		slices.Contains(payload.Connections[0].MissingScopes, "read_insights") {
 		t.Fatalf("payload = %+v", payload)
 	}
 }
@@ -396,5 +466,21 @@ func TestSyncOnlyChangesThisConnectionHealth(t *testing.T) {
 	}
 	if syncer.input.OrganizationID != testOrganizationID || syncer.input.AccessToken != "t" {
 		t.Fatalf("input = %+v", syncer.input)
+	}
+}
+
+func TestSyncFailuresKeepCredentialConnected(t *testing.T) {
+	for _, code := range []string{"act_1:meta_rate_limited", "act_1_ad:sync_runtime_exceeded"} {
+		t.Run(code, func(t *testing.T) {
+			store := &fakeStore{target: SyncTarget{AccessToken: "t", AdAccounts: []string{"1"}}}
+			syncer := &fakeSyncer{result: SyncResult{Errors: []string{code}}}
+			service := newTestServiceWithSyncer(store, syncer, "http://127.0.0.1:1", testOrganizationID)
+			if _, err := service.Sync(context.Background(), testOrganizationID, "u", "c", "2026-10-01", "2026-10-01"); err != nil {
+				t.Fatal(err)
+			}
+			if store.marked != "active|"+code {
+				t.Fatalf("marked = %q", store.marked)
+			}
+		})
 	}
 }

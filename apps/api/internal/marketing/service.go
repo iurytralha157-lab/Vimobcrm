@@ -24,7 +24,7 @@ type Store interface {
 	UpdateSelection(ctx context.Context, organizationID string, connectionID string, assetIDs []string) error
 	DeleteConnection(ctx context.Context, organizationID string, connectionID string) error
 	LoadSyncTarget(ctx context.Context, organizationID string, connectionID string) (SyncTarget, error)
-	MarkSyncResult(ctx context.Context, organizationID string, connectionID string, status string, lastError string) error
+	MarkSyncResult(ctx context.Context, organizationID string, connectionID string, credentialRef string, status string, lastError string) error
 }
 
 type Service struct {
@@ -114,7 +114,12 @@ func (service *Service) CompleteMeta(ctx context.Context, state string, code str
 	if err != nil {
 		return flow.ReturnURL, err
 	}
-	assets, err := service.meta.fetchAssets(ctx, token)
+	assetPolicy := service.config.MetaAssets
+	assets, err := service.meta.fetchAssets(
+		ctx, token,
+		assetPolicy.discoveryIDs(flow.OrganizationID, AssetAdAccount),
+		assetPolicy.discoveryIDs(flow.OrganizationID, AssetPage),
+	)
 	if err != nil && !isPermissionDenied(err) {
 		return flow.ReturnURL, err
 	}

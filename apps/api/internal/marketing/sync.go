@@ -16,9 +16,10 @@ type SyncInstagram struct {
 // SyncTarget is what a connection exposes to the sync. It is loaded on the
 // server only and never leaves the API.
 type SyncTarget struct {
-	AccessToken string
-	AdAccounts  []string
-	Instagram   []SyncInstagram
+	AccessToken   string
+	AdAccounts    []string
+	Instagram     []SyncInstagram
+	credentialRef string
 }
 
 type SyncInput struct {
@@ -78,25 +79,22 @@ func (service *Service) Sync(ctx context.Context, organizationID string, userID 
 		return result, err
 	}
 	status, lastError := connectionHealth(result)
-	if markErr := service.store.MarkSyncResult(ctx, organizationID, connectionID, status, lastError); markErr != nil {
+	if markErr := service.store.MarkSyncResult(ctx, organizationID, connectionID, target.credentialRef, status, lastError); markErr != nil {
 		result.Errors = append(result.Errors, failureOf(markErr).Code)
 	}
 	return result, nil
 }
 
-// connectionHealth only ever describes this connection.
+// A sync error is recorded separately from the credential status.
 func connectionHealth(result SyncResult) (string, string) {
 	lastError := ""
 	if len(result.Errors) > 0 {
 		lastError = result.Errors[0]
 	}
 	for _, item := range result.Errors {
-		if strings.Contains(item, "meta_access_token_invalid") {
+		if item == "meta_access_token_invalid" || strings.HasSuffix(item, ":meta_access_token_invalid") {
 			return "expired", item
 		}
-	}
-	if len(result.Errors) > 0 && result.Synced == 0 && result.SocialSynced == 0 {
-		return "error", lastError
 	}
 	return "active", lastError
 }
