@@ -37,7 +37,9 @@ func TestMarketingTeamFilterUsesCurrentMembershipAndUnassignedQueueOnly(t *testi
 		t.Fatal(err)
 	}
 	query := string(source)
-	if !strings.Contains(query, "and `+campaignInsightsTeamFilterSQL+`") || strings.Contains(query, "and (params.team_id is null or lead.team_id = params.team_id)") {
+	if !strings.HasPrefix(campaignInsightsLeadFilterSQL, campaignInsightsTeamFilterSQL) ||
+		strings.Count(query, "and `+campaignInsightsLeadFilterSQL+`") != 2 ||
+		strings.Contains(query, "and (params.team_id is null or lead.team_id = params.team_id)") {
 		t.Fatal("the canonical CRM cohort still uses queue provenance instead of current membership")
 	}
 	if !strings.Contains(query, "and lead.organization_id = $1::uuid") || !strings.Contains(query, "and (not params.unassigned or lead.assigned_user_id is null)") {

@@ -199,6 +199,7 @@ const marketingAdSchema = z
     responded_count: nonNegativeIntegerSchema.optional().default(0),
     qualified_count: nonNegativeIntegerSchema.optional().default(0),
     won_count: nonNegativeIntegerSchema.optional().default(0),
+    sales_count: nonNegativeIntegerSchema.nullable().optional().default(null),
     lost_count: nonNegativeIntegerSchema.optional().default(0),
     open_count: nonNegativeIntegerSchema.optional().default(0),
     conversations_count: nonNegativeIntegerSchema.optional().default(0),
@@ -239,6 +240,7 @@ const marketingAdsetSchema = z
     responded_count: nonNegativeIntegerSchema.optional().default(0),
     qualified_count: nonNegativeIntegerSchema.optional().default(0),
     won_count: nonNegativeIntegerSchema.optional().default(0),
+    sales_count: nonNegativeIntegerSchema.nullable().optional().default(null),
     lost_count: nonNegativeIntegerSchema.optional().default(0),
     open_count: nonNegativeIntegerSchema.optional().default(0),
     conversations_count: nonNegativeIntegerSchema.optional().default(0),
@@ -285,6 +287,7 @@ const marketingCampaignSchema = z
     qualified_count: nonNegativeIntegerSchema.optional().default(0),
     conversations_count: nonNegativeIntegerSchema,
     won_count: nonNegativeIntegerSchema,
+    sales_count: nonNegativeIntegerSchema.nullable().optional().default(null),
     lost_count: nonNegativeIntegerSchema.optional().default(0),
     open_count: nonNegativeIntegerSchema.optional().default(0),
     revenue: finiteNumberSchema,
@@ -360,6 +363,7 @@ const marketingTopCreativeSchema = z
     responded_count: nonNegativeIntegerSchema.optional().default(0),
     qualified_count: nonNegativeIntegerSchema.optional().default(0),
     won_count: nonNegativeIntegerSchema,
+    sales_count: nonNegativeIntegerSchema.nullable().optional().default(null),
     lost_count: nonNegativeIntegerSchema.optional().default(0),
     revenue: finiteNumberSchema,
     score: finiteNumberSchema,
@@ -403,6 +407,7 @@ const marketingDailyPerformanceSchema = z
     responded: nonNegativeIntegerSchema.optional().default(0),
     qualified: nonNegativeIntegerSchema.optional().default(0),
     won: nonNegativeIntegerSchema.optional().default(0),
+    crmSalesCount: nonNegativeIntegerSchema.nullable().optional().default(null),
     lost: nonNegativeIntegerSchema.optional().default(0),
     revenue: finiteNumberSchema.optional().default(0),
     conversations: nonNegativeIntegerSchema,
@@ -468,27 +473,56 @@ const currencyBreakdownSchema = z
   )
   .max(100);
 
+const marketingAudienceCountsSchema = z.array(z.object({
+  label: z.string().trim().min(1).max(200),
+  value: finiteNumberSchema.pipe(z.number().nonnegative()),
+})).max(45).optional().default([]);
+
+const nullableSocialCountSchema = nonNegativeIntegerSchema.nullable().optional().default(null);
+
 const marketingSocialSchema = z
   .object({
     provider: nullableTextSchema.optional().default(null),
     profileName: nullableTextSchema.optional().default(null),
     profileCount: nonNegativeIntegerSchema.optional().default(0),
-    followers: nonNegativeIntegerSchema.nullable().optional().default(null),
-    followerGrowth: finiteNumberSchema.optional().default(0),
-    posts: nonNegativeIntegerSchema.optional().default(0),
-    impressions: nonNegativeIntegerSchema.optional().default(0),
-    reach: nonNegativeIntegerSchema.optional().default(0),
-    interactions: nonNegativeIntegerSchema.optional().default(0),
-    likes: nonNegativeIntegerSchema.optional().default(0),
-    comments: nonNegativeIntegerSchema.optional().default(0),
-    saves: nonNegativeIntegerSchema.optional().default(0),
-    shares: nonNegativeIntegerSchema.optional().default(0),
-    profileViews: nonNegativeIntegerSchema.optional().default(0),
-    websiteClicks: nonNegativeIntegerSchema.optional().default(0),
-    videoViews: nonNegativeIntegerSchema.optional().default(0),
+    followers: nullableSocialCountSchema,
+    followerGrowth: finiteNumberSchema.nullable().optional().default(null),
+    posts: nullableSocialCountSchema,
+    impressions: nullableSocialCountSchema,
+    reach: nullableSocialCountSchema,
+    interactions: nullableSocialCountSchema,
+    likes: nullableSocialCountSchema,
+    comments: nullableSocialCountSchema,
+    saves: nullableSocialCountSchema,
+    shares: nullableSocialCountSchema,
+    profileViews: nullableSocialCountSchema,
+    websiteClicks: nullableSocialCountSchema,
+    videoViews: nullableSocialCountSchema,
+    audience: z.object({
+      fetchedAt: z.string().datetime({ offset: true }),
+      age: marketingAudienceCountsSchema,
+      city: marketingAudienceCountsSchema,
+      online: marketingAudienceCountsSchema,
+    }).nullable().optional().default(null),
+    unavailable: z.array(z.string()).max(12).optional().default([]),
     lastSync: nullableTextSchema.optional().default(null),
   })
-  .passthrough();
+  .passthrough()
+  .transform((social) => ({
+    ...social,
+    followerGrowth: social.unavailable.includes("follower_growth") ? null : social.followerGrowth,
+    posts: social.unavailable.includes("posts") ? null : social.posts,
+    impressions: social.unavailable.includes("impressions") ? null : social.impressions,
+    reach: social.unavailable.includes("reach") ? null : social.reach,
+    interactions: social.unavailable.includes("interactions") ? null : social.interactions,
+    likes: social.unavailable.includes("likes") ? null : social.likes,
+    comments: social.unavailable.includes("comments") ? null : social.comments,
+    saves: social.unavailable.includes("saves") ? null : social.saves,
+    shares: social.unavailable.includes("shares") ? null : social.shares,
+    profileViews: social.unavailable.includes("profile_views") ? null : social.profileViews,
+    websiteClicks: social.unavailable.includes("website_clicks") ? null : social.websiteClicks,
+    videoViews: social.unavailable.includes("video_views") ? null : social.videoViews,
+  }));
 
 const marketingSummarySchema = z
   .object({
@@ -504,6 +538,8 @@ const marketingSummarySchema = z
     totalResponded: nonNegativeIntegerSchema.optional().default(0),
     totalQualified: nonNegativeIntegerSchema.optional().default(0),
     totalWon: nonNegativeIntegerSchema,
+    crmSalesCount: nonNegativeIntegerSchema.nullable().optional().default(null),
+    crmAttributedSales: nonNegativeIntegerSchema.nullable().optional().default(null),
     totalLost: nonNegativeIntegerSchema.optional().default(0),
     totalOpen: nonNegativeIntegerSchema.optional().default(0),
     totalRevenue: finiteNumberSchema,
@@ -694,11 +730,18 @@ export const marketingCampaignInsightsSchema = z
         z
           .object({
             date: z.string(),
-            reach: nonNegativeIntegerSchema,
-            interactions: nonNegativeIntegerSchema,
-            posts: nonNegativeIntegerSchema,
+            reach: nullableSocialCountSchema,
+            interactions: nullableSocialCountSchema,
+            posts: nullableSocialCountSchema,
+            unavailable: z.array(z.string()).max(3).optional().default([]),
           })
-          .passthrough(),
+          .passthrough()
+          .transform((day) => ({
+            ...day,
+            reach: day.unavailable.includes("reach") ? null : day.reach,
+            interactions: day.unavailable.includes("interactions") ? null : day.interactions,
+            posts: day.unavailable.includes("posts") ? null : day.posts,
+          })),
       )
       .max(2_000)
       .optional()

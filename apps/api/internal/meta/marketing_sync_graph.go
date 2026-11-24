@@ -55,6 +55,7 @@ type marketingSyncGraphClient struct {
 	deadline      time.Time
 	semaphore     chan struct{}
 	dedicatedPaid bool
+	instagram     bool
 	rateLimited   atomic.Bool
 }
 
@@ -292,13 +293,10 @@ func (client *marketingSyncGraphClient) endpoint(path string, parameters map[str
 
 func (client *marketingSyncGraphClient) classifyFailure(status int, graphError *marketingSyncGraphErrorPayload) error {
 	failure := classifyMarketingSyncGraphFailure(status, graphError)
-	if !client.dedicatedPaid {
-		return failure
-	}
-	if graphError != nil && (graphError.Code == 80000 || graphError.Code == 80004) && graphError.Subcode == 2446079 {
+	if client.dedicatedPaid && graphError != nil && (graphError.Code == 80000 || graphError.Code == 80004) && graphError.Subcode == 2446079 {
 		failure = newMarketingSyncGraphFailure("meta_rate_limited", http.StatusTooManyRequests, *graphError)
 	}
-	if marketingSyncErrorCode(failure) == "meta_rate_limited" {
+	if (client.dedicatedPaid || client.instagram) && marketingSyncErrorCode(failure) == "meta_rate_limited" {
 		client.rateLimited.Store(true)
 	}
 	return failure
@@ -443,7 +441,7 @@ func classifyMarketingSyncGraphFailure(status int, payload *marketingSyncGraphEr
 		errorPayload = *payload
 	}
 	switch {
-	case status == http.StatusTooManyRequests || containsMarketingSyncInt([]int{4, 17, 32, 613}, errorPayload.Code):
+	case status == http.StatusTooManyRequests || containsMarketingSyncInt([]int{4, 17, 32, 613, 80002}, errorPayload.Code):
 		return newMarketingSyncGraphFailure("meta_rate_limited", http.StatusTooManyRequests, errorPayload)
 	case errorPayload.Code == 190:
 		return newMarketingSyncGraphFailure("meta_access_token_invalid", http.StatusUnauthorized, errorPayload)

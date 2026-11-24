@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { MarketingBestCreatives, MarketingCreativeSpotlight } from "./MarketingCreativeSpotlight";
 import { MarketingLeadsChart } from "./MarketingLeadsChart";
 import { campaignStatusLabel, formatCompact, formatCount, formatMoney, formatPercent, isActiveStatus, percentOf, ratio } from "./marketing-format";
-import { rankPaidCreatives, type MarketingModel } from "./marketing-model";
+import { allCreatives, rankPaidCreatives, type MarketingModel } from "./marketing-model";
 import type { MarketingTabHrefs } from "./marketing-tabs";
 import { EmptyNote, INK, KpiCard, KpiRow, NEUTRAL_SOFT, Panel, ProviderBadge, StatTile, StatusPill } from "./marketing-ui";
 
@@ -20,7 +20,9 @@ export function MarketingOverviewTab({ model, tabHrefs }: { model: MarketingMode
   const leads = summary.crmAttributedLeads;
   const realCpl = ratio(summary.totalSpend, leads);
   const daily = data.dailyData;
-  const creatives = useMemo(() => rankPaidCreatives(model), [model]);
+  const creatives = useMemo(() => allCreatives(model), [model]);
+  const ranked = rankPaidCreatives(creatives);
+  const spotlight = ranked.length > 0 ? ranked : creatives.filter((creative) => creative.source_kind === "paid");
   const campaigns = useMemo(() => [...model.campaigns].sort((a, b) => (b.spend ?? 0) - (a.spend ?? 0)), [model.campaigns]);
   const totalResults = summary.metaReportedLeads + summary.metaReportedConversations;
 
@@ -31,7 +33,13 @@ export function MarketingOverviewTab({ model, tabHrefs }: { model: MarketingMode
           <KpiCard label="Investimento" value={formatMoney(summary.totalSpend, currency, 0)} note={`CPM ${formatMoney(summary.cpm, currency)}`} href={tabHrefs.paid} spark={daily.map((row) => row.spend)} />
           <KpiCard label="Leads no CRM" value={formatCount(leads)} note={`${formatCount(summary.totalLinkClicks)} cliques no link`} href={tabHrefs.acquisition} spark={daily.map((row) => row.crmAttributedLeads)} />
           <KpiCard label="CPL real" value={formatMoney(realCpl, currency)} note={`CTR ${formatPercent(summary.ctr)}`} href={tabHrefs.paid} spark={daily.map((row) => (row.crmAttributedLeads ? row.spend / row.crmAttributedLeads : 0))} />
-          <KpiCard label="Vendas" value={formatCount(summary.totalWon)} note={`${formatMoney(summary.cac, currency, 0)} por venda`} href={tabHrefs.acquisition} spark={daily.map((row) => row.won)} />
+          <KpiCard
+            label="Vendas no CRM"
+            value={formatCount(summary.crmSalesCount)}
+            note={summary.crmAttributedSales === null ? "Pela data de fechamento" : `${formatCount(summary.crmAttributedSales)} com campanha atribuída`}
+            href={tabHrefs.acquisition}
+            spark={summary.crmSalesCount === null ? undefined : daily.map((row) => row.crmSalesCount ?? 0)}
+          />
         </KpiRow>
 
         <MarketingLeadsChart
@@ -43,7 +51,7 @@ export function MarketingOverviewTab({ model, tabHrefs }: { model: MarketingMode
             <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
               <StatTile label="Meta e Google" value={formatCount(summary.reportedResults)} note="Informado pelas plataformas" />
               <StatTile label="Chegaram no CRM" value={formatCount(leads)} note={`${formatCount(summary.captureGap)} não chegaram`} />
-              <StatTile label="Ganhos" value={formatCount(summary.totalWon)} note={`${formatPercent(percentOf(summary.totalWon, leads))} dos leads`} highlight />
+              <StatTile label="Ganhos do funil" value={formatCount(summary.totalWon)} note={`${formatPercent(percentOf(summary.totalWon, leads))} dos leads`} highlight />
               <StatTile label="Ainda em aberto" value={formatCount(summary.totalOpen)} note={`${formatPercent(percentOf(summary.totalOpen, leads))} dos leads`} />
               <StatTile label="Perdidos" value={formatCount(summary.totalLost)} note={`${formatPercent(percentOf(summary.totalLost, leads))} dos leads`} />
             </div>
@@ -90,7 +98,7 @@ export function MarketingOverviewTab({ model, tabHrefs }: { model: MarketingMode
                 <thead>
                   <tr className="border-b border-[var(--app-border)]">
                     <th className={cn(TH, "pl-0 text-left")}>Campanha</th>
-                    {["Investido", "Impressões", "CPM", "CTR", "Leads", "CPL real", "Qualificados", "Custo por qualif.", "Vendas"].map((label) => (
+                    {["Investido", "Impressões", "CPM", "CTR", "Leads", "CPL real", "Qualificados", "Custo por qualif.", "Vendas no período"].map((label) => (
                       <th key={label} className={TH}>{label}</th>
                     ))}
                     <th className={cn(TH, "pr-0 text-left")}>Situação</th>
@@ -113,7 +121,7 @@ export function MarketingOverviewTab({ model, tabHrefs }: { model: MarketingMode
                       <td className={TD}>{formatMoney(ratio(campaign.spend, campaign.crm_attributed_leads), campaign.currency)}</td>
                       <td className={TD}>{formatCount(campaign.qualified_count)}</td>
                       <td className={TD}>{formatMoney(campaign.cpql, campaign.currency)}</td>
-                      <td className={TD}>{formatCount(campaign.won_count)}</td>
+                      <td className={TD}>{formatCount(campaign.sales_count)}</td>
                       <td className={cn(TD, "pr-0 text-left")}>
                         <StatusPill label={campaignStatusLabel(campaign.status)} active={isActiveStatus(campaign.status)} />
                       </td>
@@ -126,8 +134,8 @@ export function MarketingOverviewTab({ model, tabHrefs }: { model: MarketingMode
         </Panel>
       </div>
       <aside className="min-w-0 space-y-3">
-        <MarketingCreativeSpotlight creatives={creatives} />
-        <MarketingBestCreatives creatives={creatives} />
+        <MarketingCreativeSpotlight key={spotlight.slice(0, 6).map((creative) => creative.id).join(",")} creatives={spotlight} />
+        <MarketingBestCreatives creatives={ranked} />
       </aside>
     </div>
   );

@@ -5,8 +5,9 @@ import type { DashboardFilters } from "@/hooks/use-dashboard-filters";
 import { analyticsAPI } from "@/lib/api/analytics";
 import { integrationsAPI } from "@/lib/api/integrations";
 import { VimobAPIError } from "@/lib/api/vimob-error";
-import { getMarketingPeriodValidation } from "@/lib/analytics/marketing-period";
+import { getMarketingPeriodValidation, splitMarketingSyncRange } from "@/lib/analytics/marketing-period";
 import {
+  createEmptyMarketingCampaignInsights,
   DomainValidationError,
   type MetaMarketingSyncResponse,
 } from "@/lib/validation";
@@ -32,6 +33,7 @@ export interface CampaignAggregated {
   responded_count: number;
   qualified_count: number;
   won_count: number;
+  sales_count: number | null;
   lost_count: number;
   open_count: number;
   revenue: number;
@@ -67,6 +69,7 @@ export interface AdsetAggregated {
   responded_count: number;
   qualified_count: number;
   won_count: number;
+  sales_count: number | null;
   lost_count: number;
   open_count: number;
   revenue: number;
@@ -97,6 +100,7 @@ export interface AdAggregated {
   responded_count: number;
   qualified_count: number;
   won_count: number;
+  sales_count: number | null;
   lost_count: number;
   open_count: number;
   revenue: number;
@@ -123,6 +127,7 @@ export interface TopCreative {
   responded_count: number;
   qualified_count: number;
   won_count: number;
+  sales_count: number | null;
   lost_count: number;
   revenue: number;
   score: number;
@@ -151,6 +156,7 @@ export interface MarketingDailyPerformance {
   responded: number;
   qualified: number;
   won: number;
+  crmSalesCount: number | null;
   lost: number;
   revenue: number;
   conversations: number;
@@ -190,48 +196,6 @@ export interface MarketingMediaAsset {
 export interface CampaignInsightsFilters extends DashboardFilters {
   accountId?: string | null;
   objective?: string | null;
-}
-
-function parseCalendarDate(value: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    throw new Error("Período de sincronização inválido");
-  }
-  const date = new Date(`${value}T00:00:00.000Z`);
-  if (
-    !Number.isFinite(date.getTime()) ||
-    date.toISOString().slice(0, 10) !== value
-  ) {
-    throw new Error("Período de sincronização inválido");
-  }
-  return date;
-}
-
-function formatUTCDate(value: Date) {
-  return value.toISOString().slice(0, 10);
-}
-
-export function splitMarketingSyncRange(dateStart: string, dateStop: string) {
-  const start = parseCalendarDate(dateStart);
-  const stop = parseCalendarDate(dateStop);
-  if (stop < start) throw new Error("Período de sincronização inválido");
-  if (stop.getTime() - start.getTime() > 365 * 24 * 60 * 60 * 1_000) {
-    throw new Error("O período de sincronização não pode ultrapassar 366 dias");
-  }
-
-  const windows: Array<{ dateStart: string; dateStop: string }> = [];
-  let cursor = start;
-  while (cursor <= stop) {
-    const windowEnd = new Date(cursor);
-    windowEnd.setUTCDate(windowEnd.getUTCDate() + 89);
-    if (windowEnd > stop) windowEnd.setTime(stop.getTime());
-    windows.push({
-      dateStart: formatUTCDate(cursor),
-      dateStop: formatUTCDate(windowEnd),
-    });
-    cursor = new Date(windowEnd);
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-  return windows;
 }
 
 export function useCampaignInsights(filters: CampaignInsightsFilters, options: { enabled?: boolean } = {}) {
@@ -305,31 +269,14 @@ export function useCampaignInsights(filters: CampaignInsightsFilters, options: {
 }
 
 function emptyResult() {
+  const { social, socialDaily } = createEmptyMarketingCampaignInsights();
   return {
     campaigns: [] as CampaignAggregated[],
     topCreatives: [] as TopCreative[],
     dailyData: [] as MarketingDailyPerformance[],
     media: [] as MarketingMediaAsset[],
-    socialDaily: [] as Array<{ date: string; reach: number; interactions: number; posts: number }>,
-    social: {
-      provider: null as string | null,
-      profileName: null as string | null,
-      profileCount: 0,
-      followers: null as number | null,
-      followerGrowth: 0,
-      posts: 0,
-      impressions: 0,
-      reach: 0,
-      interactions: 0,
-      likes: 0,
-      comments: 0,
-      saves: 0,
-      shares: 0,
-      profileViews: 0,
-      websiteClicks: 0,
-      videoViews: 0,
-      lastSync: null as string | null,
-    },
+    socialDaily,
+    social,
     summary: {
       totalLeads: 0,
       reportedLeads: 0,
@@ -343,6 +290,8 @@ function emptyResult() {
       totalResponded: 0,
       totalQualified: 0,
       totalWon: 0,
+      crmSalesCount: null as number | null,
+      crmAttributedSales: null as number | null,
       totalLost: 0,
       totalOpen: 0,
       totalRevenue: 0,
@@ -433,7 +382,7 @@ export function useSyncCampaignInsights() {
         social_synced: 0,
         errors: [],
       };
-      for (const window of splitMarketingSyncRange(dateStart, dateStop)) {
+      for (const window of splitMarketingSyncRange(dateStart, dateStop, "legacy")) {
         const result = await integrationsAPI.syncMetaMarketing(
           {
             date_start: window.dateStart,

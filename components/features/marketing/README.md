@@ -21,6 +21,10 @@ consultas Supabase dentro dos componentes.
 - Respondidos usam fatos de contato efetivo; qualificados usam o histórico de
   entrada em uma etapa marcada com `is_qualified`; ganhos e perdidos usam os
   timestamps do negócio depois da entrada atribuída.
+- Vendas no CRM usam a data de fechamento (`won_at`) no fuso da organização e
+  seguem o acesso do usuário aos leads. A venda aparece na campanha quando o
+  último toque Meta válido até o fechamento tem um ID de campanha. Os totais de
+  vendas no CRM e os ganhos do funil mostram períodos de referência diferentes.
 - O alcance pago exibido no período é a soma do alcance diário do escopo e não
   representa pessoas únicas entre dias.
 - Valores monetários só são somados quando há uma única moeda; múltiplas moedas

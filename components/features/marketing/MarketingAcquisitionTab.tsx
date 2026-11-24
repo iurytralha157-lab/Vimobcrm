@@ -29,7 +29,7 @@ export function MarketingAcquisitionTab({ model }: { model: MarketingModel }) {
         <KpiCard label="Chegada no CRM" value={formatPercent(summary.captureRate ?? percentOf(leads, summary.reportedResults))} note={`${formatCount(leads)} de ${formatCount(summary.reportedResults)} resultados`} />
         <KpiCard label="Taxa de resposta" value={formatPercent(summary.responseRate)} note={`${formatCount(summary.totalResponded)} responderam`} />
         <KpiCard label="Taxa de qualificação" value={formatPercent(summary.qualificationRate)} note={`${formatCount(summary.totalQualified)} de ${formatCount(leads)} leads`} />
-        <KpiCard label="Taxa de venda" value={formatPercent(summary.conversionRate)} note={`${formatCount(summary.totalWon)} vendas`} />
+        <KpiCard label="Conversão dos leads do período" value={formatPercent(summary.conversionRate)} note={`${formatCount(summary.totalWon)} ganhos do funil`} />
       </KpiRow>
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <Panel title="Da impressão à venda" aside={`${formatMoney(summary.totalSpend, currency, 0)} investidos`}>
@@ -67,6 +67,15 @@ export function MarketingAcquisitionTab({ model }: { model: MarketingModel }) {
           </Panel>
         </div>
       </div>
+      {summary.crmSalesCount !== null && summary.crmAttributedSales !== null ? (
+        <Panel title="Vendas no CRM" aside="Pela data de fechamento">
+          <div className="grid gap-2 sm:grid-cols-3">
+            <StatTile label="Vendas no período" value={formatCount(summary.crmSalesCount)} />
+            <StatTile label="Atribuídas a campanhas" value={formatCount(summary.crmAttributedSales)} />
+            <StatTile label="Sem campanha atribuída" value={formatCount(summary.crmSalesCount - summary.crmAttributedSales)} />
+          </div>
+        </Panel>
+      ) : null}
       <Panel title="Plataforma x CRM, por campanha" aside={`${formatCount(summary.captureGap)} resultados não chegaram ao CRM`}>
         {campaigns.length === 0 ? (
           <EmptyNote>Nenhuma campanha no período.</EmptyNote>
@@ -76,7 +85,7 @@ export function MarketingAcquisitionTab({ model }: { model: MarketingModel }) {
               <thead>
                 <tr className="border-b border-[var(--app-border)]">
                   <th className={cn(TH, "pl-0 text-left")}>Campanha</th>
-                  {["Na plataforma", "No CRM", "Não chegaram", "Investido", "CPL real", "Qualificados", "Custo por qualif.", "Vendas"].map((label) => (
+                  {["Na plataforma", "No CRM", "Não chegaram", "Investido", "CPL real", "Qualificados", "Custo por qualif.", "Vendas no período"].map((label) => (
                     <th key={label} className={TH}>{label}</th>
                   ))}
                 </tr>
@@ -97,7 +106,7 @@ export function MarketingAcquisitionTab({ model }: { model: MarketingModel }) {
                     <td className={TD}>{formatMoney(ratio(campaign.spend, campaign.crm_attributed_leads), campaign.currency)}</td>
                     <td className={TD}>{formatCount(campaign.qualified_count)}</td>
                     <td className={TD}>{formatMoney(ratio(campaign.spend, campaign.qualified_count), campaign.currency)}</td>
-                    <td className={TD}>{formatCount(campaign.won_count)}</td>
+                    <td className={TD}>{formatCount(campaign.sales_count)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -111,7 +120,7 @@ export function MarketingAcquisitionTab({ model }: { model: MarketingModel }) {
                   <td className={TD}>{formatMoney(ratio(summary.totalSpend, leads), currency)}</td>
                   <td className={TD}>{formatCount(summary.totalQualified)}</td>
                   <td className={TD}>{formatMoney(summary.cpql, currency)}</td>
-                  <td className={TD}>{formatCount(summary.totalWon)}</td>
+                  <td className={TD}>{formatCount(summary.crmAttributedSales)}</td>
                 </tr>
               </tfoot>
             </table>

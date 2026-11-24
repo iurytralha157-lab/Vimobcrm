@@ -51,7 +51,7 @@ function ConnectionCard({ connection, onReconnect, reconnecting }: { connection:
     const today = new Date();
     sync.mutate({
       connectionId: connection.id,
-      dateStart: format(subDays(today, 30), "yyyy-MM-dd"),
+      dateStart: format(subDays(today, 29), "yyyy-MM-dd"),
       dateStop: format(today, "yyyy-MM-dd"),
     });
   };

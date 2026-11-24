@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getDashboardCreativeSafeUrl, getDashboardCreativeThumbnailUrl } from "./creative-thumbnail-url.ts";
+import { getSafeMetaCreativeUrl as getDashboardCreativeSafeUrl } from "../../../lib/analytics/meta-creative-image.ts";
 
 test("miniaturas da Dashboard aceitam apenas URLs HTTPS absolutas sem credenciais", () => {
-  assert.equal(getDashboardCreativeThumbnailUrl(" https://cdn.example.com/a.jpg "), "https://cdn.example.com/a.jpg");
-  assert.equal(getDashboardCreativeThumbnailUrl("http://cdn.example.com/a.jpg"), null);
-  assert.equal(getDashboardCreativeThumbnailUrl("https:cdn.example.com/a.jpg"), null);
-  assert.equal(getDashboardCreativeThumbnailUrl("https://user:secret@cdn.example.com/a.jpg"), null);
-  assert.equal(getDashboardCreativeThumbnailUrl("javascript:alert(1)"), null);
-  assert.equal(getDashboardCreativeThumbnailUrl("/local.jpg"), null);
-  assert.equal(getDashboardCreativeThumbnailUrl(null), null);
+  assert.equal(getDashboardCreativeSafeUrl(" https://cdn.example.com/a.jpg "), "https://cdn.example.com/a.jpg");
+  assert.equal(getDashboardCreativeSafeUrl("http://cdn.example.com/a.jpg"), null);
+  assert.equal(getDashboardCreativeSafeUrl("https:cdn.example.com/a.jpg"), null);
+  assert.equal(getDashboardCreativeSafeUrl("https://user:secret@cdn.example.com/a.jpg"), null);
+  assert.equal(getDashboardCreativeSafeUrl("javascript:alert(1)"), null);
+  assert.equal(getDashboardCreativeSafeUrl("/local.jpg"), null);
+  assert.equal(getDashboardCreativeSafeUrl(null), null);
 });
 
 test("links externos dos criativos usam a mesma validação HTTPS", () => {
@@ -34,7 +34,6 @@ test("fragmentos são rejeitados inteiros sem reescrever URLs assinadas", () => 
     "https://scontent.fbcdn.net/image.jpg#",
   ]) {
     assert.equal(getDashboardCreativeSafeUrl(value), null, value);
-    assert.equal(getDashboardCreativeThumbnailUrl(value), null, value);
   }
   const signed = "https://scontent.fbcdn.net/image%23part.jpg?oh=public-signature&oe=abc";
   assert.equal(getDashboardCreativeSafeUrl(signed), signed);

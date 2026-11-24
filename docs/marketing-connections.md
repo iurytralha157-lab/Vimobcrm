@@ -27,6 +27,13 @@ anúncios e criativos. O erro de sincronização é exibido separadamente da
 validade do login. Um limite informado pela Meta encerra as requisições
 pendentes da conta e interrompe os demais intervalos daquela tentativa.
 
+A dashboard consulta os fatos já gravados. Para importar datas antigas,
+selecione o período no Marketing e use **Sincronizar período**. A interface
+envia janelas consecutivas de até 30 dias na conexão dedicada. A mesma data
+atualiza o fato existente. Se a Meta interromper uma janela, as anteriores
+continuam disponíveis. O aviso de cobertura mostra as datas com registros,
+que podem incluir dias sem veiculação entre a primeira e a última data.
+
 ## Rotas
 
 Todas exigem o módulo `campaigns` e a permissão de integrações, menos o callback.

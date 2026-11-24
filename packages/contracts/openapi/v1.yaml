@@ -20404,6 +20404,7 @@ components:
         - topCreatives
         - dailyData
         - media
+        - socialDaily
         - social
         - summary
         - connection
@@ -20432,6 +20433,10 @@ components:
           maxItems: 240
           items:
             $ref: "#/components/schemas/MarketingMediaAsset"
+        socialDaily:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketingSocialDay"
         social:
           $ref: "#/components/schemas/MarketingSocial"
         summary:
@@ -20559,6 +20564,10 @@ components:
           $ref: "#/components/schemas/AnalyticsCount"
         qualified_count:
           $ref: "#/components/schemas/AnalyticsCount"
+        sales_count:
+          type: [integer, "null"]
+          minimum: 0
+          description: Authorized CRM sales attributed to this asset, by closing date.
         won_count:
           $ref: "#/components/schemas/AnalyticsCount"
         lost_count:
@@ -20659,6 +20668,10 @@ components:
           $ref: "#/components/schemas/AnalyticsCount"
         qualified_count:
           $ref: "#/components/schemas/AnalyticsCount"
+        sales_count:
+          type: [integer, "null"]
+          minimum: 0
+          description: Authorized CRM sales attributed to this asset, by closing date.
         won_count:
           $ref: "#/components/schemas/AnalyticsCount"
         lost_count:
@@ -20748,6 +20761,10 @@ components:
           $ref: "#/components/schemas/AnalyticsCount"
         qualified_count:
           $ref: "#/components/schemas/AnalyticsCount"
+        sales_count:
+          type: [integer, "null"]
+          minimum: 0
+          description: Authorized CRM sales attributed to this asset, by closing date.
         won_count:
           $ref: "#/components/schemas/AnalyticsCount"
         lost_count:
@@ -20823,6 +20840,10 @@ components:
           $ref: "#/components/schemas/AnalyticsCount"
         qualified_count:
           $ref: "#/components/schemas/AnalyticsCount"
+        sales_count:
+          type: [integer, "null"]
+          minimum: 0
+          description: Authorized CRM sales attributed to this asset, by closing date.
         won_count:
           $ref: "#/components/schemas/AnalyticsCount"
         lost_count:
@@ -20917,6 +20938,10 @@ components:
           $ref: "#/components/schemas/AnalyticsCount"
         qualified:
           $ref: "#/components/schemas/AnalyticsCount"
+        crmSalesCount:
+          type: [integer, "null"]
+          minimum: 0
+          description: Authorized CRM sales by closing date in the organization time zone.
         won:
           $ref: "#/components/schemas/AnalyticsCount"
         lost:
@@ -21035,6 +21060,35 @@ components:
           $ref: "#/components/schemas/AnalyticsCount"
         views:
           $ref: "#/components/schemas/AnalyticsCount"
+    MarketingSocialDay:
+      type: object
+      additionalProperties: false
+      required: [date, reach, interactions, posts]
+      properties:
+        date:
+          type: string
+          format: date
+        reach:
+          $ref: "#/components/schemas/AnalyticsCount"
+        interactions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        posts:
+          $ref: "#/components/schemas/AnalyticsCount"
+        unavailable:
+          description: Metrics for which the provider did not return an observation on this date.
+          type: array
+          maxItems: 3
+          items:
+            enum: [reach, interactions, posts]
+    MarketingSocialAudienceItem:
+      type: object
+      additionalProperties: false
+      required: [label, value]
+      properties:
+        label:
+          type: string
+        value:
+          $ref: "#/components/schemas/AnalyticsNonNegativeNumber"
     MarketingSocial:
       type: object
       additionalProperties: false
@@ -21092,6 +21146,35 @@ components:
           $ref: "#/components/schemas/AnalyticsCount"
         videoViews:
           $ref: "#/components/schemas/AnalyticsCount"
+        unavailable:
+          description: Metrics for which the provider did not return an observation in the selected period.
+          type: array
+          maxItems: 12
+          items:
+            enum: [follower_growth, posts, impressions, reach, interactions, likes, comments, saves, shares, profile_views, website_clicks, video_views]
+        audience:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [fetchedAt]
+          properties:
+            fetchedAt:
+              type: string
+              format: date-time
+            age:
+              type: array
+              maxItems: 45
+              items:
+                $ref: "#/components/schemas/MarketingSocialAudienceItem"
+            city:
+              type: array
+              maxItems: 45
+              items:
+                $ref: "#/components/schemas/MarketingSocialAudienceItem"
+            online:
+              type: array
+              maxItems: 24
+              items:
+                $ref: "#/components/schemas/MarketingSocialAudienceItem"
         lastSync:
           type: [string, "null"]
           format: date-time
@@ -21170,6 +21253,14 @@ components:
           $ref: "#/components/schemas/AnalyticsCount"
         totalQualified:
           $ref: "#/components/schemas/AnalyticsCount"
+        crmSalesCount:
+          type: [integer, "null"]
+          minimum: 0
+          description: Authorized CRM sales by closing date in the organization time zone.
+        crmAttributedSales:
+          type: [integer, "null"]
+          minimum: 0
+          description: Authorized CRM sales with a campaign identifier on the last Meta touch before closing.
         totalWon:
           $ref: "#/components/schemas/AnalyticsCount"
         totalLost:

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "e7e68dd5e3fbf6221c71365af1025e056644f457178ea96d700a0f82a47a9f7a",
-  "surfaceInventoryDigestSha256": "3b3a75516384d4b80a117a5897c49289ae92f00df27ebd56978146d85e2affc9",
+  "sourceDigestSha256": "56de8bb66adf820363d73447ae3c53c26931924e04ed9fb343ddc3c75596e498",
+  "surfaceInventoryDigestSha256": "a43e386e8101c2bd35406926c4ec3250823baa3bde01430a06b414f81a0af6b7",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 682,
@@ -1364,7 +1364,7 @@
     },
     {
       "file": "components/features/marketing/marketing-ui.tsx",
-      "line": 31,
+      "line": 32,
       "match": "rounded-[12px]",
       "priority": "P1",
       "rule": "oversized-radius",
@@ -1373,7 +1373,7 @@
     },
     {
       "file": "components/features/marketing/marketing-ui.tsx",
-      "line": 88,
+      "line": 89,
       "match": "rounded-[12px]",
       "priority": "P1",
       "rule": "oversized-radius",
@@ -1382,7 +1382,7 @@
     },
     {
       "file": "components/features/marketing/marketing-ui.tsx",
-      "line": 184,
+      "line": 185,
       "match": "#151515",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1391,7 +1391,7 @@
     },
     {
       "file": "components/features/marketing/marketing-ui.tsx",
-      "line": 184,
+      "line": 185,
       "match": "#1877f2",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1400,7 +1400,7 @@
     },
     {
       "file": "components/features/marketing/MarketingCreativeSpotlight.tsx",
-      "line": 32,
+      "line": 33,
       "match": "rounded-[14px]",
       "priority": "P1",
       "rule": "oversized-radius",
@@ -1409,7 +1409,7 @@
     },
     {
       "file": "components/features/marketing/MarketingCreativeSpotlight.tsx",
-      "line": 32,
+      "line": 33,
       "match": "#151515",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1418,7 +1418,7 @@
     },
     {
       "file": "components/features/marketing/MarketingCreativeSpotlight.tsx",
-      "line": 33,
+      "line": 34,
       "match": "bg-white/10",
       "priority": "P2",
       "rule": "hardcoded-surface",
@@ -1535,7 +1535,7 @@
     },
     {
       "file": "components/features/marketing/MarketingSocialTab.tsx",
-      "line": 66,
+      "line": 75,
       "match": "rounded-[12px]",
       "priority": "P1",
       "rule": "oversized-radius",
@@ -1544,7 +1544,7 @@
     },
     {
       "file": "components/features/marketing/MarketingSocialTab.tsx",
-      "line": 67,
+      "line": 76,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1553,7 +1553,7 @@
     },
     {
       "file": "components/features/marketing/MarketingSocialTab.tsx",
-      "line": 99,
+      "line": 114,
       "match": "shadow-lg",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -1562,7 +1562,7 @@
     },
     {
       "file": "components/features/marketing/MarketingSocialTab.tsx",
-      "line": 153,
+      "line": 169,
       "match": "#151515",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1571,7 +1571,7 @@
     },
     {
       "file": "components/features/marketing/MarketingSocialTab.tsx",
-      "line": 154,
+      "line": 170,
       "match": "bg-white",
       "priority": "P2",
       "rule": "hardcoded-surface",
@@ -1580,7 +1580,7 @@
     },
     {
       "file": "components/features/marketing/MarketingSocialTab.tsx",
-      "line": 155,
+      "line": 171,
       "match": "bg-white",
       "priority": "P2",
       "rule": "hardcoded-surface",

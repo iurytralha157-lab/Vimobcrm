@@ -16,10 +16,16 @@ function dayLabel(value: string) {
   return `${day}/${month}`;
 }
 
-function PendingAudience({ title }: { title: string }) {
+function AudiencePanel({ title, values, note, limit }: { title: string; values: Array<{ label: string; value: number }>; note?: string; limit?: number }) {
+  if (values.length === 0) return null;
+  const ranked = [...values].sort((a, b) => b.value - a.value).slice(0, limit);
   return (
-    <Panel title={title}>
-      <EmptyNote>Dados de audiência entram na próxima etapa da sincronização.</EmptyNote>
+    <Panel title={title} aside={note}>
+      <div className="space-y-2">
+        {ranked.map(({ label, value }) => (
+          <ProgressRow key={label} label={label} value={formatCount(value)} percent={percentOf(value, ranked[0].value) ?? 0} highlight />
+        ))}
+      </div>
     </Panel>
   );
 }
@@ -32,34 +38,37 @@ export function MarketingSocialTab({ model, tabHrefs }: { model: MarketingModel;
     () =>
       allCreatives(model)
         .filter((creative) => creative.source_kind === "organic")
-        .map((creative) => ({ creative, reach: creative.reach ?? metricOf(assets.get(creative.id), "reach") ?? 0 }))
+        .map((creative) => ({ creative, reach: metricOf(assets.get(creative.id), "reach") }))
+        .filter((post): post is typeof post & { reach: number } => post.reach !== null)
         .sort((a, b) => b.reach - a.reach),
     [model, assets],
   );
   const days = data.socialDaily;
-  const peak = Math.max(...days.map((day) => day.reach), 0);
+  const observedDays = days.filter((day) => day.reach !== null).length;
+  const interactionDays = days.filter((day) => day.interactions !== null).length;
+  const peak = Math.max(...days.map((day) => day.reach ?? 0), 0);
   const axisMax = niceAxisMax(peak);
   const labelStep = days.length > 16 ? 3 : 1;
   const phoneLabelStep = days.length > 7 ? Math.ceil(days.length / 5) : 1;
   const formats = useMemo(() => {
-    const totals = new Map<string, { reach: number; interactions: number }>();
+    const totals = new Map<string, number>();
     posts.forEach(({ creative, reach }) => {
       const key = formatLabel(creative.media_type);
-      const entry = totals.get(key) ?? { reach: 0, interactions: 0 };
-      entry.reach += reach;
-      entry.interactions += metricOf(assets.get(creative.id), "interactions") ?? creative.interactions ?? 0;
-      totals.set(key, entry);
+      totals.set(key, (totals.get(key) ?? 0) + reach);
     });
-    return Array.from(totals, ([label, value]) => ({ label, ...value })).sort((a, b) => b.reach - a.reach);
-  }, [posts, assets]);
+    return Array.from(totals, ([label, reach]) => ({ label, reach })).sort((a, b) => b.reach - a.reach);
+  }, [posts]);
   const topFormat = formats[0]?.reach ?? 0;
   const interactionParts = [
     { key: "Curtidas", value: social.likes, className: "bg-primary" },
     { key: "Salvos", value: social.saves, className: INK },
     { key: "Compartilhamentos", value: social.shares, className: "bg-primary/60" },
     { key: "Comentários", value: social.comments, className: NEUTRAL_STRONG },
-  ];
+  ].filter((part): part is typeof part & { value: number } => part.value !== null);
   const profile = social.profileName ?? "Instagram";
+  const profileLabel = social.profileName && social.profileCount === 1 ? `@${social.profileName.replace("@", "")}` : profile;
+  const audience = social.audience;
+  const selectedDays = (Date.parse(model.dateRange.to ?? "") - Date.parse(model.dateRange.from ?? "")) / 86_400_000 + 1;
 
   return (
     <div className="space-y-3">
@@ -68,20 +77,24 @@ export function MarketingSocialTab({ model, tabHrefs }: { model: MarketingModel;
           {profile.replace("@", "").slice(0, 2)}
         </span>
         <div className="min-w-0">
-          <p className="truncate text-[14px] font-normal text-[var(--app-text-primary)]">{social.profileName ? `@${social.profileName.replace("@", "")}` : "Instagram"}</p>
-          <p className="truncate text-[12px] font-light text-[var(--app-text-secondary)]">Instagram profissional · {formatCount(social.posts)} publicações no período</p>
+          <p className="truncate text-[14px] font-normal text-[var(--app-text-primary)]">{profileLabel}</p>
+          <p className="truncate text-[12px] font-light text-[var(--app-text-secondary)]">
+            Instagram profissional{social.posts !== null ? ` · ${formatCount(social.posts)} publicações no período` : ""}
+          </p>
         </div>
       </section>
       <KpiRow>
-        <KpiCard label="Seguidores" value={formatCount(social.followers)} note={`${social.followerGrowth >= 0 ? "+" : ""}${formatCount(social.followerGrowth)} no período`} />
-        <KpiCard label="Contas alcançadas" value={formatCompact(social.reach)} note={`Visualizações ${formatCompact(social.videoViews || social.impressions)}`} />
-        <KpiCard label="Visitas ao perfil" value={formatCount(social.profileViews)} note={`${formatCount(social.websiteClicks)} cliques no site`} />
-        <KpiCard label="Interações" value={formatCount(social.interactions)} note={`${formatPercent(percentOf(social.interactions, social.reach))} do alcance`} />
+        <KpiCard label="Seguidores" value={formatCount(social.followers)} note={social.followerGrowth !== null ? `${social.followerGrowth >= 0 ? "+" : ""}${formatCount(social.followerGrowth)} no período` : undefined} />
+        <KpiCard label="Alcance acumulado" value={formatCompact(social.reach)} note="Soma do alcance de cada dia" />
+        {social.profileViews !== null ? (
+          <KpiCard label="Visitas ao perfil" value={formatCount(social.profileViews)} note={social.websiteClicks !== null ? `${formatCount(social.websiteClicks)} cliques no site` : undefined} />
+        ) : <KpiCard label="Visualizações" value={formatCount(social.videoViews)} />}
+        <KpiCard label="Interações" value={formatCount(social.interactions)} note={interactionDays > 0 && interactionDays < selectedDays ? `Dados em ${interactionDays} de ${selectedDays} dias` : undefined} />
       </KpiRow>
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
-        <Panel title="Alcance por dia" aside="Soma diária, não representa pessoas únicas">
-          {days.length === 0 ? (
-            <EmptyNote>Sem dados diários no período.</EmptyNote>
+        <Panel title="Alcance por dia" aside={observedDays > 0 && observedDays < selectedDays ? `Dados em ${observedDays} de ${selectedDays} dias` : undefined}>
+          {observedDays === 0 ? (
+            <EmptyNote>O Instagram ainda não retornou dados de alcance para esse período.</EmptyNote>
           ) : (
             <div className="grid grid-cols-[36px_minmax(0,1fr)] gap-1.5">
               <div className="relative text-[11px] font-light tabular-nums text-[var(--app-text-tertiary)]" style={{ height: CHART_HEIGHT }} aria-hidden="true">
@@ -94,8 +107,10 @@ export function MarketingSocialTab({ model, tabHrefs }: { model: MarketingModel;
               <div>
                 <div className="flex items-end gap-[3px] border-b border-[var(--app-border)]" style={{ height: CHART_HEIGHT }} role="img" aria-label={`Alcance por dia, pico de ${formatCount(peak)} contas`}>
                   {days.map((day, index) => (
-                    <div key={day.date} className="group relative flex h-full min-w-0 flex-1 items-end rounded-t-[4px] hover:bg-[var(--app-surface-hover)]">
-                      <span className={cn("w-full", day.reach === peak ? "bg-primary" : NEUTRAL_SOFT)} style={{ height: `${(day.reach / axisMax) * 100}%` }} />
+                    <div key={day.date} className="group relative flex h-full min-w-0 flex-1 items-end rounded-t-[4px] hover:bg-[var(--app-surface-hover)]" title={`${dayLabel(day.date)} · ${day.reach === null ? "Sem dados" : `${formatCount(day.reach)} contas alcançadas`}`}>
+                      {day.reach !== null ? (
+                        <span className={cn("min-h-px w-full", day.reach === peak ? "bg-primary" : NEUTRAL_SOFT)} style={{ height: `${(day.reach / axisMax) * 100}%` }} />
+                      ) : null}
                       <div className={cn("pointer-events-none absolute top-1.5 z-20 hidden w-36 rounded-[8px] bg-[var(--app-surface-solid)] p-2.5 text-[11px] font-light shadow-lg group-hover:block", index > days.length / 2 ? "right-full mr-1" : "left-full ml-1")}>
                         <p className="mb-1 font-normal text-[var(--app-text-primary)]">{dayLabel(day.date)}</p>
                         <p className="flex justify-between text-[var(--app-text-secondary)]">Alcance <span className="tabular-nums text-[var(--app-text-primary)]">{formatCount(day.reach)}</span></p>
@@ -116,9 +131,10 @@ export function MarketingSocialTab({ model, tabHrefs }: { model: MarketingModel;
             </div>
           )}
         </Panel>
-        <Panel title="Interações">
-          <SegmentedBar items={interactionParts} />
-          <div className="mt-3 grid grid-cols-2 gap-3">
+        <Panel title="Interações por tipo">
+          {interactionParts.length === 0 ? <EmptyNote>O Instagram ainda não retornou interações para esse período.</EmptyNote> : null}
+          {interactionParts.length > 0 ? <SegmentedBar items={interactionParts} /> : null}
+          <div className="grid grid-cols-2 gap-3 empty:hidden not-empty:mt-3">
             {interactionParts.map((part) => (
               <div key={part.key}>
                 <p className="flex items-center gap-1.5 text-[12px] font-light text-[var(--app-text-secondary)]">
@@ -130,11 +146,11 @@ export function MarketingSocialTab({ model, tabHrefs }: { model: MarketingModel;
             ))}
           </div>
           <div className="mt-4 border-t border-[var(--app-border)] pt-3">
-            <h3 className="mb-2 text-[14px] font-normal text-[var(--app-text-primary)]">Por formato</h3>
-            {formats.length === 0 ? <EmptyNote>Sem publicações no período.</EmptyNote> : null}
+            <h3 className="mb-2 text-[14px] font-normal text-[var(--app-text-primary)]">Alcance das publicações por formato</h3>
+            {formats.length === 0 ? <EmptyNote>Sem dados de alcance das publicações no período.</EmptyNote> : null}
             <div className="space-y-2">
               {formats.map((format) => (
-                <ProgressRow key={format.label} label={format.label} highlight percent={percentOf(format.reach, topFormat) ?? 0} value={formatCompact(format.reach)} note={formatPercent(percentOf(format.interactions, format.reach))} />
+                <ProgressRow key={format.label} label={format.label} highlight percent={percentOf(format.reach, topFormat) ?? 0} value={formatCompact(format.reach)} />
               ))}
             </div>
           </div>
@@ -142,7 +158,7 @@ export function MarketingSocialTab({ model, tabHrefs }: { model: MarketingModel;
       </div>
       <Panel title="Publicações com mais alcance" aside={<Link href={tabHrefs.media} scroll={false} className="hover:text-[var(--app-text-primary)]">Ver em Mídia</Link>}>
         {posts.length === 0 ? (
-          <EmptyNote>Sem publicações orgânicas no período.</EmptyNote>
+          <EmptyNote>Sem dados de alcance das publicações orgânicas no período.</EmptyNote>
         ) : (
           <ul className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(180px,1fr))]">
             {posts.slice(0, 5).map(({ creative, reach }, index) => {
@@ -163,7 +179,7 @@ export function MarketingSocialTab({ model, tabHrefs }: { model: MarketingModel;
                       <span>{formatPercent(percentOf(metricOf(asset, "interactions"), reach))}</span>
                     </p>
                     <p className="mt-1 truncate text-[10px] font-light text-[var(--app-text-tertiary)]">
-                      {formatCount(metricOf(asset, "likes"))} curt. · {formatCount(metricOf(asset, "comments"))} coment. · {formatCount(metricOf(asset, "saves"))} salv.
+                      {formatCount(metricOf(asset, "likes"))} curt. · {formatCount(metricOf(asset, "comments"))} coment. · {formatCount(metricOf(asset, "saves"))} salv. · {formatCount(metricOf(asset, "shares"))} compart.
                     </p>
                   </div>
                 </li>
@@ -172,11 +188,16 @@ export function MarketingSocialTab({ model, tabHrefs }: { model: MarketingModel;
           </ul>
         )}
       </Panel>
-      <div className="grid gap-3 md:grid-cols-3">
-        <PendingAudience title="Idade dos seguidores" />
-        <PendingAudience title="Cidades dos seguidores" />
-        <PendingAudience title="Quando os seguidores estão online" />
-      </div>
+      {audience ? (
+        <section className="space-y-2" aria-label="Audiência recente do Instagram">
+          <p className="text-xs text-[var(--app-text-secondary)]">Audiência recente do Instagram · atualizada em {dayLabel(audience.fetchedAt)}</p>
+          <div className="grid gap-3 md:grid-cols-3">
+            <AudiencePanel title="Idade dos seguidores" values={audience.age} />
+            <AudiencePanel title="Principais cidades dos seguidores" values={audience.city} limit={5} />
+            <AudiencePanel title="Horários com mais seguidores online" values={audience.online} note="Média por hora · horário da Meta" limit={5} />
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

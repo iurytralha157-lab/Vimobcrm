@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 
 import { CreativeDarkCard, creativeMedia } from "./MarketingCreativeSpotlight";
 import { formatCompact, formatCount, formatMoney, formatPercent } from "./marketing-format";
-import { allCreatives, formatLabel, mediaById, metricOf, type MarketingModel, type RankedCreative } from "./marketing-model";
+import { allCreatives, formatLabel, mediaById, metricOf, rankPaidCreatives, type MarketingModel, type RankedCreative } from "./marketing-model";
 import { CreativeImage, EmptyNote, KpiCard, KpiRow, Panel } from "./marketing-ui";
 
 const FILTERS = [
@@ -34,11 +34,12 @@ export function MarketingMediaTab({ model }: { model: MarketingModel }) {
   const creatives = useMemo(() => allCreatives(model), [model]);
   const paid = creatives.filter((creative) => creative.source_kind === "paid");
   const organic = creatives.filter((creative) => creative.source_kind === "organic");
-  const ranked = [...paid].filter((creative) => creative.realCpl !== null).sort((a, b) => (a.realCpl ?? 0) - (b.realCpl ?? 0));
+  const ranked = rankPaidCreatives(creatives);
   const best = ranked[0];
   const bestPosition = new Map(ranked.map((creative, index) => [creative.id, index + 1]));
-  const visible = creatives.filter((creative) => filter === "all" || creative.source_kind === filter);
-  const selected = creatives.find((creative) => creative.id === selectedId) ?? visible[0] ?? null;
+  const ordered = [...ranked, ...creatives.filter((creative) => !bestPosition.has(creative.id))];
+  const visible = ordered.filter((creative) => filter === "all" || creative.source_kind === filter);
+  const selected = visible.find((creative) => creative.id === selectedId) ?? visible[0] ?? null;
   const paidSpend = paid.reduce((sum, creative) => sum + (creative.spend ?? 0), 0);
   const currency = data.summary.currency;
   const organicReach = organic.reduce((sum, creative) => sum + (creative.reach ?? metricOf(assets.get(creative.id), "reach") ?? 0), 0);
@@ -57,7 +58,7 @@ export function MarketingMediaTab({ model }: { model: MarketingModel }) {
     <div className="space-y-3">
       <KpiRow>
         <KpiCard label="Criativos pagos" value={formatCount(paid.length)} note={`${formatMoney(paidSpend, currency, 0)} investidos`} />
-        <KpiCard label="Melhor CPL" value={formatMoney(best?.realCpl, best?.currency ?? currency)} note={best?.ad_name ?? "Sem leads confirmados"} />
+        <KpiCard label="Melhor CPL" value={formatMoney(best?.realCpl, best?.currency ?? currency)} note={best?.ad_name ?? "CPL do CRM indisponível no recorte"} />
         <KpiCard label="Hook rate médio" value={formatPercent(model.campaignMetrics.averageHookRate)} note="Só vídeos e Reels" />
         <KpiCard label="Publicações orgânicas" value={formatCount(organic.length)} note={`${formatCompact(organicReach)} de alcance somado`} />
       </KpiRow>
@@ -99,13 +100,13 @@ export function MarketingMediaTab({ model }: { model: MarketingModel }) {
                 >
                   <span className="relative flex h-40 w-full shrink-0 items-center justify-center overflow-hidden bg-[var(--app-surface-soft)]">
                     <span className="absolute inset-x-2 top-2 z-10 flex justify-between">
-                      <Tag>{position === 1 ? "1º lugar" : isPaid ? "Pago" : "Orgânico"}</Tag>
+                      <Tag>{position && position <= 3 ? `${position}º lugar` : isPaid ? "Pago" : "Orgânico"}</Tag>
                       <Tag>{formatLabel(creative.media_type)}</Tag>
                     </span>
                     <CreativeImage media={creativeMedia(creative)} className="h-full w-full justify-center" />
                   </span>
                   <span className="block p-3">
-                    <span className="block truncate text-[12px] font-medium text-[var(--app-text-primary)]">{creative.ad_name}</span>
+                    <span className="block truncate text-[12px] font-medium text-[var(--app-text-primary)]" title={creative.ad_name}>{creative.ad_name}</span>
                     <span className="mt-2 grid grid-cols-2 gap-2">
                       {isPaid ? (
                         <>

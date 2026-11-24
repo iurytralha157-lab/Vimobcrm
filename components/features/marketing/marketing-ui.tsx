@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 
 import { MetaCreativePreview } from "@/components/features/meta";
+import { getSafeMetaCreativeUrl } from "@/lib/analytics/meta-creative-image";
 import { cn } from "@/lib/utils";
 
 export const NEUTRAL_SOFT = "bg-[color-mix(in_srgb,var(--app-text-primary)_11%,transparent)]";
@@ -204,18 +205,22 @@ export function StatusPill({ label, active }: { label: string; active: boolean }
 
 export interface CreativeMedia {
   name: string;
+  mediaType?: string | null;
   thumbnailUrl: string | null;
   imageUrl: string | null;
   videoUrl: string | null;
   permalinkUrl: string | null;
 }
 
-export function CreativeImage({ media, className, size = "gallery" }: { media: CreativeMedia; className?: string; size?: "sm" | "gallery" }) {
+export function CreativeImage({ media, className, size = "tile" }: { media: CreativeMedia; className?: string; size?: "sm" | "tile" }) {
+  const mediaType = media.mediaType?.toLowerCase() ?? "";
+  const type = mediaType.includes("carousel") ? "carousel" :
+    media.videoUrl || /video|reel/.test(mediaType) ? "video" : "image";
   return (
     <MetaCreativePreview
       creative={{
         name: media.name,
-        type: media.videoUrl ? "video" : "image",
+        type,
         thumbnailUrl: media.thumbnailUrl,
         creativeUrl: media.imageUrl,
         videoUrl: media.videoUrl,
@@ -223,18 +228,10 @@ export function CreativeImage({ media, className, size = "gallery" }: { media: C
       }}
       size={size}
       showAction={false}
+      optimizeImages
       className={className}
     />
   );
 }
 
-export function safeExternalUrl(value: string | null | undefined) {
-  const candidate = value?.trim();
-  if (!candidate) return null;
-  try {
-    const url = new URL(candidate);
-    return url.protocol === "https:" ? url.toString() : null;
-  } catch {
-    return null;
-  }
-}
+export const safeExternalUrl = getSafeMetaCreativeUrl;

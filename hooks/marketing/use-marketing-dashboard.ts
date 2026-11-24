@@ -19,6 +19,7 @@ import {
 import type { SharedFilters } from "@/hooks/use-shared-filters";
 import type { DatePreset } from "@/hooks/use-dashboard-filters";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
+import { getSafeMetaCreativeUrl } from "@/lib/analytics/meta-creative-image";
 import { isMetaIntegrationConnected } from "@/lib/integration-catalog";
 
 type NumberRecord = Record<string, unknown>;
@@ -31,6 +32,7 @@ export interface MarketingCreative {
   adset_name: string | null;
   leads_count: number | null;
   won_count: number | null;
+  sales_count: number | null;
   revenue: number | null;
   score: number;
   creative_url: string | null;
@@ -107,7 +109,11 @@ function formatCalendarDate(value: Date) {
   return Number.isFinite(value.getTime()) ? format(value, "yyyy-MM-dd") : "";
 }
 
-function collectCreatives(
+function hasAdIdentity(value: string | null) {
+  return Boolean(value?.trim() && value.trim().toLowerCase() !== "unattributed");
+}
+
+export function collectCreatives(
   campaigns: CampaignAggregated[],
   topCreatives: TopCreative[],
   media: MarketingMediaAsset[],
@@ -116,7 +122,10 @@ function collectCreatives(
   const creatives = new Map<string, MarketingCreative>();
 
   media.forEach((asset) => {
-    const key = asset.ad_id ? `ad:${asset.ad_id}` : `media:${asset.id}`;
+    if (asset.source_kind === "paid" && !hasAdIdentity(asset.ad_id)) return;
+    const key = asset.source_kind === "paid" ? `ad:${asset.ad_id}` : `media:${asset.id}`;
+    // Dashboard assets arrive newest first. Keep the first snapshot for each ad.
+    if (creatives.has(key)) return;
     creatives.set(key, {
       id: asset.id,
       ad_id: asset.ad_id,
@@ -130,16 +139,17 @@ function collectCreatives(
       won_count: hasCRMAttribution
         ? readNumber(asset.metrics, ["won", "won_count", "sales"])
         : null,
+      sales_count: null,
       revenue: hasCRMAttribution
         ? readNumber(asset.metrics, ["revenue", "attributed_revenue"])
         : null,
       score: readNumber(asset.metrics, ["score"]) ?? 0,
-      creative_url: asset.media_url,
-      creative_video_url: asset.video_url,
-      creative_permalink_url: asset.permalink_url,
-      thumbnail_url: asset.thumbnail_url,
+      creative_url: getSafeMetaCreativeUrl(asset.media_url),
+      creative_video_url: getSafeMetaCreativeUrl(asset.video_url),
+      creative_permalink_url: getSafeMetaCreativeUrl(asset.permalink_url),
+      thumbnail_url: getSafeMetaCreativeUrl(asset.thumbnail_url),
       spend: readNumber(asset.metrics, ["spend", "investment"]),
-      cpl: readNumber(asset.metrics, ["cpl", "cost_per_lead"]),
+      cpl: null,
       currency: null,
       ctr: readNumber(asset.metrics, ["ctr"]),
       hook_rate: readNumber(asset.metrics, ["hook_rate", "hookRate"]),
@@ -158,6 +168,7 @@ function collectCreatives(
   });
 
   topCreatives.forEach((creative) => {
+    if (!hasAdIdentity(creative.ad_id)) return;
     const key = `ad:${creative.ad_id}`;
     const existing = creatives.get(key);
     creatives.set(key, {
@@ -168,16 +179,17 @@ function collectCreatives(
       adset_name: existing?.adset_name ?? null,
       leads_count: hasCRMAttribution ? creative.leads_count : null,
       won_count: hasCRMAttribution ? creative.won_count : null,
+      sales_count: hasCRMAttribution ? creative.sales_count : null,
       revenue: hasCRMAttribution ? creative.revenue : null,
       score: creative.score,
-      creative_url: creative.creative_url ?? existing?.creative_url ?? null,
+      creative_url: existing?.creative_url ?? getSafeMetaCreativeUrl(creative.creative_url),
       creative_video_url:
-        creative.creative_video_url ?? existing?.creative_video_url ?? null,
+        existing?.creative_video_url ?? getSafeMetaCreativeUrl(creative.creative_video_url),
       creative_permalink_url:
-        creative.creative_permalink_url ?? existing?.creative_permalink_url ?? null,
-      thumbnail_url: creative.thumbnail_url ?? existing?.thumbnail_url ?? null,
+        existing?.creative_permalink_url ?? getSafeMetaCreativeUrl(creative.creative_permalink_url),
+      thumbnail_url: existing?.thumbnail_url ?? getSafeMetaCreativeUrl(creative.thumbnail_url),
       spend: creative.spend,
-      cpl: creative.cpl,
+      cpl: hasCRMAttribution ? creative.cpl : null,
       currency: creative.currency ?? existing?.currency ?? null,
       ctr: creative.ctr,
       hook_rate: creative.hook_rate,
@@ -194,6 +206,7 @@ function collectCreatives(
   campaigns.forEach((campaign) => {
     campaign.adsets.forEach((adset) => {
       adset.ads.forEach((ad) => {
+        if (!hasAdIdentity(ad.ad_id)) return;
         const key = `ad:${ad.ad_id}`;
         const existing = creatives.get(key);
         if (existing) {
@@ -201,20 +214,28 @@ function collectCreatives(
             ...existing,
             leads_count: hasCRMAttribution ? ad.leads_count : existing.leads_count,
             won_count: hasCRMAttribution ? ad.won_count : existing.won_count,
+            sales_count: hasCRMAttribution ? ad.sales_count : null,
             revenue: hasCRMAttribution ? ad.revenue : existing.revenue,
             score: hasCRMAttribution
               ? ad.leads_count + ad.qualified_count * 3 + ad.won_count * 10
               : existing.score,
             spend: ad.spend ?? existing.spend,
-            cpl: ad.cpl ?? existing.cpl,
+            cpl: hasCRMAttribution ? ad.cpl : null,
             currency: ad.currency ?? existing.currency,
             ctr: ad.ctr ?? existing.ctr,
             hook_rate: ad.hook_rate ?? existing.hook_rate,
             impressions: ad.impressions ?? existing.impressions,
             reach: ad.reach ?? existing.reach,
+            creative_url: existing.creative_url ?? getSafeMetaCreativeUrl(ad.creative_url),
+            creative_video_url: existing.creative_video_url ?? getSafeMetaCreativeUrl(ad.creative_video_url),
+            creative_permalink_url: existing.creative_permalink_url ?? getSafeMetaCreativeUrl(ad.creative_permalink_url),
+            thumbnail_url: existing.thumbnail_url ?? getSafeMetaCreativeUrl(ad.thumbnail_url),
           });
           return;
         }
+        // CRM attribution can have an ad ID even when the provider has not yet
+        // supplied its creative or paid facts for this period.
+        if (!ad.currency && !ad.creative_id && !ad.creative_url && !ad.thumbnail_url && !ad.creative_video_url) return;
         creatives.set(key, {
           id: ad.ad_id,
           ad_id: ad.ad_id,
@@ -223,14 +244,15 @@ function collectCreatives(
           adset_name: adset.adset_name,
           leads_count: hasCRMAttribution ? ad.leads_count : null,
           won_count: hasCRMAttribution ? ad.won_count : null,
+          sales_count: hasCRMAttribution ? ad.sales_count : null,
           revenue: hasCRMAttribution ? ad.revenue : null,
           score: ad.leads_count + ad.won_count * 10,
-          creative_url: ad.creative_url,
-          creative_video_url: ad.creative_video_url,
-          creative_permalink_url: ad.creative_permalink_url,
-          thumbnail_url: ad.thumbnail_url,
+          creative_url: getSafeMetaCreativeUrl(ad.creative_url),
+          creative_video_url: getSafeMetaCreativeUrl(ad.creative_video_url),
+          creative_permalink_url: getSafeMetaCreativeUrl(ad.creative_permalink_url),
+          thumbnail_url: getSafeMetaCreativeUrl(ad.thumbnail_url),
           spend: ad.spend,
-          cpl: ad.cpl,
+          cpl: hasCRMAttribution ? ad.cpl : null,
           currency: ad.currency,
           ctr: ad.ctr,
           hook_rate: ad.hook_rate,

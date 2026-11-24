@@ -171,6 +171,9 @@ test("contrato de Marketing normaliza resposta legada sem inventar atribuição"
   });
 
   assert.equal(parsed.dailyData[0]?.clicks, 0);
+  assert.equal(parsed.dailyData[0]?.crmSalesCount, null);
+  assert.equal(parsed.summary.crmSalesCount, null);
+  assert.equal(parsed.summary.crmAttributedSales, null);
   assert.deepEqual(parsed.media, []);
   assert.equal(parsed.connection.isConnected, false);
   assert.equal(parsed.connection.marketingTokenAvailable, false);
@@ -194,6 +197,30 @@ test("contrato de Marketing aceita capacidades sanitizadas sem credenciais", () 
 
   assert.equal(parsed.connection.marketingTokenAvailable, true);
   assert.equal(parsed.connection.instagramInsightsAvailable, true);
+});
+
+test("Social mantém zero medido e distingue métricas ausentes do Instagram", () => {
+  const result = marketingCampaignInsightsSchema.parse({
+    ...createEmptyMarketingCampaignInsights(),
+    social: {
+      reach: 12,
+      likes: 0,
+      saves: 0,
+      unavailable: ["saves"],
+      audience: { fetchedAt: "2026-11-20T15:00:00Z", age: [{ label: "25-34", value: 105 }] },
+    },
+    socialDaily: [
+      { date: "2026-11-19", reach: 0, interactions: 0, posts: 1, unavailable: ["reach"] },
+    ],
+  });
+
+  assert.equal(result.social.reach, 12);
+  assert.equal(result.social.likes, 0);
+  assert.equal(result.social.saves, null);
+  assert.equal(result.socialDaily[0].reach, null);
+  assert.equal(result.socialDaily[0].interactions, 0);
+  assert.deepEqual(result.social.audience?.age, [{ label: "25-34", value: 105 }]);
+  assert.deepEqual(result.social.audience?.city, []);
 });
 
 test("contrato de Marketing separa resultados Meta de leads atribuídos no CRM", () => {

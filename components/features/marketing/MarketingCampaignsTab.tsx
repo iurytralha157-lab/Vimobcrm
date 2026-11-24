@@ -25,7 +25,7 @@ type TreeRow = {
   cpc: number | null;
   leads_count: number;
   qualified_count: number;
-  won_count: number;
+  sales_count: number | null;
   currency: string | null;
   cpm?: number | null;
 };
@@ -44,7 +44,7 @@ function MetricCells({ row, leads }: { row: TreeRow; leads: number }) {
       <td className={TD}>{formatMoney(ratio(row.spend, leads), row.currency)}</td>
       <td className={TD}>{formatCount(row.qualified_count)}</td>
       <td className={TD}>{formatMoney(ratio(row.spend, row.qualified_count), row.currency)}</td>
-      <td className={TD}>{formatCount(row.won_count)}</td>
+      <td className={TD}>{formatCount(row.sales_count)}</td>
     </>
   );
 }
@@ -227,7 +227,7 @@ export function MarketingCampaignsTab({ model, tabHrefs }: { model: MarketingMod
               <thead>
                 <tr className="border-b border-[var(--app-border)]">
                   <th className={cn(TH, "pl-0 text-left")}>Nome</th>
-                  {["Investido", "Impressões", "Cliques", "CTR", "CPC", "CPM", "Leads", "CPL real", "Qualificados", "Custo por qualif.", "Vendas"].map((label) => (
+                  {["Investido", "Impressões", "Cliques", "CTR", "CPC", "CPM", "Leads", "CPL real", "Qualificados", "Custo por qualif.", "Vendas no período"].map((label) => (
                     <th key={label} className={TH}>{label}</th>
                   ))}
                 </tr>
@@ -238,7 +238,7 @@ export function MarketingCampaignsTab({ model, tabHrefs }: { model: MarketingMod
                   <td className={cn(TD, "pl-0 text-left")}>Total</td>
                   <MetricCells
                     leads={leads}
-                    row={{ spend: summary.totalSpend, impressions: summary.totalImpressions, clicks: summary.totalClicks, ctr: summary.ctr, cpc: summary.cpc, cpm: summary.cpm, leads_count: leads, qualified_count: summary.totalQualified, won_count: summary.totalWon, currency }}
+                    row={{ spend: summary.totalSpend, impressions: summary.totalImpressions, clicks: summary.totalClicks, ctr: summary.ctr, cpc: summary.cpc, cpm: summary.cpm, leads_count: leads, qualified_count: summary.totalQualified, sales_count: summary.crmAttributedSales, currency }}
                   />
                 </tr>
               </tfoot>

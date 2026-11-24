@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "3b3a75516384d4b80a117a5897c49289ae92f00df27ebd56978146d85e2affc9",
+  "sourceDigestSha256": "a43e386e8101c2bd35406926c4ec3250823baa3bde01430a06b414f81a0af6b7",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -18685,10 +18685,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:4afa35183c42718e41bb",
+          "id": "cta:e6c412622bc36f8599fb",
           "column": 11,
           "file": "components/features/marketing/marketing-ui.tsx",
-          "line": 35,
+          "line": 36,
           "owner": "KpiCard",
           "routes": [
             "/agenda",
@@ -18738,10 +18738,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:dcf72498893ad3a64907",
+          "id": "cta:7456d5bf7d01cbb306e1",
           "column": 15,
           "file": "components/features/marketing/MarketingCreativeSpotlight.tsx",
-          "line": 89,
+          "line": 90,
           "owner": "MarketingCreativeSpotlight",
           "routes": [
             "/marketing"
@@ -18750,10 +18750,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:fb39bb57bf83e5f58b8c",
+          "id": "cta:b3fec0e3d8c5a32565fc",
           "column": 13,
           "file": "components/features/marketing/MarketingMediaTab.tsx",
-          "line": 67,
+          "line": 68,
           "owner": "MarketingMediaTab",
           "routes": [
             "/marketing"
@@ -18762,10 +18762,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:a531d3b3a6bda529cbd7",
+          "id": "cta:1bd8feeba7489a3d1550",
           "column": 17,
           "file": "components/features/marketing/MarketingMediaTab.tsx",
-          "line": 90,
+          "line": 91,
           "owner": "MarketingMediaTab",
           "routes": [
             "/marketing"
@@ -18774,10 +18774,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:67e4bd55619c3f1a5ee6",
+          "id": "cta:0b19bd2c6d0dbe1d7750",
           "column": 41,
           "file": "components/features/marketing/MarketingOverviewTab.tsx",
-          "line": 84,
+          "line": 92,
           "owner": "MarketingOverviewTab",
           "routes": [
             "/marketing"
@@ -18811,10 +18811,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0691a69e0b8f8882b0dc",
+          "id": "cta:7c639cdc770ea6741939",
           "column": 21,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 349,
+          "line": 358,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -18824,10 +18824,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:b2c6793371e7b224a6e1",
+          "id": "cta:ecad72d8d855e87c48eb",
           "column": 15,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 376,
+          "line": 385,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -18836,10 +18836,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:8fe5de74732b7f3376f2",
+          "id": "cta:0319af42fd2141f873f8",
           "column": 17,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 396,
+          "line": 405,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -18849,10 +18849,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:8918908c43febfed33c6",
+          "id": "cta:e8489a02f76443151212",
           "column": 15,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 423,
+          "line": 432,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -18861,10 +18861,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ebfdade4edef32a98c0e",
+          "id": "cta:38cc6cb5a55d2608ccff",
           "column": 13,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 577,
+          "line": 598,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -18873,10 +18873,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:58dc65c47f7c16c4034f",
+          "id": "cta:386b3884ccc1a71a61c9",
           "column": 19,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 607,
+          "line": 628,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -18885,10 +18885,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0e0d3106125284eb815c",
+          "id": "cta:f8bb917bf11ffc510b7f",
           "column": 19,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 616,
+          "line": 637,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -18897,35 +18897,35 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fadcb171c4cef7b03dce",
+          "id": "cta:235e1ecd26abfef93b81",
           "column": 17,
-          "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 681,
-          "owner": "MarketingScreen",
-          "routes": [
-            "/marketing"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:6245174f892d00064881",
-          "column": 19,
           "file": "components/features/marketing/MarketingScreen.tsx",
           "line": 702,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
           ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:e3fa24e8dc425b9edd64",
+          "column": 19,
+          "file": "components/features/marketing/MarketingScreen.tsx",
+          "line": 723,
+          "owner": "MarketingScreen",
+          "routes": [
+            "/marketing"
+          ],
           "href": "integrationHref",
           "kind": "internalDynamic",
           "tag": "Link"
         },
         {
-          "id": "cta:befca33332e3bda729dc",
+          "id": "cta:521a5fd404dc7b173274",
           "column": 58,
           "file": "components/features/marketing/MarketingSocialTab.tsx",
-          "line": 143,
+          "line": 159,
           "owner": "MarketingSocialTab",
           "routes": [
             "/marketing"
@@ -47396,7 +47396,7 @@
         }
       ]
     },
-    "digestSha256": "0ad2b799c820851159a13a46e114fe4f7e64f92bebee3c0266dc6c590378511a"
+    "digestSha256": "adb6000f81fc129837e4267dfed347f26539b276b475da1bfe825e5f6f7e90fb"
   },
   "routes": [
     {

@@ -206,16 +206,18 @@ func TestCampaignInsightsPageIncludesDedicatedInstagram(t *testing.T) {
 		t.Fatalf("load local test tenant: %v", err)
 	}
 	pageID := fmt.Sprintf("instagram-page-regression-%d", time.Now().UnixNano())
-	metricDate := "2040-01-05"
+	metricDate := time.Now().UTC().Format(time.DateOnly)
 	if _, err := database.Pool().Exec(ctx, `
 		with legacy as (
-			insert into public.meta_integrations (organization_id, page_id, is_connected)
-			values ($1::uuid, $2, false) returning id
+			insert into public.meta_integrations (id, organization_id, page_id, is_connected)
+			values (gen_random_uuid(), $1::uuid, $2, false) returning id
 		), fixtures as (
 			select * from (values
-				('dedicated', null::uuid, jsonb_build_object('vimob_page_id', $2::text), 8),
+				('dedicated', null::uuid, jsonb_build_object('vimob_page_id', $2::text, 'availability', '{"likes":true}'::jsonb), 8),
 				('legacy', (select id from legacy), '{}'::jsonb, 4),
-				('other', null::uuid, jsonb_build_object('vimob_page_id', $2::text || '-other'), 100)
+				('other', null::uuid, jsonb_build_object('vimob_page_id', $2::text || '-other',
+				  'profile', jsonb_build_object('audience', jsonb_build_object('fetchedAt', now(),
+				    'age', '[{"label":"25-34","value":18}]'::jsonb))), 100)
 			) as fixture(kind, integration_id, metadata, reach)
 		), social as (
 			insert into public.marketing_social_daily (
@@ -273,5 +275,23 @@ func TestCampaignInsightsPageIncludesDedicatedInstagram(t *testing.T) {
 			(scenario.count > 0 && (len(days) != 1 || days[0].(map[string]any)["reach"] != scenario.reach)) {
 			t.Fatalf("unexpected filtered daily facts: %#v", days)
 		}
+	}
+	scoped, err := repository.CampaignInsights(ctx, tenant.Context{OrganizationID: organizationID}, values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	social := scoped["social"].(map[string]any)
+	unavailable := fmt.Sprint(social["unavailable"])
+	if social["likes"] != float64(0) || strings.Contains(unavailable, "likes") || !strings.Contains(unavailable, "saves") || social["audience"] != nil {
+		t.Fatalf("measured zero, absent metric or profile-scoped audience was misreported: %#v", social)
+	}
+	values.Set("pageId", pageID+"-other")
+	otherPage, err := repository.CampaignInsights(ctx, tenant.Context{OrganizationID: organizationID}, values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audience := otherPage["social"].(map[string]any)["audience"].(map[string]any)
+	if age := audience["age"].([]any); len(age) != 1 || age[0].(map[string]any)["value"] != float64(18) {
+		t.Fatalf("unexpected audience in selected profile: %#v", audience)
 	}
 }

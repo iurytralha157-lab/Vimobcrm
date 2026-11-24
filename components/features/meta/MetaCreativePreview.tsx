@@ -15,6 +15,7 @@ import {
   getMetaCreativeDestination,
   type MetaCreativeAsset,
 } from "@/lib/api/meta";
+import { canOptimizeMetaCreativeImage, getSafeMetaCreativeUrl } from "@/lib/analytics/meta-creative-image";
 
 interface MetaCreativePreviewProps {
   creative: Pick<
@@ -26,10 +27,11 @@ interface MetaCreativePreviewProps {
     | "videoUrl"
     | "permalinkUrl"
   >;
-  size?: "sm" | "md" | "lg" | "preview" | "gallery";
+  size?: "sm" | "md" | "lg" | "preview" | "gallery" | "tile";
   showAction?: boolean;
   showFormatBadge?: boolean;
   formatHint?: "feed" | "story" | null;
+  optimizeImages?: boolean;
   className?: string;
 }
 
@@ -39,6 +41,7 @@ const sizeClasses = {
   lg: "h-20 w-20",
   preview: "mx-auto w-full max-w-[180px]",
   gallery: "",
+  tile: "h-full w-full",
 };
 
 const imageSizes = {
@@ -47,9 +50,10 @@ const imageSizes = {
   lg: "80px",
   preview: "180px",
   gallery: "260px",
+  tile: "(max-width: 640px) 50vw, 320px",
 };
 
-function asSafeExternalUrl(value: string | null) {
+function asSafeExternalUrl(value: string | null | undefined) {
   const candidate = value?.trim();
   if (!candidate) return null;
 
@@ -63,15 +67,9 @@ function asSafeExternalUrl(value: string | null) {
   }
 }
 
-function getUniqueImageSources(creative: MetaCreativePreviewProps["creative"]) {
-  return [creative.thumbnailUrl, creative.creativeUrl]
-    .map(asSafeExternalUrl)
-    .filter((source): source is string => Boolean(source))
-    .filter((source, index, sources) => sources.indexOf(source) === index);
-}
-
 function getSafeCreativeDestination(
   creative: MetaCreativePreviewProps["creative"],
+  safeUrl: typeof getSafeMetaCreativeUrl,
 ) {
   return (
     [
@@ -80,7 +78,7 @@ function getSafeCreativeDestination(
       creative.videoUrl,
       creative.creativeUrl,
     ]
-      .map(asSafeExternalUrl)
+      .map(safeUrl)
       .find((source): source is string => Boolean(source)) ?? null
   );
 }
@@ -90,21 +88,30 @@ function CreativeMedia({
   size,
   showFormatBadge,
   formatHint,
+  optimizeImages,
 }: {
   creative: MetaCreativePreviewProps["creative"];
   size: NonNullable<MetaCreativePreviewProps["size"]>;
   showFormatBadge: boolean;
   formatHint: MetaCreativePreviewProps["formatHint"];
+  optimizeImages: boolean;
 }) {
-  const imageSources = getUniqueImageSources(creative);
+  const safeUrl = optimizeImages ? getSafeMetaCreativeUrl : asSafeExternalUrl;
+  const preferImage = optimizeImages && (size === "preview" || size === "gallery" || size === "tile");
+  const candidates = preferImage
+    ? [creative.creativeUrl, creative.thumbnailUrl]
+    : [creative.thumbnailUrl, creative.creativeUrl];
+  const imageSources = [...new Set(candidates.map(safeUrl))].filter((source): source is string => source !== null);
   const videoSource =
-    creative.type === "video" ? asSafeExternalUrl(creative.videoUrl) : null;
+    creative.type === "video" ? safeUrl(creative.videoUrl) : null;
   const [imageSourceIndex, setImageSourceIndex] = useState(0);
+  const [optimizationFailed, setOptimizationFailed] = useState(false);
   const [videoFailed, setVideoFailed] = useState(false);
   const [previewFormat, setPreviewFormat] = useState<"feed" | "story">(
     formatHint ?? "feed",
   );
   const imageSource = imageSources[imageSourceIndex] ?? null;
+  const optimizeCurrentImage = optimizeImages && !optimizationFailed && canOptimizeMetaCreativeImage(imageSource);
   const showVideo = !imageSource && Boolean(videoSource) && !videoFailed;
   const hasMediaPreview = Boolean(imageSource || showVideo);
   const updatePreviewFormat = (width: number, height: number) => {
@@ -120,6 +127,7 @@ function CreativeMedia({
   };
 
   const isFormattedPreview = size === "preview" || size === "gallery";
+  const fitMedia = isFormattedPreview || size === "tile";
   const shouldShowFormatBadge =
     showFormatBadge &&
     isFormattedPreview &&
@@ -144,8 +152,9 @@ function CreativeMedia({
           alt={`Criativo ${creative.name}`}
           fill
           sizes={imageSizes[size]}
-          className={isFormattedPreview ? "object-contain" : "object-cover"}
-          unoptimized
+          className={fitMedia ? "object-contain" : "object-cover"}
+          unoptimized={!optimizeCurrentImage}
+          referrerPolicy={optimizeImages ? "no-referrer" : undefined}
           onLoad={({ currentTarget }) => {
             updatePreviewFormat(
               currentTarget.naturalWidth,
@@ -153,6 +162,11 @@ function CreativeMedia({
             );
           }}
           onError={() => {
+            if (optimizeCurrentImage) {
+              setOptimizationFailed(true);
+              return;
+            }
+            setOptimizationFailed(false);
             setImageSourceIndex((currentIndex) => currentIndex + 1);
           }}
         />
@@ -162,7 +176,7 @@ function CreativeMedia({
           aria-label={`Vídeo do criativo ${creative.name}`}
           className={cn(
             "h-full w-full",
-            isFormattedPreview ? "object-contain" : "object-cover",
+            fitMedia ? "object-contain" : "object-cover",
           )}
           muted
           playsInline
@@ -192,7 +206,7 @@ function CreativeMedia({
               aria-hidden="true"
             />
           )}
-          {isFormattedPreview ? (
+          {fitMedia ? (
             <span className="text-[9px] font-light text-muted-foreground">
               Prévia indisponível
             </span>
@@ -230,15 +244,17 @@ export function MetaCreativePreview({
   showAction = true,
   showFormatBadge = false,
   formatHint = null,
+  optimizeImages = false,
   className,
 }: MetaCreativePreviewProps) {
-  const destination = getSafeCreativeDestination(creative);
+  const destination = getSafeCreativeDestination(creative, optimizeImages ? getSafeMetaCreativeUrl : asSafeExternalUrl);
   const mediaIdentity = [
     creative.type,
     creative.thumbnailUrl,
     creative.creativeUrl,
     creative.videoUrl,
     formatHint,
+    optimizeImages,
   ].join("|");
 
   return (
@@ -249,6 +265,7 @@ export function MetaCreativePreview({
         size={size}
         showFormatBadge={showFormatBadge}
         formatHint={formatHint}
+        optimizeImages={optimizeImages}
       />
 
       {showAction && destination && (

@@ -121,8 +121,10 @@ type marketingSyncSocialRow struct {
 }
 
 type marketingSyncSocialSnapshot struct {
-	Followers      *int64
-	FollowerGrowth int64
+	Followers            *int64
+	FollowerGrowth       int64
+	ProfileTotalsChecked bool
+	AudienceChecked      bool
 }
 
 func (service *MarketingSyncService) loadMarketingSyncTargets(ctx context.Context, organizationID string) ([]marketingSyncTarget, error) {
@@ -686,7 +688,9 @@ func (service *MarketingSyncService) loadMarketingSyncSocialSnapshots(ctx contex
 	dbCtx, cancel := service.marketingSyncDatabaseContext(ctx)
 	defer cancel()
 	rows, err := service.db.Query(dbCtx, `
-		select metric_date::text, followers, follower_growth
+		select metric_date::text, followers, follower_growth,
+		       coalesce(raw_metrics->'profile_totals_checked' = 'true'::jsonb, false),
+		       coalesce(raw_metrics->'profile'->'audience_checked' = 'true'::jsonb, false)
 		from public.marketing_social_daily
 		where organization_id = $1::uuid
 		  and provider = 'instagram'
@@ -701,7 +705,7 @@ func (service *MarketingSyncService) loadMarketingSyncSocialSnapshots(ctx contex
 	for rows.Next() {
 		var date string
 		var snapshot marketingSyncSocialSnapshot
-		if err := rows.Scan(&date, &snapshot.Followers, &snapshot.FollowerGrowth); err != nil {
+		if err := rows.Scan(&date, &snapshot.Followers, &snapshot.FollowerGrowth, &snapshot.ProfileTotalsChecked, &snapshot.AudienceChecked); err != nil {
 			return nil, newMarketingSyncFailure("marketing_social_snapshot_read_failed", 500, err)
 		}
 		result[date] = snapshot

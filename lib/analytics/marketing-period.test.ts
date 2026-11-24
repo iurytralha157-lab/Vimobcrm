@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { getMarketingPeriodValidation } from './marketing-period'
+import { getMarketingPeriodValidation, splitMarketingSyncRange } from './marketing-period'
 
 test('Marketing accepts 366 inclusive civil days and rejects 367 without changing the selected range', () => {
   const from = new Date(2024, 0, 1)
@@ -19,4 +19,16 @@ test('Marketing accepts 366 inclusive civil days and rejects 367 without changin
 test('Marketing period validation handles reversed or invalid dates before a query', () => {
   assert.match(getMarketingPeriodValidation({ from: new Date(2026, 9, 2), to: new Date(2026, 9, 1) }).message ?? '', /posterior/)
   assert.match(getMarketingPeriodValidation({ from: new Date(Number.NaN), to: new Date(2026, 9, 1) }).message ?? '', /completo e válido/)
+})
+
+test('dedicated historical sync splits into contiguous 30-day windows without changing the legacy window', () => {
+  assert.deepEqual(splitMarketingSyncRange('2026-09-01', '2026-11-24', 'dedicated'), [
+    { dateStart: '2026-09-01', dateStop: '2026-09-30' },
+    { dateStart: '2026-10-01', dateStop: '2026-10-30' },
+    { dateStart: '2026-10-31', dateStop: '2026-11-24' },
+  ])
+  assert.deepEqual(splitMarketingSyncRange('2026-09-01', '2026-11-24', 'legacy'), [
+    { dateStart: '2026-09-01', dateStop: '2026-11-24' },
+  ])
+  assert.throws(() => splitMarketingSyncRange('2026-02-29', '2026-04-01', 'dedicated'))
 })

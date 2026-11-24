@@ -8,8 +8,9 @@ import (
 )
 
 type marketingSyncSocialAggregate struct {
-	Posts   int64
-	Profile map[string]any
+	Posts                int64
+	Profile              map[string]any
+	ProfileTotalsChecked bool
 }
 
 func (service *MarketingSyncService) syncMarketingInstagram(ctx context.Context, target marketingSyncTarget, dateRange marketingSyncDateRange, deadline time.Time, graphSemaphore chan struct{}) marketingSyncSocialResult {
@@ -19,6 +20,7 @@ func (service *MarketingSyncService) syncMarketingInstagram(ctx context.Context,
 	}
 	pageID := nullableMarketingSyncText(target.PageID)
 	graph := service.newMarketingSyncGraphClient(target.AccessToken, deadline, graphSemaphore)
+	graph.instagram = true
 	profile, err := graph.object(ctx, profileID, map[string]any{
 		"fields": "id,username,name,profile_picture_url,followers_count,media_count",
 	})
@@ -61,32 +63,6 @@ func (service *MarketingSyncService) syncMarketingInstagram(ctx context.Context,
 			mediaInsights[index].Payload = map[string]any{"data": []any{}}
 		}
 	}
-
-	profileMetricNames := []string{
-		"impressions", "reach", "views", "profile_views", "website_clicks",
-		"accounts_engaged", "total_interactions", "likes", "comments", "saves", "shares",
-		"follows_and_unfollows",
-	}
-	type profileMetricResult struct {
-		Metric  string
-		Payload map[string]any
-		Err     error
-	}
-	profileMetricResults := marketingSyncMapLimited(ctx, profileMetricNames, marketingSyncSocialWorkers, func(ctx context.Context, metric string, _ int) profileMetricResult {
-		payload, err := fetchMarketingSyncInstagramProfileMetric(ctx, graph, profileID, metric, dateRange)
-		return profileMetricResult{Metric: metric, Payload: payload, Err: err}
-	})
-	profilePayloads := make([]map[string]any, 0)
-	for _, result := range profileMetricResults {
-		if result.Err != nil {
-			errorsList = append(errorsList, marketingSyncScopedError("instagram_profile_"+result.Metric, result.Err))
-			continue
-		}
-		if result.Payload != nil {
-			profilePayloads = append(profilePayloads, result.Payload)
-		}
-	}
-	profileMetrics := collectMarketingSyncProfileMetrics(profilePayloads, dateRange)
 
 	byDate := make(map[string]*marketingSyncSocialAggregate)
 	assetRows := make([]marketingSyncMediaRow, 0, len(media))
@@ -165,14 +141,6 @@ func (service *MarketingSyncService) syncMarketingInstagram(ctx context.Context,
 			}
 		}
 	}
-	for date, metrics := range profileMetrics {
-		aggregate := byDate[date]
-		if aggregate == nil {
-			aggregate = &marketingSyncSocialAggregate{}
-			byDate[date] = aggregate
-		}
-		aggregate.Profile = metrics
-	}
 	today := now.Format(time.DateOnly)
 	if today >= dateRange.fromText() && today <= dateRange.toText() && byDate[today] == nil {
 		byDate[today] = &marketingSyncSocialAggregate{}
@@ -184,6 +152,29 @@ func (service *MarketingSyncService) syncMarketingInstagram(ctx context.Context,
 		existing = make(map[string]marketingSyncSocialSnapshot)
 	}
 	currentFollowers := marketingSyncNullableNumber(profile["followers_count"])
+	if day := byDate[today]; day != nil && currentFollowers != nil && *currentFollowers >= 100 && !existing[today].AudienceChecked {
+		var audienceErrors []string
+		day.Profile, audienceErrors = fetchMarketingSyncInstagramAudience(ctx, graph, profileID, now)
+		errorsList = append(errorsList, audienceErrors...)
+	}
+	profileDays, profileErrors := fetchMarketingSyncInstagramProfileDays(ctx, graph, profileID, dateRange, now, existing)
+	errorsList = append(errorsList, profileErrors...)
+	for date, observation := range profileDays {
+		aggregate := byDate[date]
+		if aggregate == nil {
+			byDate[date] = observation
+			continue
+		}
+		if aggregate.Profile == nil {
+			aggregate.Profile = observation.Profile
+		} else {
+			for name, value := range observation.Profile {
+				aggregate.Profile[name] = value
+			}
+		}
+		aggregate.ProfileTotalsChecked = observation.ProfileTotalsChecked
+	}
+
 	socialRows := make([]marketingSyncSocialRow, 0, len(byDate))
 	for dateText, aggregate := range byDate {
 		date, err := time.Parse(time.DateOnly, dateText)
@@ -234,6 +225,18 @@ func (service *MarketingSyncService) syncMarketingInstagram(ctx context.Context,
 				availability[key] = true
 			}
 		}
+		rawMetrics := map[string]any{
+			"vimob_page_id":              pageID,
+			"followers_snapshot_current": followersCurrent,
+			"availability":               availability,
+			"profile":                    profileDay,
+			"media": map[string]any{
+				"posts": aggregate.Posts, "collection_complete": mediaCollectionComplete,
+			},
+		}
+		if aggregate.ProfileTotalsChecked {
+			rawMetrics["profile_totals_checked"] = true
+		}
 		socialRows = append(socialRows, marketingSyncSocialRow{
 			OrganizationID: target.OrganizationID, IntegrationID: target.IntegrationID,
 			ProfileID: profileID, ProfileName: marketingSyncFirstText(profile["username"], profile["name"], target.InstagramUsername),
@@ -241,16 +244,7 @@ func (service *MarketingSyncService) syncMarketingInstagram(ctx context.Context,
 			Posts: aggregate.Posts, Impressions: impressions, Reach: reach,
 			Interactions: interactions, Likes: likes, Comments: comments, Saves: saves, Shares: shares,
 			ProfileViews: profileViews, WebsiteClicks: websiteClicks, VideoViews: videoViews,
-			RawMetrics: map[string]any{
-				"vimob_page_id":              pageID,
-				"followers_snapshot_current": followersCurrent,
-				"availability":               availability,
-				"profile":                    profileDay,
-				"media": map[string]any{
-					"posts": aggregate.Posts, "collection_complete": mediaCollectionComplete,
-				},
-			},
-			FetchedAt: now,
+			RawMetrics: rawMetrics, FetchedAt: now,
 		})
 	}
 
@@ -310,17 +304,6 @@ func fetchMarketingSyncInstagramMediaInsights(ctx context.Context, graph *market
 		}
 	}
 	return map[string]any{"data": data}, nil
-}
-
-func fetchMarketingSyncInstagramProfileMetric(ctx context.Context, graph *marketingSyncGraphClient, profileID, metric string, dateRange marketingSyncDateRange) (map[string]any, error) {
-	parameters := map[string]any{"metric": metric, "period": "day", "since": dateRange.fromText(), "until": dateRange.toText()}
-	payload, err := graph.object(ctx, profileID+"/insights", parameters)
-	if err != nil && marketingSyncErrorCode(err) == "meta_unsupported_parameter" {
-		// total_value is a lifetime or range aggregate and cannot be assigned to
-		// one metric_date without fabricating a daily value.
-		return nil, nil
-	}
-	return payload, err
 }
 
 func collectMarketingSyncProfileMetrics(payloads []map[string]any, dateRange marketingSyncDateRange) map[string]map[string]any {

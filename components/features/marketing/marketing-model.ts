@@ -18,40 +18,28 @@ export function indexAds(model: MarketingModel) {
   return ads;
 }
 
-function withRealCost(creative: MarketingCreative, ads: Map<string, AdAggregated>): RankedCreative {
-  const ad = creative.ad_id ? ads.get(creative.ad_id) : undefined;
-  const leads = creative.leads_count ?? ad?.leads_count ?? null;
-  const spend = creative.spend ?? ad?.spend ?? null;
-  return {
-    ...creative,
-    leads_count: leads,
-    spend,
-    ctr: creative.ctr ?? ad?.ctr ?? null,
-    hook_rate: creative.hook_rate ?? ad?.hook_rate ?? null,
-    won_count: creative.won_count ?? ad?.won_count ?? null,
-    currency: creative.currency ?? ad?.currency ?? null,
-    qualified: ad?.qualified_count ?? null,
-    realCpl: leads && spend !== null ? spend / leads : null,
-  };
-}
-
-/** Paid creatives with confirmed CRM leads first, cheapest real lead on top. */
-export function rankPaidCreatives(model: MarketingModel) {
-  const ads = indexAds(model);
-  return model.creatives
-    .filter((creative) => creative.source_kind === "paid")
-    .map((creative) => withRealCost(creative, ads))
+/** Only CPL confirmed by the API participates in the ranking. */
+export function rankPaidCreatives(creatives: readonly RankedCreative[]) {
+  return creatives
+    .filter((creative) => creative.source_kind === "paid" && creative.realCpl !== null)
     .sort((left, right) => {
-      if (left.realCpl === null && right.realCpl === null) return (right.spend ?? 0) - (left.spend ?? 0);
-      if (left.realCpl === null) return 1;
-      if (right.realCpl === null) return -1;
-      return left.realCpl - right.realCpl;
+      return (left.realCpl ?? 0) - (right.realCpl ?? 0) ||
+        (right.leads_count ?? 0) - (left.leads_count ?? 0) ||
+        right.score - left.score || left.id.localeCompare(right.id);
     });
 }
 
 export function allCreatives(model: MarketingModel) {
   const ads = indexAds(model);
-  return model.creatives.map((creative) => withRealCost(creative, ads));
+  return model.creatives.map((creative): RankedCreative => ({
+    ...creative,
+    qualified: creative.leads_count !== null && creative.ad_id
+      ? ads.get(creative.ad_id)?.qualified_count ?? null
+      : null,
+    realCpl: creative.source_kind === "paid" && (creative.leads_count ?? 0) > 0
+      ? creative.cpl
+      : null,
+  }));
 }
 
 export function mediaById(media: MarketingMediaAsset[]) {

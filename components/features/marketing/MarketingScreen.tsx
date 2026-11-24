@@ -44,6 +44,10 @@ import {
 } from "./marketing-tabs";
 
 const MARKETING_CONNECTION_HREF = "/settings/integrations/meta-marketing";
+const coverageDateFormatter = new Intl.DateTimeFormat("pt-BR", {
+  timeZone: "UTC",
+  dateStyle: "short",
+});
 
 function uniqueScopeOptions(options: MarketingScopeFilterOption[]) {
   const unique = new Map<string, string>();
@@ -169,6 +173,7 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
   };
   const isSyncing = connectionSync.isPending || model.syncMutation.isPending;
   const data = model.insightsQuery.data;
+  const { coverageFrom, coverageTo } = data?.dataQuality ?? {};
   const insightsError = model.insightsQuery.error;
   const errorState = getMarketingDashboardErrorState(insightsError);
   const hasStaleDataError = Boolean(data && model.insightsQuery.isError && !model.insightsQuery.periodError);
@@ -184,9 +189,13 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
     data?.social.lastSync ||
     data?.summary.totalLeads ||
     data?.summary.totalWon ||
+    data?.summary.crmSalesCount ||
     data?.summary.totalRevenue ||
     data?.summary.conversations_count,
   );
+  const showPaidCoverage = usesPaidMediaScope && hasSynchronizedData &&
+    !model.insightsQuery.isPlaceholderData &&
+    (!coverageFrom || !coverageTo || coverageFrom > model.dateRange.from || coverageTo < model.dateRange.to);
   const scopeOptions = useMemo(() => {
     const responseOptions = data?.filterOptions ?? {
       accounts: [],
@@ -439,7 +448,7 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
                          ? "Sincronização em andamento"
                          : "Sincronizar o período selecionado com a Meta")
                 }
-                className="mx-0.5 h-8 w-8 min-w-8 shrink-0 rounded-[6px] border-0 bg-primary/50 p-0 text-primary-foreground shadow-none hover:bg-primary"
+                className="mx-0.5 h-8 w-8 min-w-8 shrink-0 rounded-[6px] border-0 bg-primary/50 p-0 text-primary-foreground shadow-none hover:bg-primary xl:w-auto xl:px-2.5"
               >
                 <RefreshCw
                   className={cn(
@@ -448,10 +457,10 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
                   )}
                   aria-hidden="true"
                 />
-                <span className="sr-only">
+                <span className="sr-only xl:not-sr-only">
                   {isSyncing
                     ? "Sincronizando"
-                    : "Sincronizar"}
+                    : "Sincronizar período"}
                 </span>
               </Button>
             ) : null}
@@ -550,6 +559,18 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
             />
           </div>
         </div>
+
+        {showPaidCoverage ? (
+          <p className="flex items-start gap-1.5 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 py-2 text-[11px] leading-4 text-[var(--app-text-secondary)]">
+            <CircleAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+            <span>
+              {coverageFrom && coverageTo
+                ? `Há registros de anúncios de ${coverageDateFormatter.format(new Date(coverageFrom))} a ${coverageDateFormatter.format(new Date(coverageTo))} neste recorte.`
+                : "Nenhum registro de anúncios neste recorte."}
+              {canSyncCurrentPeriod ? " Use Sincronizar período para buscar as datas selecionadas na Meta." : null}
+            </span>
+          </p>
+        ) : null}
 
         {usesPaidMediaScope && sharedFilters.pageId ? (
           <p className="flex items-start gap-1.5 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 py-2 text-[10px] font-light leading-4 text-[var(--app-text-tertiary)]">

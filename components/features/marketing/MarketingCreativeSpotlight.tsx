@@ -10,6 +10,7 @@ import { CreativeImage, EmptyNote, NEUTRAL_SOFT, PANEL_SOFT, Panel, safeExternal
 export function creativeMedia(creative: RankedCreative) {
   return {
     name: creative.ad_name,
+    mediaType: creative.media_type,
     thumbnailUrl: creative.thumbnail_url,
     imageUrl: creative.creative_url,
     videoUrl: creative.creative_video_url,
@@ -50,7 +51,7 @@ export function CreativeDarkCard({ creative, rank }: { creative: RankedCreative;
         <div className="mt-3 grid grid-cols-3 gap-x-3 gap-y-2.5">
           <DarkStat label="Leads" value={formatCount(creative.leads_count)} />
           <DarkStat label="Qualificados" value={formatCount(creative.qualified)} />
-          <DarkStat label="Vendas" value={formatCount(creative.won_count)} />
+          <DarkStat label="Vendas no período" value={formatCount(creative.sales_count)} />
           <DarkStat label="Investido" value={formatMoney(creative.spend, creative.currency, 0)} />
           <DarkStat label="CTR" value={formatPercent(creative.ctr)} />
           <DarkStat label="Hook rate" value={formatPercent(creative.hook_rate)} />
@@ -100,24 +101,25 @@ export function MarketingCreativeSpotlight({ creatives }: { creatives: RankedCre
         ) : null
       }
     >
-      {current ? <CreativeDarkCard creative={current} rank={safeIndex + 1} /> : <EmptyNote>Sem criativos pagos no período.</EmptyNote>}
+      {current ? <CreativeDarkCard creative={current} rank={current.realCpl === null ? undefined : safeIndex + 1} /> : <EmptyNote>Sem criativos pagos no período.</EmptyNote>}
     </Panel>
   );
 }
 
 export function MarketingBestCreatives({ creatives }: { creatives: RankedCreative[] }) {
-  const list = creatives.slice(0, 6);
+  const list = creatives.slice(0, 3);
   const worst = Math.max(...list.map((creative) => creative.realCpl ?? 0), 0);
   return (
     <Panel title="Melhores criativos" aside="Por CPL real">
-      {list.length === 0 ? <EmptyNote>Sem criativos pagos no período.</EmptyNote> : null}
-      <ul className="space-y-1">
+      {list.length === 0 ? <EmptyNote>Sem criativos com CPL do CRM neste recorte.</EmptyNote> : null}
+      <ol className="space-y-1">
         {list.map((creative, index) => (
           <li key={creative.id} className={cn("flex items-center gap-3 rounded-[8px] p-2", index === 0 && "bg-primary/10")}>
             <span className="flex h-12 w-11 shrink-0 items-center justify-center overflow-hidden rounded-[6px]">
               <CreativeImage media={creativeMedia(creative)} size="sm" className="h-full w-full" />
             </span>
             <span className="min-w-0 flex-1">
+              <span className="block text-[10px] font-medium text-[var(--app-text-secondary)]">{index + 1}º lugar</span>
               <span className="block truncate text-[12px] font-medium text-[var(--app-text-primary)]">{creative.ad_name}</span>
               <span className="mt-0.5 flex items-baseline justify-between gap-2 text-[11px] font-light text-[var(--app-text-secondary)]">
                 <span className="truncate">
@@ -128,13 +130,13 @@ export function MarketingBestCreatives({ creatives }: { creatives: RankedCreativ
               <span className={cn("mt-1 block h-1 overflow-hidden rounded-full", NEUTRAL_SOFT)}>
                 <span
                   className="block h-full rounded-full bg-primary"
-                  style={{ width: `${creative.realCpl && worst ? Math.max(8, 100 - ((creative.realCpl / worst) * 100 - 100 / list.length)) : 0}%` }}
+                  style={{ width: `${worst ? Math.max(8, 100 - (((creative.realCpl ?? 0) / worst) * 100 - 100 / list.length)) : 100}%` }}
                 />
               </span>
             </span>
           </li>
         ))}
-      </ul>
+      </ol>
     </Panel>
   );
 }

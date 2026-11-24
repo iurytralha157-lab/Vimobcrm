@@ -17,7 +17,7 @@ const { outputText } = ts.transpileModule(readFileSync(file, "utf8"), {
   },
 });
 
-function renderMarketing(connectionsQuery) {
+function renderMarketing(connectionsQuery, rangeCoverage) {
   const calls = [];
   const syncActions = [];
   const model = {
@@ -25,7 +25,9 @@ function renderMarketing(connectionsQuery) {
     canSyncIntegration: true,
     integrationState: { isConnected: true, hasAdAccount: true, hasMarketingToken: true },
     integrationsQuery: { refetch: () => calls.push("legacy-query") },
-    insightsQuery: {},
+    insightsQuery: rangeCoverage ? {
+      data: { lastSync: "2026-11-22", dataQuality: rangeCoverage, campaigns: [] },
+    } : {},
     syncMutation: {},
     dateRange: { from: "2026-11-01", to: "2026-11-22" },
     sync: () => calls.push("legacy-sync"),
@@ -99,6 +101,14 @@ test("com ativos selecionados, sincroniza o período pela conexão dedicada", ()
   assert.equal(screen.syncActions.length, 1);
   screen.syncActions[0].onClick();
   assert.deepEqual(screen.calls, [{ connectionId: "marketing-connection", dateStart: "2026-11-01", dateStop: "2026-11-22" }]);
+});
+
+test("datas de mídia parcial ficam explícitas quando o filtro inclui dias anteriores", () => {
+  const screen = renderMarketing({ data: { enabled: true, connections: [
+    { id: "marketing-connection", assets: [{ type: "ad_account", is_selected: true }] },
+  ] } }, { coverageFrom: "2026-11-10", coverageTo: "2026-11-22" });
+  assert.match(screen.html, /Há registros de anúncios de 10\/11\/2026 a 22\/11\/2026 neste recorte/);
+  assert.match(screen.html, /buscar as datas selecionadas na Meta/);
 });
 
 test("uma conexão dedicada expirada leva à configuração sem recorrer ao login de leads", () => {

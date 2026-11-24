@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { getMarketingSyncErrorMessage, shouldPauseMarketingSync } from "@/lib/analytics/marketing-connection-error";
 import { marketingConnectionsAPI } from "@/lib/api/marketing-connections";
-import { splitMarketingSyncRange } from "@/hooks/use-campaign-insights";
+import { splitMarketingSyncRange } from "@/lib/analytics/marketing-period";
 
 function useConnectionsKey() {
   const { activeOrganization } = useAuth();
@@ -60,19 +60,25 @@ export function useSyncMarketingConnection() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ connectionId, dateStart, dateStop }: { connectionId: string; dateStart: string; dateStop: string }) => {
-      const total = { synced: 0, media: 0, social: 0, errors: [] as string[] };
-      for (const window of splitMarketingSyncRange(dateStart, dateStop)) {
-        const result = await marketingConnectionsAPI.sync(connectionId, window.dateStart, window.dateStop, organizationId);
-        total.synced += result.synced;
-        total.media += result.media_synced;
-        total.social += result.social_synced;
-        total.errors.push(...(result.errors ?? []));
-        if (result.errors?.some(shouldPauseMarketingSync)) break;
+      const total = { synced: 0, media: 0, social: 0, errors: [] as unknown[] };
+      const windows = splitMarketingSyncRange(dateStart, dateStop, "dedicated");
+      for (const window of windows) {
+        try {
+          const result = await marketingConnectionsAPI.sync(connectionId, window.dateStart, window.dateStop, organizationId);
+          total.synced += result.synced;
+          total.media += result.media_synced;
+          total.social += result.social_synced;
+          total.errors.push(...(result.errors ?? []));
+          if (result.errors?.some(shouldPauseMarketingSync)) break;
+        } catch (error) {
+          total.errors.push(error);
+          break;
+        }
       }
       return total;
     },
     onSuccess: (total) => {
-      const summary = `${total.synced} registros de mídia, ${total.media} criativos e ${total.social} dias de Instagram`;
+      const summary = `${total.synced} registros de anúncios, ${total.media} atualizações de mídia e ${total.social} dias de Instagram`;
       if (total.errors.length > 0) {
         const message = getMarketingSyncErrorMessage(total.errors.find(shouldPauseMarketingSync) ?? total.errors[0]);
         if (total.synced || total.media || total.social) {

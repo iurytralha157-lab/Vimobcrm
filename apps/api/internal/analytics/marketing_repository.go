@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/leadscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -26,6 +27,21 @@ const campaignInsightsTeamFilterSQL = `(
 		  and member.user_id = lead.assigned_user_id and coalesce(member.is_active, true) = true
 	))
 )`
+
+const campaignInsightsLeadFilterSQL = campaignInsightsTeamFilterSQL + `
+	and (params.user_id is null or lead.assigned_user_id = params.user_id)
+	and (params.pipeline_id is null or lead.pipeline_id = params.pipeline_id)
+	and (not params.unassigned or lead.assigned_user_id is null)
+	and (params.deal_status is null or lead.deal_status = params.deal_status)
+	and (
+		params.tag_ids is null
+		or exists (
+			select 1 from public.lead_tags as lead_tag
+			where lead_tag.organization_id = lead.organization_id
+			  and lead_tag.lead_id = lead.id
+			  and lead_tag.tag_id = any(params.tag_ids)
+		)
+	)`
 
 func (repo Repository) MetaInsights(ctx context.Context, tenantContext tenant.Context, values url.Values) ([]map[string]any, error) {
 	if err := validateSiteAnalyticsValues(values); err != nil {
@@ -307,7 +323,19 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			  )
 			group by campaign_id, adset_id
 		),
-		paid_ads as (
+		paid_ad_rows as (
+			select paid.*
+			from paid
+			cross join (
+				select adset_id as selected_adset_id, ad_id as selected_ad_id
+				from params
+			) as scope
+			where level = 'ad'
+			  and ad_id is not null
+			  and (scope.selected_adset_id is null or adset_id = scope.selected_adset_id)
+			  and (scope.selected_ad_id is null or ad_id = scope.selected_ad_id)
+		),
+		paid_ad_metrics as (
 			select
 				campaign_id,
 				max(campaign_name) as campaign_name,
@@ -332,22 +360,26 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 					else null
 				end as hook_rate,
 				max(status) as status,
-				max(creative_id) as creative_id,
-				max(creative_url) as creative_url,
-				max(creative_video_url) as creative_video_url,
-				max(creative_permalink_url) as creative_permalink_url,
-				max(thumbnail_url) as thumbnail_url,
 				max(currency) as currency
-			from paid
-			cross join (
-				select adset_id as selected_adset_id, ad_id as selected_ad_id
-				from params
-			) as scope
-			where level = 'ad'
-			  and ad_id is not null
-			  and (scope.selected_adset_id is null or adset_id = scope.selected_adset_id)
-			  and (scope.selected_ad_id is null or ad_id = scope.selected_ad_id)
+			from paid_ad_rows
 			group by campaign_id, adset_id, ad_id
+		),
+		paid_ad_media as (
+			-- Keep signed media URLs together and prefer the latest provider snapshot.
+			select distinct on (campaign_id, adset_id, ad_id)
+				campaign_id, adset_id, ad_id,
+				creative_id, creative_url, creative_video_url, creative_permalink_url, thumbnail_url
+			from paid_ad_rows
+			order by campaign_id, adset_id, ad_id, fetched_at desc, metric_date desc, id desc
+		),
+		paid_ads as (
+			select metrics.*, media.creative_id, media.creative_url, media.creative_video_url,
+				media.creative_permalink_url, media.thumbnail_url
+			from paid_ad_metrics metrics
+			join paid_ad_media media
+			  on media.ad_id = metrics.ad_id
+			 and media.campaign_id is not distinct from metrics.campaign_id
+			 and media.adset_id is not distinct from metrics.adset_id
 		),
 		entry_candidates as (
 			select
@@ -420,24 +452,10 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			      where matching_paid_campaign.campaign_id = attribution.campaign_id
 			    )
 			  )
-			  and `+campaignInsightsTeamFilterSQL+`
-			  and (params.user_id is null or lead.assigned_user_id = params.user_id)
-			  and (params.pipeline_id is null or lead.pipeline_id = params.pipeline_id)
-			  and (not params.unassigned or lead.assigned_user_id is null)
+			  and `+campaignInsightsLeadFilterSQL+`
 			  and (
 			    params.source is null
 			    or params.source in ('meta', 'meta_ads', 'facebook', 'instagram')
-			  )
-			  and (params.deal_status is null or lead.deal_status = params.deal_status)
-			  and (
-			    params.tag_ids is null
-			    or exists (
-			      select 1
-			      from public.lead_tags as lead_tag
-			      where lead_tag.organization_id = $1::uuid
-			        and lead_tag.lead_id = lead.id
-			        and lead_tag.tag_id = any(params.tag_ids)
-			    )
 			  )
 		),
 		outcomes as (
@@ -548,19 +566,88 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			cross join params
 			cross join time_bounds
 		),
+		crm_sales as (
+			-- CRM sales follow the closing date, with the last Meta touch at
+			-- or before closing. The entry cohort above remains the funnel.
+			select lead.won_at, touch.campaign_id, touch.campaign_name,
+			       touch.adset_id, touch.adset_name, touch.ad_id, touch.ad_name
+			from public.leads as lead
+			cross join params
+			cross join time_bounds
+			left join lateral (
+				select nullif(btrim(entry.campaign_id), '') as campaign_id, entry.campaign_name,
+				       nullif(btrim(entry.adset_id), '') as adset_id, entry.adset_name,
+				       nullif(btrim(entry.ad_id), '') as ad_id, entry.ad_name, entry.page_id, entry.id
+				from public.lead_entry_events as entry
+				where entry.organization_id = lead.organization_id
+				  and entry.lead_id = lead.id
+				  and coalesce(entry.is_countable, true)
+				  and entry.occurred_at <= lead.won_at
+				  and (
+				    lower(btrim(entry.provider)) = 'meta'
+				    or lower(btrim(entry.source)) in ('meta', 'meta_ads', 'facebook', 'instagram')
+				  )
+				order by entry.occurred_at desc, entry.created_at desc, entry.id desc
+				limit 1
+			) as touch on true
+			where $19::boolean
+			  and lead.organization_id = $1::uuid
+			  and lead.deal_status = 'won'
+			  and lead.won_at is not null
+			  and (time_bounds.starts_at is null or lead.won_at >= time_bounds.starts_at)
+			  and (time_bounds.ends_at is null or lead.won_at < time_bounds.ends_at)
+			  and `+leadscope.VisibilitySQL("lead", "$16", "nullif($17, '')", "$18", leadscope.CanViewOwn(tenantContext))+`
+			  and ($16::boolean or lead.assigned_user_id is not null)
+			  and `+campaignInsightsLeadFilterSQL+`
+			  and (params.page_id is null or touch.page_id = params.page_id)
+			  and (params.adset_id is null or touch.adset_id = params.adset_id)
+			  and (params.ad_id is null or touch.ad_id = params.ad_id)
+			  and (
+			    params.source is null
+			    or lower(btrim(lead.source)) = params.source
+			    or (params.source in ('meta', 'meta_ads', 'facebook', 'instagram') and touch.id is not null)
+			  )
+			  and (
+			    cardinality(params.campaign_ids) = 0
+			    or touch.campaign_id = any(params.campaign_ids)
+			    or touch.campaign_name = any(params.campaign_ids)
+			  )
+			  and (
+			    (params.account_id is null and params.objective is null)
+			    or exists (
+			      select 1 from public.marketing_performance_daily as metric
+			      where metric.organization_id = lead.organization_id
+			        and metric.provider = 'meta'
+			        and metric.campaign_id = touch.campaign_id
+			        and (params.account_id is null or metric.external_account_id = params.account_id)
+			        and (params.objective is null or metric.objective = params.objective)
+			    )
+			  )
+		),
+		crm_dimension_facts as (
+			select campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name,
+			       contacted, responded, qualified, won, lost, open, revenue, false as sale
+			from outcomes
+			union all
+			select campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name,
+			       false, false, false, false, false, false, 0, true
+			from crm_sales
+			where campaign_id is not null
+		),
 		crm_campaigns as (
 			select
 				coalesce(campaign_id, 'unattributed') as campaign_id,
 				max(coalesce(campaign_name, 'Sem campanha atribuida')) as campaign_name,
-				count(*)::int as leads_count,
+				count(*) filter (where not sale)::int as leads_count,
 				count(*) filter (where contacted)::int as contacted_count,
 				count(*) filter (where responded)::int as responded_count,
 				count(*) filter (where qualified)::int as qualified_count,
 				count(*) filter (where won)::int as won_count,
+				count(*) filter (where sale)::int as sales_count,
 				count(*) filter (where lost)::int as lost_count,
 				count(*) filter (where open)::int as open_count,
 				coalesce(sum(revenue), 0) as revenue
-			from outcomes
+			from crm_dimension_facts
 			group by coalesce(campaign_id, 'unattributed')
 		),
 		crm_adsets as (
@@ -568,15 +655,16 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 				coalesce(campaign_id, 'unattributed') as campaign_id,
 				coalesce(adset_id, 'unattributed') as adset_id,
 				max(coalesce(adset_name, 'Sem conjunto atribuido')) as adset_name,
-				count(*)::int as leads_count,
+				count(*) filter (where not sale)::int as leads_count,
 				count(*) filter (where contacted)::int as contacted_count,
 				count(*) filter (where responded)::int as responded_count,
 				count(*) filter (where qualified)::int as qualified_count,
 				count(*) filter (where won)::int as won_count,
+				count(*) filter (where sale)::int as sales_count,
 				count(*) filter (where lost)::int as lost_count,
 				count(*) filter (where open)::int as open_count,
 				coalesce(sum(revenue), 0) as revenue
-			from outcomes
+			from crm_dimension_facts
 			group by
 				coalesce(campaign_id, 'unattributed'),
 				coalesce(adset_id, 'unattributed')
@@ -587,15 +675,16 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 				coalesce(adset_id, 'unattributed') as adset_id,
 				coalesce(ad_id, 'unattributed') as ad_id,
 				max(coalesce(ad_name, 'Sem anuncio atribuido')) as ad_name,
-				count(*)::int as leads_count,
+				count(*) filter (where not sale)::int as leads_count,
 				count(*) filter (where contacted)::int as contacted_count,
 				count(*) filter (where responded)::int as responded_count,
 				count(*) filter (where qualified)::int as qualified_count,
 				count(*) filter (where won)::int as won_count,
+				count(*) filter (where sale)::int as sales_count,
 				count(*) filter (where lost)::int as lost_count,
 				count(*) filter (where open)::int as open_count,
 				coalesce(sum(revenue), 0) as revenue
-			from outcomes
+			from crm_dimension_facts
 			group by
 				coalesce(campaign_id, 'unattributed'),
 				coalesce(adset_id, 'unattributed'),
@@ -621,6 +710,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 				coalesce(crm_campaign.responded_count, 0)::int as responded_count,
 				coalesce(crm_campaign.qualified_count, 0)::int as qualified_count,
 				coalesce(crm_campaign.won_count, 0)::int as won_count,
+				case when $19::boolean then coalesce(crm_campaign.sales_count, 0) end as sales_count,
 				coalesce(crm_campaign.lost_count, 0)::int as lost_count,
 				coalesce(crm_campaign.open_count, 0)::int as open_count,
 				coalesce(crm_campaign.revenue, 0) as revenue,
@@ -840,10 +930,19 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			cross join time_bounds
 			group by (occurred_at at time zone time_bounds.timezone_name)::date
 		),
+		crm_sales_daily as (
+			select (won_at at time zone time_bounds.timezone_name)::date as metric_date,
+			       count(*)::int as sales
+			from crm_sales
+			cross join time_bounds
+			group by (won_at at time zone time_bounds.timezone_name)::date
+		),
 		daily_keys as (
 			select metric_date from paid_daily
 			union
 			select metric_date from crm_daily
+			union
+			select metric_date from crm_sales_daily
 		),
 		daily as (
 			select
@@ -860,11 +959,13 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 				coalesce(crm_day.responded, 0) as responded,
 				coalesce(crm_day.qualified, 0) as qualified,
 				coalesce(crm_day.won, 0) as won,
+				case when $19::boolean then coalesce(sales_day.sales, 0) end as crm_sales,
 				coalesce(crm_day.lost, 0) as lost,
 				coalesce(crm_day.revenue, 0) as revenue
 			from daily_keys as key
 			left join paid_daily as paid_day using (metric_date)
 			left join crm_daily as crm_day using (metric_date)
+			left join crm_sales_daily as sales_day using (metric_date)
 			order by key.metric_date
 		),
 		summary as (
@@ -885,25 +986,11 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 				coalesce((select sum(revenue) from outcomes), 0) as revenue,
 				coalesce((select sum(conversations_reported) from paid_daily), 0) as conversations
 		),
-		social as (
-			select
-				coalesce(sum(follower_growth), 0) as follower_growth,
-				coalesce(sum(posts), 0) as posts,
-				coalesce(sum(impressions), 0) as impressions,
-				coalesce(sum(reach), 0) as reach,
-				coalesce(sum(interactions), 0) as interactions,
-				coalesce(sum(likes), 0) as likes,
-				coalesce(sum(comments), 0) as comments,
-				coalesce(sum(saves), 0) as saves,
-				coalesce(sum(shares), 0) as shares,
-				coalesce(sum(profile_views), 0) as profile_views,
-				coalesce(sum(website_clicks), 0) as website_clicks,
-				coalesce(sum(video_views), 0) as video_views
+		scoped_social as not materialized (
+			select social_day.*
 			from public.marketing_social_daily as social_day
 			cross join params
 			where social_day.organization_id = $1::uuid
-			  and (params.date_from is null or social_day.metric_date >= params.date_from)
-			  and (params.date_to is null or social_day.metric_date <= params.date_to)
 			  and (
 			    params.page_id is null
 			    or (
@@ -918,31 +1005,51 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			    )
 			  )
 		),
+		social_period as (
+			select
+				metric_date,
+				case when follower_growth <> 0 or availability ? 'follower_growth' then follower_growth end as follower_growth,
+				case when posts <> 0 or availability ? 'posts' then posts end as posts,
+				case when impressions <> 0 or availability ? 'impressions' then impressions end as impressions,
+				case when reach <> 0 or availability ? 'reach' then reach end as reach,
+				case when interactions <> 0 or availability ? 'interactions' then interactions end as interactions,
+				case when likes <> 0 or availability ? 'likes' then likes end as likes,
+				case when comments <> 0 or availability ? 'comments' then comments end as comments,
+				case when saves <> 0 or availability ? 'saves' then saves end as saves,
+				case when shares <> 0 or availability ? 'shares' then shares end as shares,
+				case when profile_views <> 0 or availability ? 'profile_views' then profile_views end as profile_views,
+				case when website_clicks <> 0 or availability ? 'website_clicks' then website_clicks end as website_clicks,
+				case when video_views <> 0 or availability ? 'video_views' then video_views end as video_views
+			from scoped_social as social_day
+			cross join params
+			cross join lateral (select social_day.raw_metrics->'availability' as availability) as metadata
+			where (params.date_from is null or social_day.metric_date >= params.date_from)
+			  and (params.date_to is null or social_day.metric_date <= params.date_to)
+		),
 		social_daily as (
 			select
-				social_day.metric_date,
-				coalesce(sum(social_day.reach), 0) as reach,
-				coalesce(sum(social_day.interactions), 0) as interactions,
-				coalesce(sum(social_day.posts), 0) as posts
-			from public.marketing_social_daily as social_day
-			cross join params
-			where social_day.organization_id = $1::uuid
-			  and (params.date_from is null or social_day.metric_date >= params.date_from)
-			  and (params.date_to is null or social_day.metric_date <= params.date_to)
-			  and (
-			    params.page_id is null
-			    or (
-			      social_day.integration_id is null and social_day.provider = 'instagram'
-			      and social_day.raw_metrics->>'vimob_page_id' = params.page_id
-			    )
-			    or exists (
-			      select 1 from public.meta_integrations as integration
-			      where integration.organization_id = $1::uuid
-			        and integration.id = social_day.integration_id
-			        and integration.page_id = params.page_id
-			    )
-			  )
-			group by social_day.metric_date
+				metric_date,
+				sum(reach) as reach,
+				sum(interactions) as interactions,
+				sum(posts) as posts
+			from social_period
+			group by metric_date
+		),
+		social as (
+			select
+				sum(follower_growth) as follower_growth,
+				sum(posts) as posts,
+				sum(impressions) as impressions,
+				sum(reach) as reach,
+				sum(interactions) as interactions,
+				sum(likes) as likes,
+				sum(comments) as comments,
+				sum(saves) as saves,
+				sum(shares) as shares,
+				sum(profile_views) as profile_views,
+				sum(website_clicks) as website_clicks,
+				sum(video_views) as video_views
+			from social_period
 		),
 		latest_social_profiles as (
 			select distinct on (social_day.provider, social_day.profile_id)
@@ -951,7 +1058,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 				social_day.profile_name,
 				(
 					select follower_day.followers
-					from public.marketing_social_daily as follower_day
+					from scoped_social as follower_day
 					where follower_day.organization_id = social_day.organization_id
 					  and follower_day.provider = social_day.provider
 					  and follower_day.profile_id = social_day.profile_id
@@ -962,23 +1069,9 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 				) as followers,
 				social_day.metric_date,
 				social_day.fetched_at
-			from public.marketing_social_daily as social_day
+			from scoped_social as social_day
 			cross join params
-			where social_day.organization_id = $1::uuid
-			  and (params.date_to is null or social_day.metric_date <= params.date_to)
-			  and (
-			    params.page_id is null
-			    or (
-			      social_day.integration_id is null and social_day.provider = 'instagram'
-			      and social_day.raw_metrics->>'vimob_page_id' = params.page_id
-			    )
-			    or exists (
-			      select 1 from public.meta_integrations as integration
-			      where integration.organization_id = $1::uuid
-			        and integration.id = social_day.integration_id
-			        and integration.page_id = params.page_id
-			    )
-			  )
+			where (params.date_to is null or social_day.metric_date <= params.date_to)
 			order by
 				social_day.provider,
 				social_day.profile_id,
@@ -1005,6 +1098,17 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 				max(metric_date) as metric_date,
 				max(fetched_at) as fetched_at
 			from latest_social_profiles
+		),
+		social_audience as (
+			select audience_day.raw_metrics->'profile'->'audience' as audience
+			from scoped_social as audience_day
+			join latest_social_profiles as profile using (provider, profile_id)
+			where audience_day.provider = 'instagram'
+			  and (select profile_count from latest_social) = 1
+			  and audience_day.metric_date >= current_date - 30
+			  and audience_day.raw_metrics->'profile' ? 'audience'
+			order by audience_day.metric_date desc
+			limit 1
 		),
 		healthy_meta_integrations as (
 			select
@@ -1169,6 +1273,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 						'responded_count', campaign.responded_count,
 						'qualified_count', campaign.qualified_count,
 						'won_count', campaign.won_count,
+						'sales_count', campaign.sales_count,
 						'lost_count', campaign.lost_count,
 						'open_count', campaign.open_count,
 						'revenue', campaign.revenue,
@@ -1204,6 +1309,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 									'responded_count', coalesce(crm_adset.responded_count, 0),
 									'qualified_count', coalesce(crm_adset.qualified_count, 0),
 									'won_count', coalesce(crm_adset.won_count, 0),
+									'sales_count', case when $19::boolean then coalesce(crm_adset.sales_count, 0) end,
 									'lost_count', coalesce(crm_adset.lost_count, 0),
 									'open_count', coalesce(crm_adset.open_count, 0),
 									'revenue', coalesce(crm_adset.revenue, 0),
@@ -1238,6 +1344,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 												'responded_count', coalesce(crm_ad.responded_count, 0),
 												'qualified_count', coalesce(crm_ad.qualified_count, 0),
 												'won_count', coalesce(crm_ad.won_count, 0),
+												'sales_count', case when $19::boolean then coalesce(crm_ad.sales_count, 0) end,
 												'lost_count', coalesce(crm_ad.lost_count, 0),
 												'open_count', coalesce(crm_ad.open_count, 0),
 												'revenue', coalesce(crm_ad.revenue, 0),
@@ -1322,6 +1429,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 						'responded_count', coalesce(crm_ad.responded_count, 0),
 						'qualified_count', coalesce(crm_ad.qualified_count, 0),
 						'won_count', coalesce(crm_ad.won_count, 0),
+						'sales_count', case when $19::boolean then coalesce(crm_ad.sales_count, 0) end,
 						'lost_count', coalesce(crm_ad.lost_count, 0),
 						'revenue', coalesce(crm_ad.revenue, 0),
 						'score',
@@ -1382,6 +1490,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 						'responded', day.responded,
 						'qualified', day.qualified,
 						'won', day.won,
+						'crmSalesCount', day.crm_sales,
 						'lost', day.lost,
 						'revenue', day.revenue,
 						'conversations', day.conversations,
@@ -1392,7 +1501,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 				from daily as day
 			), '[]'::jsonb),
 			'media', coalesce((
-				select jsonb_agg(to_jsonb(media_row) order by media_row.published_at desc nulls last)
+				select jsonb_agg(to_jsonb(media_row) order by media_row.published_at desc nulls last, media_row.last_synced_at desc, media_row.id)
 				from (
 					select
 						asset.id,
@@ -1489,7 +1598,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 					      )
 					    )
 					  )
-					order by asset.published_at desc nulls last, asset.last_synced_at desc
+					order by asset.published_at desc nulls last, asset.last_synced_at desc, asset.id
 					limit 240
 				) as media_row
 			), '[]'::jsonb),
@@ -1497,9 +1606,14 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 				select jsonb_agg(
 					jsonb_build_object(
 						'date', metric_date,
-						'reach', reach,
-						'interactions', interactions,
-						'posts', posts
+						'reach', coalesce(reach, 0),
+						'interactions', coalesce(interactions, 0),
+						'posts', coalesce(posts, 0),
+						'unavailable', array_remove(array[
+							case when reach is null then 'reach' end,
+							case when interactions is null then 'interactions' end,
+							case when posts is null then 'posts' end
+						], null)
 					)
 					order by metric_date
 				)
@@ -1522,6 +1636,12 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 				'profileViews', coalesce((select profile_views from social), 0),
 				'websiteClicks', coalesce((select website_clicks from social), 0),
 				'videoViews', coalesce((select video_views from social), 0),
+				'unavailable', coalesce((
+					select jsonb_agg(metric.key order by metric.key)
+					from social cross join lateral jsonb_each(to_jsonb(social)) as metric
+					where metric.value = 'null'::jsonb
+				), '[]'::jsonb),
+				'audience', (select audience from social_audience),
 				'lastSync', (select fetched_at from latest_social)
 			),
 			'summary', jsonb_build_object(
@@ -1542,6 +1662,8 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 				'totalResponded', (select responded from summary),
 				'totalQualified', (select qualified from summary),
 				'totalWon', (select won from summary),
+				'crmSalesCount', case when $19::boolean then (select count(*)::int from crm_sales) end,
+				'crmAttributedSales', case when $19::boolean then (select count(*)::int from crm_sales where campaign_id is not null) end,
 				'totalLost', (select lost from summary),
 				'totalOpen', (select open from summary),
 				'totalRevenue', (select revenue from summary),
@@ -1716,5 +1838,9 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 		values.Get("objective"),
 		values.Get("pageId"),
 		values.Get("pipelineId"),
+		leadscope.CanViewAll(tenantContext),
+		tenantContext.UserID,
+		leadscope.CanViewTeam(tenantContext),
+		leadscope.CanRead(tenantContext),
 	)
 }
