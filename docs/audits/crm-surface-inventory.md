@@ -1,7 +1,7 @@
 # Inventario canonico de superficies do CRM
 
 Gerado por `node scripts/audits/inventory-crm-surfaces.mjs --write`.
-O conteudo e deterministico para o digest `1b479443ec34732a776cd68a6780aa8fcba678bde9d506507b4961457da5a317`.
+O conteudo e deterministico para o digest `86a4b2743cd631ae5ed8c3d0e575ca540c717c4226e15ac2c125c9f9c9aa6723`.
 
 ## Denominadores
 
@@ -25,7 +25,7 @@ CTAs declarados, inclusive externos/desconhecidos: `actionButton` 1447, `externa
 
 ## Identificadores estaveis
 
-O indice JSON usa IDs no formato `tipo:00000000000000000000`, derivados por SHA-256 de tipo + caminho relativo + localizacao/assinatura estrutural. Nenhum caminho absoluto entra na chave. O digest do indice e `141d013e930dcb4c4462d8a97d44141f1b3750ad18cc39c02177f6108a188041`.
+O indice JSON usa IDs no formato `tipo:00000000000000000000`, derivados por SHA-256 de tipo + caminho relativo + localizacao/assinatura estrutural. Nenhum caminho absoluto entra na chave. O digest do indice e `dbda80d2e453b0066753cd93ef404151a6c83ba271b4dbbe9bd8fcc20248c10f`.
 
 | Categoria enderecavel | IDs |
 | --- | ---: |

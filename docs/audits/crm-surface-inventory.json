@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "1b479443ec34732a776cd68a6780aa8fcba678bde9d506507b4961457da5a317",
+  "sourceDigestSha256": "86a4b2743cd631ae5ed8c3d0e575ca540c717c4226e15ac2c125c9f9c9aa6723",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -18811,10 +18811,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:3455dfbc73aee7c4787c",
+          "id": "cta:0691a69e0b8f8882b0dc",
           "column": 21,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 344,
+          "line": 349,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -18824,10 +18824,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:ed3e3e1519185c8512e6",
+          "id": "cta:b2c6793371e7b224a6e1",
           "column": 15,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 371,
+          "line": 376,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -18836,23 +18836,23 @@
           "tag": "Button"
         },
         {
-          "id": "cta:29f0cf8097feb5f8a120",
+          "id": "cta:8fe5de74732b7f3376f2",
           "column": 17,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 391,
+          "line": 396,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
           ],
-          "href": "INTEGRATION_HREF",
+          "href": "integrationHref",
           "kind": "internalDynamic",
           "tag": "Link"
         },
         {
-          "id": "cta:2a7d99c6f02d88f17155",
+          "id": "cta:8918908c43febfed33c6",
           "column": 15,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 414,
+          "line": 423,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -18861,10 +18861,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a9992c43fcc57e6c5209",
+          "id": "cta:ebfdade4edef32a98c0e",
           "column": 13,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 574,
+          "line": 577,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -18873,10 +18873,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:8322308efbb33499e124",
+          "id": "cta:58dc65c47f7c16c4034f",
           "column": 19,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 604,
+          "line": 607,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -18885,10 +18885,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a66c3be3443e44f32f57",
+          "id": "cta:0e0d3106125284eb815c",
           "column": 19,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 613,
+          "line": 616,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -18897,10 +18897,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:9e4e78a8f74f2d681586",
+          "id": "cta:fadcb171c4cef7b03dce",
           "column": 17,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 682,
+          "line": 681,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -18909,15 +18909,15 @@
           "tag": "Button"
         },
         {
-          "id": "cta:49ef1053e672ce8a0456",
+          "id": "cta:6245174f892d00064881",
           "column": 19,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 703,
+          "line": 702,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
           ],
-          "href": "INTEGRATION_HREF",
+          "href": "integrationHref",
           "kind": "internalDynamic",
           "tag": "Link"
         },
@@ -47396,7 +47396,7 @@
         }
       ]
     },
-    "digestSha256": "141d013e930dcb4c4462d8a97d44141f1b3750ad18cc39c02177f6108a188041"
+    "digestSha256": "dbda80d2e453b0066753cd93ef404151a6c83ba271b4dbbe9bd8fcc20248c10f"
   },
   "routes": [
     {
