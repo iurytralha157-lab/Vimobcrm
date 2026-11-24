@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "d9d0af45d318a3bdbbd062b1bd28c8fd2176e0ef32fe886f5ac09ff7c3d5f30a",
-  "surfaceInventoryDigestSha256": "0dbc7f3cdc1d47aed43cadfbfbd5cf0ec0984b38e49fd5ee3c57734564e935be",
+  "sourceDigestSha256": "e7e68dd5e3fbf6221c71365af1025e056644f457178ea96d700a0f82a47a9f7a",
+  "surfaceInventoryDigestSha256": "3b3a75516384d4b80a117a5897c49289ae92f00df27ebd56978146d85e2affc9",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 682,
@@ -1301,7 +1301,7 @@
     },
     {
       "file": "components/features/integrations/marketing-connections/MarketingConnectionsScreen.tsx",
-      "line": 164,
+      "line": 174,
       "match": "rounded-[12px]",
       "priority": "P1",
       "rule": "oversized-radius",

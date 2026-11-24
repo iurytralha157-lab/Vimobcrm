@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "0dbc7f3cdc1d47aed43cadfbfbd5cf0ec0984b38e49fd5ee3c57734564e935be",
+  "sourceDigestSha256": "3b3a75516384d4b80a117a5897c49289ae92f00df27ebd56978146d85e2affc9",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -16383,10 +16383,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:6cb84761defdb19da525",
+          "id": "cta:4e6c4b81d6c9034554d1",
           "column": 11,
           "file": "components/features/integrations/marketing-connections/MarketingConnectionsScreen.tsx",
-          "line": 125,
+          "line": 135,
           "owner": "ConnectionCard",
           "routes": [
             "/settings/integrations/meta-marketing"
@@ -16395,10 +16395,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d7a034ec0e42c7d65b7b",
+          "id": "cta:bcd034b93e2fd4448ea4",
           "column": 13,
           "file": "components/features/integrations/marketing-connections/MarketingConnectionsScreen.tsx",
-          "line": 180,
+          "line": 190,
           "owner": "MarketingConnectionsScreen",
           "routes": [
             "/settings/integrations/meta-marketing"
@@ -47396,7 +47396,7 @@
         }
       ]
     },
-    "digestSha256": "4a3f92a2f1b79784a263f17e7033d720467e11f7cdac179725b3bbb7b4310798"
+    "digestSha256": "0ad2b799c820851159a13a46e114fe4f7e64f92bebee3c0266dc6c590378511a"
   },
   "routes": [
     {
