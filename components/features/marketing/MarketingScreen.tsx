@@ -152,7 +152,7 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
   const integrationHref = usesLegacyMeta ? "/settings/integrations/meta" : MARKETING_CONNECTION_HREF;
   const integrationQuery = usesLegacyMeta ? model.integrationsQuery : connectionsQuery;
   const canSyncIntegration = model.canSyncIntegration &&
-    (Boolean(syncableConnection) || (usesLegacyMeta && model.integrationState.isConnected));
+    (Boolean(syncableConnection) || (usesLegacyMeta && model.canManageIntegration && model.integrationState.isConnected));
   const canSyncCurrentPeriod = canSyncIntegration && !model.insightsQuery.periodError &&
     (Boolean(syncableConnection) || (model.integrationState.hasAdAccount && model.integrationState.hasMarketingToken));
   const runSync = () => {
