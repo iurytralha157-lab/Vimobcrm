@@ -1219,7 +1219,11 @@ test("tela Meta preserva autoria, métricas e linhas compactas na lista", () => 
     "utf8",
   );
 
-  assert.doesNotMatch(source, /MetaConversionFeedbackPanel/);
+  assert.match(
+    source,
+    /<MetaConversionFeedbackPanel\s+key=\{organizationId\}[\s\S]*?moduleEnabled=\{hasMarketingModule\}[\s\S]*?\/>\s*<div className="app-toolbar[\s\S]*?<Table className="crm-management-table/,
+  );
+  assert.match(screenSource, /: canManageMeta \? \(\s*<MetaIntegrationSettings \/>/);
   assert.doesNotMatch(source, /MetaWebhookHealthBanner/);
   assert.match(
     source,
@@ -1277,6 +1281,18 @@ test("tela Meta preserva autoria, métricas e linhas compactas na lista", () => 
   assert.match(source, /getAccountPageSummary\(account\)/);
   assert.doesNotMatch(source, />Nova conexão</);
   assert.match(source, /Atualizar conexão da página/);
+});
+
+test("ativar devolução pelo painel envia apenas eventos novos", () => {
+  const source = readFileSync(
+    resolve(process.cwd(), "components/features/integrations/MetaConversionFeedbackPanel.tsx"),
+    "utf8",
+  );
+
+  assert.equal(source.match(/\breplayRecentFacts\s*:/g)?.length, 1);
+  assert.match(source, /replayRecentFacts: false/);
+  assert.doesNotMatch(source, /testEventCode/);
+  assert.match(source, /conversion_feedback_last_sent_at \? "active" : "awaiting_first_send"/);
 });
 
 test("editor Meta preserva a configuração existente e bloqueia salvamento duplicado", () => {

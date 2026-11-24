@@ -6,7 +6,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 
 ## Resumo
 
-- Arquivos analisados: 682
+- Arquivos analisados: 683
 - Arquivos com achados: 74
 - Achados: 165
 - Arquivos protegidos/mistos com achados: 70

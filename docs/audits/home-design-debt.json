@@ -1,10 +1,10 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "56de8bb66adf820363d73447ae3c53c26931924e04ed9fb343ddc3c75596e498",
-  "surfaceInventoryDigestSha256": "a43e386e8101c2bd35406926c4ec3250823baa3bde01430a06b414f81a0af6b7",
+  "sourceDigestSha256": "0ab242332e117c743a4170424dda2fd0e1a558a4212bb2a39e3252b676ed0e05",
+  "surfaceInventoryDigestSha256": "15bb4cdd7578fb87284025d1c5dfeb7d5722059a3454315283b1b783aea5b2fe",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 682,
+    "filesScanned": 683,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
@@ -1310,7 +1310,7 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "line": 1416,
+      "line": 1426,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1319,7 +1319,7 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "line": 1416,
+      "line": 1426,
       "match": "tracking-wide",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1328,7 +1328,7 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "line": 1503,
+      "line": 1513,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1337,7 +1337,7 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "line": 1503,
+      "line": 1513,
       "match": "tracking-wide",
       "priority": "P3",
       "rule": "uppercase-tracking",

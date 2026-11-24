@@ -87,6 +87,7 @@ import {
   useToggleFormConfig,
 } from "@/hooks/use-meta-forms";
 import { MetaFormConfigDialog } from "./MetaFormConfigDialog";
+import { MetaConversionFeedbackPanel } from "./MetaConversionFeedbackPanel";
 
 interface OAuthPayload {
   pages?: MetaPage[];
@@ -331,8 +332,8 @@ export function MetaIntegrationSettings({
   const fetchForms = useFetchPageForms();
   const toggleForm = useToggleFormConfig();
   const deleteForm = useDeleteFormConfig();
-  const { hasModule } = useOrganizationModules();
-  const { hasPermission } = useUserPermissions();
+  const { hasModule, isLoading: modulesLoading } = useOrganizationModules();
+  const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
   const hasMarketingModule = hasModule("campaigns");
   const canViewAdvancedMarketing =
     hasMarketingModule && hasPermission("dashboard_campaigns_view");
@@ -901,6 +902,15 @@ export function MetaIntegrationSettings({
           </AlertDescription>
         </Alert>
       )}
+
+      <MetaConversionFeedbackPanel
+        key={organizationId}
+        integrations={integrations}
+        moduleEnabled={hasMarketingModule}
+        accessLoading={modulesLoading || permissionsLoading}
+        integrationsLoading={integrationsLoading}
+        integrationsLoadFailed={integrationsLoadFailed}
+      />
 
       <div className="app-toolbar flex shrink-0 flex-col gap-2 p-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="relative w-full min-w-0 sm:max-w-sm lg:w-[360px] lg:flex-none">

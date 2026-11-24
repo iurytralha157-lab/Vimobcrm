@@ -1,7 +1,7 @@
 # Inventario canonico de superficies do CRM
 
 Gerado por `node scripts/audits/inventory-crm-surfaces.mjs --write`.
-O conteudo e deterministico para o digest `a43e386e8101c2bd35406926c4ec3250823baa3bde01430a06b414f81a0af6b7`.
+O conteudo e deterministico para o digest `15bb4cdd7578fb87284025d1c5dfeb7d5722059a3454315283b1b783aea5b2fe`.
 
 ## Denominadores
 
@@ -25,14 +25,14 @@ CTAs declarados, inclusive externos/desconhecidos: `actionButton` 1447, `externa
 
 ## Identificadores estaveis
 
-O indice JSON usa IDs no formato `tipo:00000000000000000000`, derivados por SHA-256 de tipo + caminho relativo + localizacao/assinatura estrutural. Nenhum caminho absoluto entra na chave. O digest do indice e `adb6000f81fc129837e4267dfed347f26539b276b475da1bfe825e5f6f7e90fb`.
+O indice JSON usa IDs no formato `tipo:00000000000000000000`, derivados por SHA-256 de tipo + caminho relativo + localizacao/assinatura estrutural. Nenhum caminho absoluto entra na chave. O digest do indice e `50d97d3cac2f2de346b8882cf14cbb8bfc561c4a39726e80e32c2930521ee7ff`.
 
 | Categoria enderecavel | IDs |
 | --- | ---: |
 | Rotas renderizaveis e aliases | 93 |
-| Overlays alcancaveis | 248 |
+| Overlays alcancaveis | 250 |
 | Formularios alcancaveis | 54 |
-| CTAs internos alcancaveis | 1529 |
+| CTAs internos alcancaveis | 1534 |
 | Controles complementares alcancaveis | 292 |
 
 Cada entrada de superficie preserva arquivo, linha, coluna, dono e rotas associadas, permitindo que um caso E2E declare exatamente o ID coberto sem criar uma segunda contagem.
@@ -44,9 +44,9 @@ Cada entrada de superficie preserva arquivo, linha, coluna, dono e rotas associa
 | Acesso das rotas protegidas x ADM/Lider/Usuario | 213 |
 | Tela renderizavel x desktop/mobile | 174 |
 | Contrato dos aliases | 6 |
-| Overlays alcancaveis por implementacao | 248 |
+| Overlays alcancaveis por implementacao | 250 |
 | Formularios alcancaveis por implementacao | 54 |
-| CTAs internos alcancaveis por implementacao | 1529 |
+| CTAs internos alcancaveis por implementacao | 1534 |
 | CTAs das telas de erro/infraestrutura | 2 |
 
 Nao se somam esses denominadores como se fossem equivalentes. A cobertura deve ser informada por categoria e, para o corte de 90%, tambem como `aprovados / planejados` com todo P0/P1 obrigatoriamente aprovado.
@@ -62,14 +62,14 @@ Nao se somam esses denominadores como se fossem equivalentes. A cobertura deve s
 
 ## Lacunas do inventario estatico
 
-- 9 arquivo(s) com superficie declarada nao aparecem no grafo conservador iniciado nas rotas.
+- 8 arquivo(s) com superficie declarada nao aparecem no grafo conservador iniciado nas rotas.
 - 17 rota(s) dinamica(s) exigem fixture valida e caso invalido; o inventario nao cria dados.
 - As 19 rotas /admin sao de superadministracao: ADM/Lider/Usuario da organizacao devem ter negacao esperada, e uma persona superadmin separada e necessaria para validar a tela.
 - Imports por barrel sao seguidos em nivel de arquivo e podem superestimar associacoes rota-componente; os denominadores unicos nao duplicam a implementacao.
 - Elementos gerados por map/lista contam uma implementacao de codigo, nao a quantidade dependente dos dados em runtime.
 - Handlers, feature flags, permissoes e destinos dinamicos precisam de verificacao em runtime; este auditor e deliberadamente estatico.
 
-Arquivos com superficie fora do grafo conservador: `components/features/crm-management/DistributionQueueTab.tsx`, `components/features/dashboard/DashboardAlertBar.tsx`, `components/features/dashboard/RecentActivities.tsx`, `components/features/dashboard/UpcomingTasksWidget.tsx`, `components/features/integrations/MetaConversionFeedbackPanel.tsx`, `components/features/integrations/MetaFormManager.tsx`, `components/features/leads/SdrDistributionButton.tsx`, `components/features/marketing/MarketingOverviewDashboard.tsx`, `components/features/round-robin/RulesManager.tsx`.
+Arquivos com superficie fora do grafo conservador: `components/features/crm-management/DistributionQueueTab.tsx`, `components/features/dashboard/DashboardAlertBar.tsx`, `components/features/dashboard/RecentActivities.tsx`, `components/features/dashboard/UpcomingTasksWidget.tsx`, `components/features/integrations/MetaFormManager.tsx`, `components/features/leads/SdrDistributionButton.tsx`, `components/features/marketing/MarketingOverviewDashboard.tsx`, `components/features/round-robin/RulesManager.tsx`.
 
 Superficies de erro/infraestrutura verificadas separadamente: `app/(protected)/error.tsx`, `app/error.tsx`.
 

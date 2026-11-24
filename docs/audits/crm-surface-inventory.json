@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "a43e386e8101c2bd35406926c4ec3250823baa3bde01430a06b414f81a0af6b7",
+  "sourceDigestSha256": "15bb4cdd7578fb87284025d1c5dfeb7d5722059a3454315283b1b783aea5b2fe",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1757,6 +1757,28 @@
           "kind": "alertDialog"
         },
         {
+          "id": "overlay:078f9bc5cf943673de48",
+          "column": 7,
+          "file": "components/features/integrations/MetaConversionFeedbackPanel.tsx",
+          "line": 281,
+          "owner": "MetaConversionFeedbackPanel",
+          "routes": [
+            "/settings/integrations/meta"
+          ],
+          "kind": "dialog"
+        },
+        {
+          "id": "overlay:218b80f6a02b95b1c463",
+          "column": 7,
+          "file": "components/features/integrations/MetaConversionFeedbackPanel.tsx",
+          "line": 327,
+          "owner": "MetaConversionFeedbackPanel",
+          "routes": [
+            "/settings/integrations/meta"
+          ],
+          "kind": "dialog"
+        },
+        {
           "id": "overlay:3cf92df97fc516846eb8",
           "column": 5,
           "file": "components/features/integrations/MetaFormConfigDialog.tsx",
@@ -1779,10 +1801,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:097e3470e334bd3d48e9",
+          "id": "overlay:70f45b191b35ce8da7c4",
           "column": 25,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1071,
+          "line": 1081,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -1790,10 +1812,10 @@
           "kind": "dropdownMenu"
         },
         {
-          "id": "overlay:edab30270123fc594d0b",
+          "id": "overlay:b99c91c3242c73aed1f1",
           "column": 7,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1116,
+          "line": 1126,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -1801,10 +1823,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:47ffcc6200bc5c191db6",
+          "id": "overlay:fc2d4ff20a8098fd23e8",
           "column": 7,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1206,
+          "line": 1216,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -1812,10 +1834,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:e998399963a6a935ee9e",
+          "id": "overlay:effd31016657a8501bc1",
           "column": 7,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1305,
+          "line": 1315,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -1823,10 +1845,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:61c4ccca9e88f6fee07a",
+          "id": "overlay:d7dc7216dddfd702af67",
           "column": 7,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1333,
+          "line": 1343,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -1834,10 +1856,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:865f1b4c4cb8d37aaa40",
+          "id": "overlay:be97cb6974a32fbeaa51",
           "column": 7,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1361,
+          "line": 1371,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -1845,10 +1867,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:6ba232520358e2e33bcb",
+          "id": "overlay:101c6611257c115d3df9",
           "column": 7,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1389,
+          "line": 1399,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16407,6 +16429,66 @@
           "tag": "Button"
         },
         {
+          "id": "cta:c5887a3896a8547bf0bb",
+          "column": 9,
+          "file": "components/features/integrations/MetaConversionFeedbackPanel.tsx",
+          "line": 268,
+          "owner": "MetaConversionFeedbackPanel",
+          "routes": [
+            "/settings/integrations/meta"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:32e2742cbadb6d48524b",
+          "column": 19,
+          "file": "components/features/integrations/MetaConversionFeedbackPanel.tsx",
+          "line": 311,
+          "owner": "MetaConversionFeedbackPanel",
+          "routes": [
+            "/settings/integrations/meta"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:f809eeca3971d1d84543",
+          "column": 17,
+          "file": "components/features/integrations/MetaConversionFeedbackPanel.tsx",
+          "line": 378,
+          "owner": "MetaConversionFeedbackPanel",
+          "routes": [
+            "/settings/integrations/meta"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:8bfbf9fb5c98f604b3a9",
+          "column": 13,
+          "file": "components/features/integrations/MetaConversionFeedbackPanel.tsx",
+          "line": 457,
+          "owner": "MetaConversionFeedbackPanel",
+          "routes": [
+            "/settings/integrations/meta"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:e4d96dd620849ef9f2b0",
+          "column": 13,
+          "file": "components/features/integrations/MetaConversionFeedbackPanel.tsx",
+          "line": 465,
+          "owner": "MetaConversionFeedbackPanel",
+          "routes": [
+            "/settings/integrations/meta"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
           "id": "cta:b7cf868e3403abe8341a",
           "column": 23,
           "file": "components/features/integrations/MetaFormConfigDialog.tsx",
@@ -16467,10 +16549,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:97ac0232eb7b04d4b87f",
+          "id": "cta:5e85a3746ac823afc652",
           "column": 13,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 893,
+          "line": 894,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16479,10 +16561,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:1ea1d3e0ebac47d0ffb1",
+          "id": "cta:a9cb4879635cc6a48ca6",
           "column": 11,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 917,
+          "line": 927,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16491,10 +16573,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f9b71233340ecb070f84",
+          "id": "cta:351ac48080ab56f6a229",
           "column": 11,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 926,
+          "line": 936,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16503,10 +16585,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7c4e3c4f3b406c343505",
+          "id": "cta:b5b32623f62133976ca1",
           "column": 29,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1073,
+          "line": 1083,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16515,10 +16597,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:01a1c895c4f379726944",
+          "id": "cta:bc6fa3bbcda1f06508e6",
           "column": 23,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1138,
+          "line": 1148,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16527,10 +16609,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:df7028557de43c30a67f",
+          "id": "cta:6884cb71d0454a787a28",
           "column": 31,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1175,
+          "line": 1185,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16539,10 +16621,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:4455ec83e6093bcd29ef",
+          "id": "cta:cc4f7f7021e8680bc31d",
           "column": 13,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1201,
+          "line": 1211,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16551,10 +16633,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:1dfca32f87b6154bc470",
+          "id": "cta:340c18af8f35262beba4",
           "column": 17,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1230,
+          "line": 1240,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16563,10 +16645,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:634901b8b020f9319f95",
+          "id": "cta:625a2fe4a7581387ec43",
           "column": 13,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1281,
+          "line": 1291,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16575,10 +16657,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:917227f354bc7792a517",
+          "id": "cta:2b159c891a73f9fad9f9",
           "column": 13,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1289,
+          "line": 1299,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16587,10 +16669,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7b2f69aa2ee0eea03f66",
+          "id": "cta:2d4130437843ff678e15",
           "column": 15,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1407,
+          "line": 1417,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16599,10 +16681,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0f90b9d449e642cddb01",
+          "id": "cta:aa2cfef4457d04c458ab",
           "column": 21,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1421,
+          "line": 1431,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16611,10 +16693,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:36ef8282194c9be1c882",
+          "id": "cta:589c26e184d048213b02",
           "column": 21,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1476,
+          "line": 1486,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16623,10 +16705,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b74af7ef8f11f2a3e609",
+          "id": "cta:538384d4e5d81a8ae423",
           "column": 23,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1491,
+          "line": 1501,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16635,10 +16717,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:12afc2db2b1ec03fbfb4",
+          "id": "cta:627d891d8e24b5e22f6c",
           "column": 29,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1526,
+          "line": 1536,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16647,10 +16729,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:5c3a1d59369647d23291",
+          "id": "cta:bb06b545acfb0a8700e1",
           "column": 29,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1618,
+          "line": 1628,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16659,10 +16741,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:de35b7b150cad517ee87",
+          "id": "cta:00a4339c15c3e4699b4e",
           "column": 27,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1646,
+          "line": 1656,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -16671,10 +16753,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:5de07ddf4533270a1253",
+          "id": "cta:94e4b710250415adf274",
           "column": 33,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1689,
+          "line": 1699,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -43325,10 +43407,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:19b6ec301edc2e5c0282",
+          "id": "control:6d62e7fa8d5640241a88",
           "column": 29,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1082,
+          "line": 1092,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -43337,10 +43419,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:2641461220f571945aa4",
+          "id": "control:61f03a69a895bf584beb",
           "column": 29,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1085,
+          "line": 1095,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -43349,10 +43431,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:8de363bd163d812fb12f",
+          "id": "control:6531ac1a0173997e94e2",
           "column": 29,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1102,
+          "line": 1112,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -43361,10 +43443,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:c751f13d0c858dae5a7e",
+          "id": "control:5e0b8b922be8f9f6827e",
           "column": 13,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1317,
+          "line": 1327,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -43373,10 +43455,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:a51e3e8ae9f03f16d162",
+          "id": "control:4ee137781394d30b6fe3",
           "column": 13,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1318,
+          "line": 1328,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -43385,10 +43467,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:65504b205ae1728f3c3e",
+          "id": "control:19aa0ce21e1953c2f032",
           "column": 13,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1345,
+          "line": 1355,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -43397,10 +43479,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:0c4cef91ece06604aa81",
+          "id": "control:17250a78acc6f6480e6e",
           "column": 13,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1346,
+          "line": 1356,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -43409,10 +43491,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:b86693ff3f5317b6845c",
+          "id": "control:589362b7220ea3ec7903",
           "column": 13,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1373,
+          "line": 1383,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -43421,10 +43503,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:69146dde4250d3a9e4c8",
+          "id": "control:8aad8e6845d3820ff87a",
           "column": 13,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1374,
+          "line": 1384,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -47396,7 +47478,7 @@
         }
       ]
     },
-    "digestSha256": "adb6000f81fc129837e4267dfed347f26539b276b475da1bfe825e5f6f7e90fb"
+    "digestSha256": "50d97d3cac2f2de346b8882cf14cbb8bfc561c4a39726e80e32c2930521ee7ff"
   },
   "routes": [
     {
@@ -52380,6 +52462,15 @@
       "file": "components/features/integrations/marketing-connections/MarketingConnectionsScreen.tsx",
       "routes": [
         "/settings/integrations/meta-marketing"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
+      "file": "components/features/integrations/MetaConversionFeedbackPanel.tsx",
+      "routes": [
+        "/settings/integrations/meta"
       ]
     },
     {
@@ -62612,7 +62703,7 @@
       "formsRouteReachable": 54,
       "formsWithoutLocalSubmitContract": 0,
       "internalCtas": 1561,
-      "internalCtasRouteReachable": 1529,
+      "internalCtasRouteReachable": 1534,
       "overlays": 253,
       "overlaysByKind": {
         "alertDialog": 74,
@@ -62621,7 +62712,7 @@
         "popover": 34,
         "sheet": 14
       },
-      "overlaysRouteReachable": 248,
+      "overlaysRouteReachable": 250,
       "supplementalControls": 295,
       "supplementalControlsByKind": {
         "AlertDialogAction": 69,
@@ -62640,8 +62731,8 @@
     "protectedAccessChecksThreePersonas": 213,
     "renderableRouteViewportChecksDesktopAndMobile": 174,
     "routeReachableFormImplementations": 54,
-    "routeReachableInternalCtaImplementations": 1529,
-    "routeReachableOverlayImplementations": 248,
+    "routeReachableInternalCtaImplementations": 1534,
+    "routeReachableOverlayImplementations": 250,
     "routeReachableSupplementalOverlayAndTabControls": 292
   },
   "diagnostics": {
@@ -62656,7 +62747,6 @@
       "components/features/dashboard/DashboardAlertBar.tsx",
       "components/features/dashboard/RecentActivities.tsx",
       "components/features/dashboard/UpcomingTasksWidget.tsx",
-      "components/features/integrations/MetaConversionFeedbackPanel.tsx",
       "components/features/integrations/MetaFormManager.tsx",
       "components/features/leads/SdrDistributionButton.tsx",
       "components/features/marketing/MarketingOverviewDashboard.tsx",
@@ -62785,7 +62875,7 @@
     ]
   },
   "gaps": [
-    "9 arquivo(s) com superficie declarada nao aparecem no grafo conservador iniciado nas rotas.",
+    "8 arquivo(s) com superficie declarada nao aparecem no grafo conservador iniciado nas rotas.",
     "17 rota(s) dinamica(s) exigem fixture valida e caso invalido; o inventario nao cria dados.",
     "As 19 rotas /admin sao de superadministracao: ADM/Lider/Usuario da organizacao devem ter negacao esperada, e uma persona superadmin separada e necessaria para validar a tela.",
     "Imports por barrel sao seguidos em nivel de arquivo e podem superestimar associacoes rota-componente; os denominadores unicos nao duplicam a implementacao.",

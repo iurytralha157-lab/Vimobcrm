@@ -48,19 +48,19 @@ O Facebook Login da Página não pode gerar nem substituir a credencial da Conve
 3. gerar o token da API de Conversões para esse Dataset;
 4. ordenar e classificar `VimobInitialLead`, `VimobQualifiedLead` e `VimobConvertedLead` no funil do Gerenciador de Eventos.
 
-Não use um Dataset global da Vimob para organizações diferentes. Dataset, funil, diagnóstico e permissões pertencem ao anunciante. A automação completa dessa etapa exige uma integração de plataforma aprovada pela Meta, como Facebook Business Extension/system user com compartilhamento explícito de cada ativo; o login comum da Página não concede essa autoridade.
+Dataset, funil, diagnóstico e permissões pertencem ao anunciante. O Vimob recusa Datasets vinculados ou já usados em envios de outra organização. A automação completa dessa etapa exige uma integração de plataforma aprovada pela Meta, como Facebook Business Extension/system user com compartilhamento explícito de cada ativo.
 
 ## Configuração no Vimob
 
 1. Acesse **Configurações > Integrações > Facebook / Meta**.
-2. Em **Devolução de qualidade para o Meta**, escolha a Página conectada.
-3. Informe o ID e o token do CRM Dataset, ative os novos envios e salve. Se quiser validar com a base recente, use explicitamente a opção de enviar os fatos reais dos últimos sete dias.
+2. Em **Enviar qualidade dos leads ao Meta**, escolha a Página conectada.
+3. Informe o ID e o token do CRM Dataset e selecione **Ativar novos envios**. O painel mostra **Aguardando primeiro envio** até registrar a primeira entrega.
 4. Acesse a pipeline desejada e abra as configurações da coluna.
 5. Em **Resultados de Marketing**, ative **Esta é a etapa de lead qualificado**.
 
 Cada pipeline aceita no máximo uma coluna qualificada. Ao marcar outra coluna, a configuração anterior é substituída de forma transacional. Colunas de ganho, perdido ou inativas não podem ser qualificadas. A conversão continua automática ao marcar o lead como ganho.
 
-Ativar a integração sem solicitar o replay não envia histórico silenciosamente. A ação explícita usa `replayRecentFacts: true` e enfileira **todos os fatos reais elegíveis** ligados àquela organização, Página, integração e Dataset cuja entrada Meta ocorreu nos últimos sete dias. Ela preserva os horários originais e só inclui uma sequência contígua e válida (`initial` → `qualified` → `converted`). Repetir a mesma solicitação é idempotente.
+A ativação na tela vale para eventos novos. O reenvio do histórico é uma operação separada pela API administrativa. Uma solicitação explícita com `replayRecentFacts: true` enfileira **todos os fatos reais elegíveis** ligados à organização, à Página, à integração e ao Dataset com entrada Meta nos últimos sete dias. Essa operação preserva os horários originais e exige uma sequência válida de marcos (`initial` → `qualified` → `converted`). Repetir a mesma solicitação é idempotente.
 
 ## Leitura dos indicadores
 
@@ -70,10 +70,10 @@ Filtros de equipe, corretor, tag ou status não conseguem repartir com precisão
 
 ## Teste local ou homologação
 
-1. No Gerenciador de Eventos, copie o código mostrado em **Testar eventos**.
-2. Com a devolução ainda pausada, use fatos reais recentes já existentes ou gere um lead artificial pelo recurso oficial de teste de Lead Ads (`POST /{FORM_ID}/test_leads`). Se quiser validar a sequência completa, mova esse lead para a coluna qualificada e depois marque-o como ganho antes da ativação.
-3. Ao ativar/salvar o Dataset, solicite explicitamente o envio dos fatos reais recentes com `replayRecentFacts: true` e, somente nessa solicitação, informe o código em `testEventCode`.
-4. O botão enfileira todos os fatos reais elegíveis dos últimos sete dias para aquela integração, não apenas um lead selecionado. Confira o total retornado em `recent_facts_queued`.
+1. Em homologação, use uma Página, um formulário e um Dataset reservados para teste. No Gerenciador de Eventos desse Dataset, copie o código mostrado em **Testar eventos**.
+2. Com a devolução pausada, gere um lead artificial pelo recurso oficial de teste de Lead Ads (`POST /{FORM_ID}/test_leads`). Para validar a sequência completa, mova esse lead para a coluna qualificada e depois marque-o como ganho antes da ativação.
+3. Use a rota administrativa `PUT /v1/integrations/meta/conversion-feedback` para solicitar o replay explícito com `replayRecentFacts: true` e informe o código em `testEventCode`.
+4. A operação enfileira todos os fatos elegíveis dos últimos sete dias daquela integração. Confira o total retornado em `recent_facts_queued`.
 5. Confirme em **Testar eventos** a sequência `VimobInitialLead` → `VimobQualifiedLead` → `VimobConvertedLead`, sempre com o mesmo Lead ID e os horários originais.
 6. Depois da ativação, novas entradas e transições continuam automáticas como eventos normais, sem herdar o código usado no replay.
 

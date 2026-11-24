@@ -22,7 +22,7 @@ import {
 } from "@/hooks/use-meta-integration";
 import { cn } from "@/lib/utils";
 
-type FeedbackState = "active" | "paused" | "error" | "not_configured";
+type FeedbackState = "active" | "awaiting_first_send" | "paused" | "error" | "not_configured";
 
 const feedbackStatus: Record<
   FeedbackState,
@@ -32,6 +32,7 @@ const feedbackStatus: Record<
   }
 > = {
   active: { label: "Ativa", variant: "default" },
+  awaiting_first_send: { label: "Aguardando primeiro envio", variant: "secondary" },
   paused: { label: "Pausada", variant: "secondary" },
   error: { label: "Requer atenção", variant: "destructive" },
   not_configured: { label: "Não configurada", variant: "outline" },
@@ -49,7 +50,7 @@ function getFeedbackState(integration: MetaIntegration): FeedbackState {
     integration.conversion_feedback_enabled &&
     integration.conversion_feedback_status === "active"
   ) {
-    return "active";
+    return integration.conversion_feedback_last_sent_at ? "active" : "awaiting_first_send";
   }
 
   if (integration.crm_dataset_id) return "paused";
@@ -80,7 +81,6 @@ export function MetaConversionFeedbackPanel({
   const [datasetId, setDatasetId] = useState("");
   const [datasetName, setDatasetName] = useState("");
   const [datasetToken, setDatasetToken] = useState("");
-  const [testEventCode, setTestEventCode] = useState("");
   const [enabled, setEnabled] = useState(false);
   const [editingDestination, setEditingDestination] = useState(false);
   const saveFeedback = useMetaConversionFeedback();
@@ -90,7 +90,10 @@ export function MetaConversionFeedbackPanel({
     [integrations],
   );
   const activeCount = connected.filter(
-    (integration) => getFeedbackState(integration) === "active",
+    (integration) => {
+      const state = getFeedbackState(integration);
+      return state === "active" || state === "awaiting_first_send";
+    },
   ).length;
   const configuredCount = connected.filter(
     (integration) => Boolean(integration.crm_dataset_id),
@@ -105,7 +108,6 @@ export function MetaConversionFeedbackPanel({
     setDatasetId(integration.crm_dataset_id || "");
     setDatasetName(integration.crm_dataset_name || "");
     setDatasetToken("");
-    setTestEventCode("");
     setEnabled(Boolean(integration.conversion_feedback_enabled));
     setEditingDestination(!integration.crm_dataset_id);
   };
@@ -114,8 +116,8 @@ export function MetaConversionFeedbackPanel({
     if (!open && !saveFeedback.isPending) {
       setSelected(null);
       setDatasetToken("");
-      setTestEventCode("");
       setEditingDestination(false);
+      saveFeedback.reset();
     }
   };
 
@@ -142,11 +144,13 @@ export function MetaConversionFeedbackPanel({
     normalizedDatasetId !== "" && !destinationCredentialIsValid
       ? "Informe o token emitido para este CRM Dataset."
       : null;
+  const isLoading = accessLoading || integrationsLoading;
   const canSave = Boolean(
-    selected && !datasetIdError && !datasetTokenError,
+    selected && connected.some((integration) => integration.id === selected.id) &&
+    moduleEnabled && !isLoading && !integrationsLoadFailed &&
+    !datasetIdError && !datasetTokenError,
   );
 
-  const isLoading = accessLoading || integrationsLoading;
   const onlyConnection = connected.length === 1 ? connected[0] : null;
   const onlyConnectionState = onlyConnection
     ? getFeedbackState(onlyConnection)
@@ -176,11 +180,13 @@ export function MetaConversionFeedbackPanel({
     const pageName = onlyConnection.page_name || "Página Meta";
     summaryText = onlyConnectionState === "active"
       ? `Envios ativos para ${pageName}.`
-      : onlyConnectionState === "paused"
-        ? `Envios pausados para ${pageName}.`
-        : onlyConnectionState === "error"
-          ? `Revise a configuração de ${pageName}.`
-          : `Configure os envios de ${pageName}.`;
+      : onlyConnectionState === "awaiting_first_send"
+        ? `Envios habilitados para ${pageName}. Aguardando um novo evento do funil.`
+        : onlyConnectionState === "paused"
+          ? `Envios pausados para ${pageName}.`
+          : onlyConnectionState === "error"
+            ? `Revise a configuração de ${pageName}.`
+            : `Configure os envios de ${pageName}.`;
   } else if (connected.length > 1) {
     actionDisabled = false;
     actionLabel = "Gerenciar";
@@ -212,9 +218,7 @@ export function MetaConversionFeedbackPanel({
   };
 
   const submit = async () => {
-    if (!selected || !canSave) return;
-    const replayRecentFacts = enabled && !selected.conversion_feedback_enabled;
-    const normalizedTestEventCode = testEventCode.trim();
+    if (!selected || !canSave || saveFeedback.isPending) return;
 
     try {
       await saveFeedback.mutateAsync({
@@ -223,25 +227,23 @@ export function MetaConversionFeedbackPanel({
         datasetName: datasetName.trim() || null,
         datasetAccessToken: datasetToken.trim() || null,
         enabled,
-        replayRecentFacts,
-        ...(replayRecentFacts && normalizedTestEventCode
-          ? { testEventCode: normalizedTestEventCode }
-          : {}),
+        replayRecentFacts: false,
       });
       setSelected(null);
       setDatasetToken("");
-      setTestEventCode("");
       setEditingDestination(false);
     } catch {
       // The mutation already renders the backend error as a toast. Keeping the
       // dialog open lets the administrator correct the configuration safely.
+    } finally {
+      saveFeedback.reset();
     }
   };
 
   return (
     <>
       <section
-        className="app-card flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between"
+        className="app-card flex shrink-0 flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between"
         aria-labelledby="meta-feedback-title"
       >
         <div className="flex min-w-0 items-center gap-3">
@@ -337,7 +339,8 @@ export function MetaConversionFeedbackPanel({
           <Alert className="border-0 bg-primary/10">
             <ShieldCheck className="h-4 w-4 text-primary" />
             <AlertDescription className="text-[var(--app-text-secondary)]">
-              O token do CRM Dataset vai direto ao backend, fica protegido no cofre e nunca retorna ao navegador.
+              Os eventos incluem o ID original do lead e, quando disponíveis, e-mail e telefone com hash.
+              Os dados seguem para o CRM Dataset escolhido nesta organização. O token do Dataset fica protegido no cofre.
             </AlertDescription>
           </Alert>
 
@@ -353,42 +356,16 @@ export function MetaConversionFeedbackPanel({
                   Enviar novos resultados ao Meta
                 </Label>
                 <p className="mt-1 text-xs leading-5 text-[var(--app-text-secondary)]">
-                  {configuredBefore
-                    ? "Ative ou pause os próximos envios sem alterar o Dataset salvo."
-                    : "Ative os envios e informe o CRM Dataset usado pelo Meta."}
+                  A ativação começa a enviar os novos resultados da Página a partir de agora.
                 </p>
               </div>
               <Switch
                 id="meta-feedback-enabled"
                 checked={enabled}
-                onCheckedChange={(checked) => {
-                  setEnabled(checked);
-                  if (!checked) setTestEventCode("");
-                }}
+                onCheckedChange={setEnabled}
                 aria-label="Ativar devolução de qualidade para o Meta"
               />
             </div>
-
-            {activatingFeedback ? (
-              <div className="space-y-2">
-                <Label htmlFor="meta-test-event-code">Código de teste do Meta</Label>
-                <Input
-                  id="meta-test-event-code"
-                  autoComplete="off"
-                  value={testEventCode}
-                  onChange={(event) => setTestEventCode(event.target.value.slice(0, 255))}
-                  maxLength={255}
-                  aria-describedby="meta-test-event-code-help"
-                  placeholder="Opcional"
-                />
-                <p
-                  id="meta-test-event-code-help"
-                  className="text-xs leading-5 text-[var(--app-text-tertiary)]"
-                >
-                  Fatos reais dos últimos 7 dias serão enviados; com o código, os Test Events também contam para a mensuração.
-                </p>
-              </div>
-            ) : null}
 
             {configuredBefore && !editingDestination ? (
               <div className="app-card-soft flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between">
@@ -491,7 +468,7 @@ export function MetaConversionFeedbackPanel({
               disabled={!canSave || saveFeedback.isPending}
             >
               {saveFeedback.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {activatingFeedback ? "Ativar e enviar últimos 7 dias" : "Salvar configuração"}
+              {activatingFeedback ? "Ativar novos envios" : "Salvar configuração"}
             </Button>
           </DialogFooter>
         </DialogContent>

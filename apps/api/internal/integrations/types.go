@@ -10,6 +10,7 @@ var (
 	ErrMetaUpstream               = errors.New("meta upstream request failed")
 	ErrMetaDeliveryUncertain      = errors.New("meta delivery result is uncertain")
 	ErrMetaFormRouteConflict      = errors.New("meta form is already routed to another organization")
+	ErrMetaCRMDatasetUnavailable  = errors.New("meta crm dataset is unavailable for this organization")
 	ErrIdempotencyConflict        = errors.New("idempotency key is already bound to another request")
 )
 

@@ -41,6 +41,7 @@ var exactUserErrorMessages = map[string]string{
 	"marketing_schema_unavailable":         "A estrutura de dados de Marketing ainda não está disponível neste ambiente.",
 	"marketing_sync_in_progress":           "Já existe uma sincronização de Marketing em andamento para esta organização.",
 	"meta_app_secret_missing":              "A chave secreta da Meta ainda não foi configurada.",
+	"meta_crm_dataset_unavailable":         "Este Dataset não está disponível para esta organização.",
 	"meta_verify_token_missing":            "O token de verificação da Meta ainda não foi configurado.",
 	"method_not_allowed":                   "Esta ação não é permitida neste endereço.",
 	"module_unavailable":                   "Este módulo não está disponível para esta organização.",

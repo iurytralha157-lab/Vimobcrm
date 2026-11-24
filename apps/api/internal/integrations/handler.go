@@ -524,6 +524,8 @@ func writeIntegrationError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusBadGateway, "meta_upstream_failed", "Meta could not complete the request.")
 	case errors.Is(err, ErrMetaFormRouteConflict):
 		httpserver.WriteError(w, r, http.StatusConflict, "meta_form_route_conflict", "This Meta form is already assigned to another CRM organization.")
+	case errors.Is(err, ErrMetaCRMDatasetUnavailable):
+		httpserver.WriteError(w, r, http.StatusConflict, "meta_crm_dataset_unavailable", "This CRM Dataset is unavailable for this organization.")
 	case errors.Is(err, ErrIdempotencyConflict):
 		httpserver.WriteError(w, r, http.StatusConflict, "idempotency_conflict", "This request key is already bound to another message.")
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):

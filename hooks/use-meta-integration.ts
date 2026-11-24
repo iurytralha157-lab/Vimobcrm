@@ -199,6 +199,7 @@ export function useMetaConversionFeedback() {
   const organizationId = activeOrganization.organizationId;
 
   return useMutation({
+    gcTime: 0,
     mutationFn: (input: {
       integrationId: string;
       datasetId?: string | null;
@@ -209,7 +210,7 @@ export function useMetaConversionFeedback() {
       testEventCode?: string;
     }) => integrationsAPI.saveMetaConversionFeedback(input, organizationId),
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ["meta-integrations"] });
+      queryClient.invalidateQueries({ queryKey: ["meta-integrations", organizationId] });
       if (result.recent_facts_replay_requested === true) {
         const queued = typeof result.recent_facts_queued === "number"
           ? result.recent_facts_queued

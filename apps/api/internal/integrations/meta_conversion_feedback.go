@@ -47,7 +47,7 @@ func (repo Repository) SaveMetaConversionFeedback(
 		return nil, ErrInvalidInput
 	}
 
-	tx, err := repo.db.Pool().Begin(ctx)
+	tx, err := repo.db.Pool().BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return nil, err
 	}
@@ -109,6 +109,12 @@ func (repo Repository) SaveMetaConversionFeedback(
 		}
 	}
 
+	if datasetID != "" && (request.Enabled || datasetID != currentDataset || datasetToken != "") {
+		if err := guardMetaCRMDatasetOrganization(ctx, tx, tenantContext.OrganizationID, datasetID); err != nil {
+			return nil, err
+		}
+	}
+
 	status := "paused"
 	if request.Enabled {
 		status = "active"
@@ -134,6 +140,16 @@ func (repo Repository) SaveMetaConversionFeedback(
 		        or integration.conversion_feedback_activated_at is null
 		      ) then clock_timestamp()
 		      else integration.conversion_feedback_activated_at
+		    end,
+		    conversion_feedback_last_sent_at = case
+		      when integration.crm_dataset_id is distinct from nullif($3, '') or $5 <> ''
+		        then null
+		      else integration.conversion_feedback_last_sent_at
+		    end,
+		    conversion_feedback_last_validated_at = case
+		      when integration.crm_dataset_id is distinct from nullif($3, '') or $5 <> ''
+		        then null
+		      else integration.conversion_feedback_last_validated_at
 		    end,
 		    conversion_feedback_last_error = null,
 		    updated_at = now()
@@ -188,6 +204,37 @@ func (repo Repository) SaveMetaConversionFeedback(
 		result["recent_facts_queued"] = queued
 	}
 	return result, nil
+}
+
+func guardMetaCRMDatasetOrganization(ctx context.Context, tx pgx.Tx, organizationID, datasetID string) error {
+	datasetKey := strings.TrimLeft(datasetID, "0")
+	// The read needs a fresh snapshot after any concurrent bind has committed.
+	if _, err := tx.Exec(ctx, `
+		select pg_catalog.pg_advisory_xact_lock(
+		  pg_catalog.hashtextextended('vimob:meta-crm-dataset:' || $1::text, 0)
+		)
+	`, datasetKey); err != nil {
+		return err
+	}
+
+	var conflict bool
+	if err := tx.QueryRow(ctx, `
+		select exists (
+		  select 1 from public.meta_integrations
+		  where ltrim(crm_dataset_id, '0') = $1
+		    and organization_id <> $2::uuid
+		) or exists (
+		  select 1 from public.meta_crm_event_outbox
+		  where ltrim(dataset_id, '0') = $1
+		    and organization_id <> $2::uuid
+		)
+	`, datasetKey, organizationID).Scan(&conflict); err != nil {
+		return err
+	}
+	if conflict {
+		return ErrMetaCRMDatasetUnavailable
+	}
+	return nil
 }
 
 // replayRecentMetaCRMFacts queues every real, contiguous funnel fact whose

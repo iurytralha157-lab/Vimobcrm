@@ -8830,6 +8830,8 @@ paths:
         The CRM Dataset token is write-only, encrypted in Vault before storage,
         and never returned. Enabling affects future funnel events only; no
         historical CRM outcomes are silently delivered to Meta.
+        A Dataset already associated with a different organization returns
+        `409 meta_crm_dataset_unavailable`.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
       requestBody:

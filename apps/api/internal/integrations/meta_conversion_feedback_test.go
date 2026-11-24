@@ -1,6 +1,8 @@
 package integrations
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -54,6 +56,8 @@ func TestMetaConversionFeedbackPersistenceIsTenantBoundAndTokenless(t *testing.T
 		"lower(btrim(module_access.module_name)) = 'campaigns'",
 		"module_access.is_enabled = true",
 		"for update",
+		"pgx.TxOptions{IsoLevel: pgx.ReadCommitted}",
+		"guardMetaCRMDatasetOrganization(ctx, tx, tenantContext.OrganizationID, datasetID)",
 		"crm_dataset_access_token = nullif($5, '')",
 		"conversion_feedback_enabled = $6",
 		"datasetID != currentDataset && datasetToken == \"\"",
@@ -62,6 +66,9 @@ func TestMetaConversionFeedbackPersistenceIsTenantBoundAndTokenless(t *testing.T
 		"integration.crm_dataset_id is distinct from nullif($3, '')",
 		"or integration.conversion_feedback_activated_at is null",
 		") then clock_timestamp()",
+		"conversion_feedback_last_sent_at = case",
+		"conversion_feedback_last_validated_at = case",
+		"integration.crm_dataset_id is distinct from nullif($3, '') or $5 <> ''",
 		"tx.Commit(ctx)",
 	} {
 		if !strings.Contains(source, required) {
@@ -82,6 +89,21 @@ func TestMetaConversionFeedbackPersistenceIsTenantBoundAndTokenless(t *testing.T
 		if strings.Contains(projection, forbidden) {
 			t.Fatalf("browser response projection exposes %s", forbidden)
 		}
+	}
+}
+
+func TestMetaConversionFeedbackDatasetConflictIsSanitized(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPut, "/v1/integrations/meta/conversion-feedback", nil)
+	response := httptest.NewRecorder()
+
+	writeIntegrationError(response, request, ErrMetaCRMDatasetUnavailable)
+
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusConflict)
+	}
+	want := `"code":"meta_crm_dataset_unavailable","message":"Este Dataset não está disponível para esta organização."`
+	if !strings.Contains(response.Body.String(), want) {
+		t.Fatalf("unexpected conflict response: %s", response.Body.String())
 	}
 }
 
