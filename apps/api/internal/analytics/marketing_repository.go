@@ -906,6 +906,10 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			  and (params.date_to is null or social_day.metric_date <= params.date_to)
 			  and (
 			    params.page_id is null
+			    or (
+			      social_day.integration_id is null and social_day.provider = 'instagram'
+			      and social_day.raw_metrics->>'vimob_page_id' = params.page_id
+			    )
 			    or exists (
 			      select 1 from public.meta_integrations as integration
 			      where integration.organization_id = $1::uuid
@@ -927,6 +931,10 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			  and (params.date_to is null or social_day.metric_date <= params.date_to)
 			  and (
 			    params.page_id is null
+			    or (
+			      social_day.integration_id is null and social_day.provider = 'instagram'
+			      and social_day.raw_metrics->>'vimob_page_id' = params.page_id
+			    )
 			    or exists (
 			      select 1 from public.meta_integrations as integration
 			      where integration.organization_id = $1::uuid
@@ -960,6 +968,10 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			  and (params.date_to is null or social_day.metric_date <= params.date_to)
 			  and (
 			    params.page_id is null
+			    or (
+			      social_day.integration_id is null and social_day.provider = 'instagram'
+			      and social_day.raw_metrics->>'vimob_page_id' = params.page_id
+			    )
 			    or exists (
 			      select 1 from public.meta_integrations as integration
 			      where integration.organization_id = $1::uuid
@@ -1441,11 +1453,15 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 					    )
 					    or (
 					      asset.source_kind <> 'paid'
-					      and exists (
-					        select 1 from public.meta_integrations as integration
-					        where integration.organization_id = $1::uuid
-					          and integration.id = asset.integration_id
-					          and integration.page_id = params.page_id
+						      and (
+						        (asset.integration_id is null and asset.provider = 'instagram'
+						          and asset.raw_metadata->>'vimob_page_id' = params.page_id)
+						        or exists (
+						          select 1 from public.meta_integrations as integration
+						          where integration.organization_id = $1::uuid
+						            and integration.id = asset.integration_id
+						            and integration.page_id = params.page_id
+						        )
 					      )
 					    )
 					  )

@@ -17,6 +17,7 @@ func (service *MarketingSyncService) syncMarketingInstagram(ctx context.Context,
 	if profileID == "" {
 		return marketingSyncSocialResult{}
 	}
+	pageID := nullableMarketingSyncText(target.PageID)
 	graph := service.newMarketingSyncGraphClient(target.AccessToken, deadline, graphSemaphore)
 	profile, err := graph.object(ctx, profileID, map[string]any{
 		"fields": "id,username,name,profile_picture_url,followers_count,media_count",
@@ -149,6 +150,7 @@ func (service *MarketingSyncService) syncMarketingInstagram(ctx context.Context,
 			PublishedAt: &publishedAt,
 			Metrics:     metrics,
 			RawMetadata: map[string]any{
+				"vimob_page_id":      pageID,
 				"media_type":         nullableMarketingSyncText(marketingSyncText(item["media_type"])),
 				"media_product_type": nullableMarketingSyncText(marketingSyncText(item["media_product_type"])),
 			},
@@ -240,6 +242,7 @@ func (service *MarketingSyncService) syncMarketingInstagram(ctx context.Context,
 			Interactions: interactions, Likes: likes, Comments: comments, Saves: saves, Shares: shares,
 			ProfileViews: profileViews, WebsiteClicks: websiteClicks, VideoViews: videoViews,
 			RawMetrics: map[string]any{
+				"vimob_page_id":              pageID,
 				"followers_snapshot_current": followersCurrent,
 				"availability":               availability,
 				"profile":                    profileDay,

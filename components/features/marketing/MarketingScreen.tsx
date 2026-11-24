@@ -143,13 +143,20 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
   const model = useMarketingDashboard(dashboardFilters, { enabled: sharedFilters.isFiltersHydrated });
   const connectionsQuery = useMarketingConnections({ enabled: model.canManageIntegration });
   const connectionSync = useSyncMarketingConnection();
-  const marketingConnections = connectionsQuery.data?.enabled ? connectionsQuery.data.connections : [];
-  const usesMarketingConnection = connectionsQuery.data?.enabled === true;
-  const syncableConnection = marketingConnections.find((connection) =>
-    connection.assets.some((asset) => asset.is_selected && asset.type !== "page"),
-  );
-  const INTEGRATION_HREF = usesMarketingConnection ? MARKETING_CONNECTION_HREF : "/settings/integrations/meta";
+  const usesLegacyMeta = !connectionsQuery.isError && connectionsQuery.data?.enabled === false;
+  const syncableConnection = !connectionsQuery.isError && connectionsQuery.data?.enabled
+    ? connectionsQuery.data.connections.find((connection) =>
+        connection.assets.some((asset) => asset.is_selected && asset.type !== "page"),
+      )
+    : undefined;
+  const integrationHref = usesLegacyMeta ? "/settings/integrations/meta" : MARKETING_CONNECTION_HREF;
+  const integrationQuery = usesLegacyMeta ? model.integrationsQuery : connectionsQuery;
+  const canSyncIntegration = model.canSyncIntegration &&
+    (Boolean(syncableConnection) || (usesLegacyMeta && model.integrationState.isConnected));
+  const canSyncCurrentPeriod = canSyncIntegration && !model.insightsQuery.periodError &&
+    (Boolean(syncableConnection) || (model.integrationState.hasAdAccount && model.integrationState.hasMarketingToken));
   const runSync = () => {
+    if (!canSyncCurrentPeriod) return;
     if (syncableConnection) {
       connectionSync.mutate({
         connectionId: syncableConnection.id,
@@ -158,7 +165,7 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
       });
       return;
     }
-    model.sync();
+    if (usesLegacyMeta) model.sync();
   };
   const isSyncing = connectionSync.isPending || model.syncMutation.isPending;
   const data = model.insightsQuery.data;
@@ -167,8 +174,6 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
   const hasStaleDataError = Boolean(data && model.insightsQuery.isError && !model.insightsQuery.periodError);
   const hasInvalidFilters = errorState.shouldClearFilters;
   const dataDependentTab = activeTab !== "social";
-  // prettier-ignore
-  const canSyncIntegration = (model.canSyncIntegration && Boolean(syncableConnection)) || (model.canManageIntegration && model.integrationState.isConnected && model.canSyncIntegration);
   const hasSynchronizedData = Boolean(
     data?.lastSync ||
     data?.dataQuality.hasDailyFacts ||
@@ -367,12 +372,12 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
           </div>
 
           <div className="ml-auto flex min-h-8 w-auto min-w-0 shrink-0 items-center justify-end gap-2">
-            {model.canManageIntegration && model.integrationsQuery.isError ? (
+            {model.canManageIntegration && integrationQuery.isError ? (
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                onClick={() => model.integrationsQuery.refetch()}
+                onClick={() => integrationQuery.refetch()}
                 title="Tentar verificar a integração Meta novamente"
                 className="h-8 w-8 rounded-[6px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
               >
@@ -389,9 +394,11 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
                 className="h-8 w-8 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-0 text-[10px] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] xl:w-auto xl:px-2.5"
               >
                 <Link
-                  href={INTEGRATION_HREF}
+                  href={integrationHref}
                   title={
-                    model.integrationState.isConnected
+                    !usesLegacyMeta
+                      ? "Configurar Meta Marketing"
+                      : model.integrationState.isConnected
                       ? model.integrationState.hasMarketingToken
                         ? "Configurar integração Meta"
                         : "Reconectar integração Meta"
@@ -400,7 +407,9 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
                 >
                   <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
                   <span className="sr-only xl:not-sr-only xl:ml-1.5">
-                    {model.integrationState.isConnected
+                    {!usesLegacyMeta
+                      ? "Meta Marketing"
+                      : model.integrationState.isConnected
                       ? model.integrationState.hasMarketingToken
                         ? "Meta"
                         : "Reconectar"
@@ -416,13 +425,7 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
                 variant="ghost"
                 size="icon"
                 onClick={runSync}
-                disabled={
-                  Boolean(model.insightsQuery.periodError) ||
-                  (!syncableConnection &&
-                    (!model.integrationState.hasAdAccount ||
-                      !model.integrationState.hasMarketingToken)) ||
-                  isSyncing
-                }
+                disabled={!canSyncCurrentPeriod || isSyncing}
                 title={
                   model.insightsQuery.periodError ?? (syncableConnection
                     ? isSyncing
@@ -644,7 +647,7 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
           <MarketingDataState
             kind="empty"
             title={
-              usesMarketingConnection && !syncableConnection
+              !usesLegacyMeta && model.canManageIntegration && !syncableConnection
                 ? "Conecte a Meta para ver os dados"
                 : syncableConnection
                   ? "Ainda não há dados sincronizados"
@@ -655,7 +658,7 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
                 : "Selecione uma conta de anúncio"
             }
             description={
-              usesMarketingConnection && !syncableConnection
+              !usesLegacyMeta && model.canManageIntegration && !syncableConnection
                 ? "Em Integrações, entre com a Meta Marketing e escolha as contas de anúncios e o Instagram."
                 : syncableConnection
                   ? "Use Sincronizar para buscar o período selecionado."
@@ -674,11 +677,7 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
                   : "Peça a um administrador para configurar uma conta de anúncio na integração Meta."
             }
             action={
-              !model.canManageIntegration ? undefined : (syncableConnection && model.canSyncIntegration) ||
-                (!usesMarketingConnection &&
-                model.integrationState.hasAdAccount &&
-                model.integrationState.hasMarketingToken &&
-                model.canSyncIntegration) ? (
+              !model.canManageIntegration ? undefined : canSyncCurrentPeriod ? (
                 <Button
                   type="button"
                   onClick={runSync}
@@ -700,8 +699,8 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
                   asChild
                   className="h-9 rounded-[6px] border-0 bg-primary/50 px-4 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
                 >
-                  <Link href={INTEGRATION_HREF}>
-                    {usesMarketingConnection
+                  <Link href={integrationHref}>
+                    {!usesLegacyMeta
                       ? "Conectar Meta Marketing"
                       : !model.integrationState.hasAdAccount
                       ? "Configurar conta Meta"
