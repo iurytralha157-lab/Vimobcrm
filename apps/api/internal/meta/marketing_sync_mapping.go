@@ -17,8 +17,11 @@ const marketingSyncAdsetFields = "id,name,campaign_id,status,effective_status,op
 const marketingSyncAdsetFallbackFields = "id,name,campaign_id,status,effective_status,optimization_goal,daily_budget,lifetime_budget"
 const marketingSyncAdFields = "id,name,campaign_id,adset_id,status,effective_status,preview_shareable_link,updated_time,creative{id,name,title,body,effective_image_url,image_url,thumbnail_url,video_id,effective_object_story_id,object_url}"
 const marketingSyncAdFallbackFields = "id,name,campaign_id,adset_id,status,effective_status,creative"
+const marketingSyncDedicatedAdFields = "id,name,account_id,campaign_id,adset_id,status,effective_status,creative{id,name,title,body,image_url,thumbnail_url,video_id,effective_object_story_id}"
+const marketingSyncDedicatedAdFallbackFields = "id,name,account_id,campaign_id,adset_id,status,effective_status,creative"
 const marketingSyncCreativeFields = "id,name,title,body,effective_image_url,image_url,thumbnail_url,video_id,effective_object_story_id,object_url,object_story_spec,asset_feed_spec"
 const marketingSyncCreativeFallbackFields = "id,name,title,body,image_url,thumbnail_url,video_id"
+const marketingSyncDedicatedCreativeFields = "id,name,title,body,image_url,thumbnail_url,video_id,effective_object_story_id,object_story_spec,asset_feed_spec"
 
 var (
 	marketingSyncLeadPatterns = []*regexp.Regexp{
@@ -133,7 +136,7 @@ func fetchMarketingSyncInsightCatalog(ctx context.Context, graph *marketingSyncG
 		records  map[string]map[string]any
 		ids      map[string]struct{}
 	}{
-		{"ad_id", marketingSyncAdFields, marketingSyncAdFallbackFields, catalog.Ads, make(map[string]struct{})},
+		{"ad_id", marketingSyncDedicatedAdFields, marketingSyncDedicatedAdFallbackFields, catalog.Ads, make(map[string]struct{})},
 		{"campaign_id", marketingSyncCampaignFields, marketingSyncCampaignFallbackFields, catalog.Campaigns, make(map[string]struct{})},
 		{"adset_id", marketingSyncAdsetFields, marketingSyncAdsetFallbackFields, catalog.Adsets, make(map[string]struct{})},
 	}
@@ -170,6 +173,10 @@ func fetchMarketingSyncInsightCatalog(ctx context.Context, graph *marketingSyncG
 					catalog.Errors = append(catalog.Errors, marketingSyncScopedError("entity_"+id, err))
 				}
 				if item, ok := items[id]; ok {
+					if providerAccount := marketingSyncText(item["account_id"]); providerAccount != "" && normalizeMarketingSyncAccountID(providerAccount) != accountID {
+						catalog.Errors = append(catalog.Errors, "entity_"+id+":invalid_insight_scope")
+						continue
+					}
 					group.records[id] = item
 				}
 			}
@@ -235,10 +242,11 @@ func hydrateMarketingSyncCatalogCreatives(ctx context.Context, graph *marketingS
 		if nested != nil {
 			creativeID = marketingSyncText(nested["id"])
 		}
-		if creativeID == "" {
+		if creativeID == "" || (graph.dedicatedPaid && !marketingSyncAdAccountPattern.MatchString(creativeID)) {
 			continue
 		}
-		if nested != nil {
+		if nested != nil && (!graph.dedicatedPaid || catalog.Creatives[creativeID] == nil ||
+			marketingSyncCreativeHasPreview(ad, nested)) {
 			catalog.Creatives[creativeID] = nested
 		}
 		if creativeAds[creativeID] == nil {
@@ -249,13 +257,20 @@ func hydrateMarketingSyncCatalogCreatives(ctx context.Context, graph *marketingS
 			creativeIDs = append(creativeIDs, creativeID)
 		}
 	}
+	creativeFields := marketingSyncCreativeFields
+	if graph.dedicatedPaid {
+		creativeFields = marketingSyncDedicatedCreativeFields
+		creativeIDs = slices.DeleteFunc(creativeIDs, func(id string) bool {
+			return marketingSyncCreativeHasPreview(creativeAds[id], catalog.Creatives[id])
+		})
+	}
 	type creativeResponse struct {
 		ID       string
 		Creative map[string]any
 		Err      error
 	}
 	creativeResponses := marketingSyncMapLimited(ctx, creativeIDs, marketingSyncCreativeWorkers, func(ctx context.Context, creativeID string, _ int) creativeResponse {
-		creative, err := graph.object(ctx, creativeID, map[string]any{"fields": marketingSyncCreativeFields})
+		creative, err := graph.object(ctx, creativeID, map[string]any{"fields": creativeFields})
 		if err != nil && marketingSyncErrorCode(err) == "meta_unsupported_parameter" {
 			creative, err = graph.object(ctx, creativeID, map[string]any{"fields": marketingSyncCreativeFallbackFields})
 		}
@@ -264,6 +279,12 @@ func hydrateMarketingSyncCatalogCreatives(ctx context.Context, graph *marketingS
 	for _, response := range creativeResponses {
 		if response.Err != nil {
 			catalog.Errors = append(catalog.Errors, marketingSyncScopedError("creative_"+response.ID, response.Err))
+			continue
+		}
+		if graph.dedicatedPaid && marketingSyncText(response.Creative["id"]) != response.ID {
+			if ctx.Err() == nil {
+				catalog.Errors = append(catalog.Errors, "creative_"+response.ID+":meta_invalid_response")
+			}
 			continue
 		}
 		catalog.Creatives[response.ID] = response.Creative
@@ -275,8 +296,10 @@ func hydrateMarketingSyncCatalogCreatives(ctx context.Context, graph *marketingS
 	}
 	videoRequests := make([]videoRequest, 0)
 	for creativeID, creative := range catalog.Creatives {
-		if videoID := resolveMarketingSyncCreativeAssets(creativeAds[creativeID], creative).VideoID; videoID != "" {
-			videoRequests = append(videoRequests, videoRequest{CreativeID: creativeID, VideoID: videoID})
+		assets := resolveMarketingSyncCreativeAssets(creativeAds[creativeID], creative)
+		if assets.VideoID != "" && (!graph.dedicatedPaid ||
+			(marketingSyncAdAccountPattern.MatchString(assets.VideoID) && marketingSyncSafeHTTPSURL(assets.VideoURL) == "")) {
+			videoRequests = append(videoRequests, videoRequest{CreativeID: creativeID, VideoID: assets.VideoID})
 		}
 	}
 	type videoResponse struct {
@@ -285,6 +308,9 @@ func hydrateMarketingSyncCatalogCreatives(ctx context.Context, graph *marketingS
 	}
 	videos := marketingSyncMapLimited(ctx, videoRequests, marketingSyncCreativeWorkers, func(ctx context.Context, item videoRequest, _ int) videoResponse {
 		video, _ := graph.object(ctx, item.VideoID, map[string]any{"fields": "id,source,picture,permalink_url"})
+		if graph.dedicatedPaid && marketingSyncText(video["id"]) != item.VideoID {
+			video = nil
+		}
 		return videoResponse{CreativeID: item.CreativeID, Video: video}
 	})
 	for _, response := range videos {
@@ -298,6 +324,12 @@ func hydrateMarketingSyncCatalogCreatives(ctx context.Context, graph *marketingS
 	}
 	catalog.Errors = deduplicateMarketingSyncErrors(catalog.Errors)
 	return catalog
+}
+
+func marketingSyncCreativeHasPreview(ad map[string]any, creative map[string]any) bool {
+	assets := resolveMarketingSyncCreativeAssets(ad, creative)
+	return marketingSyncSafeHTTPSURL(assets.ImageURL) != "" || marketingSyncSafeHTTPSURL(assets.ThumbnailURL) != "" ||
+		marketingSyncSafeHTTPSURL(assets.VideoURL) != ""
 }
 
 func scopeMarketingSyncCatalogToTarget(catalog marketingSyncEntityCatalog, target marketingSyncTarget) (marketingSyncEntityCatalog, error) {

@@ -85,7 +85,7 @@ func (client *marketingSyncGraphClient) objects(ctx context.Context, ids []strin
 	}
 	switch fields {
 	case marketingSyncCampaignFields, marketingSyncCampaignFallbackFields, marketingSyncAdsetFields,
-		marketingSyncAdsetFallbackFields, marketingSyncAdFields, marketingSyncAdFallbackFields:
+		marketingSyncAdsetFallbackFields, marketingSyncDedicatedAdFields, marketingSyncDedicatedAdFallbackFields:
 	default:
 		return nil, nil, newMarketingSyncFailure("invalid_meta_graph_path", http.StatusInternalServerError, nil)
 	}

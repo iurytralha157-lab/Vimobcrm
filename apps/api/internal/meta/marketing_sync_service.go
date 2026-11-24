@@ -218,7 +218,7 @@ func (service *MarketingSyncService) syncMarketingAdAccount(ctx context.Context,
 	})
 	if target.AccountWide && !graph.rateLimited.Load() {
 		metadataDeadline := deadline.Add(-15 * time.Second)
-		if cap := time.Now().Add(15 * time.Second); cap.Before(metadataDeadline) {
+		if cap := time.Now().Add(30 * time.Second); cap.Before(metadataDeadline) {
 			metadataDeadline = cap
 		}
 		metadataCtx, cancel := context.WithDeadline(ctx, metadataDeadline)

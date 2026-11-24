@@ -181,22 +181,22 @@ func TestDedicatedPaidBatchChecksExactResultsAndStopsOnInnerQuota(t *testing.T) 
 	})
 	defer closeServer()
 	graph.dedicatedPaid = true
-	if _, _, err := graph.objects(t.Context(), []string{"../outside"}, marketingSyncAdFields); marketingSyncErrorCode(err) != "invalid_meta_graph_path" {
+	if _, _, err := graph.objects(t.Context(), []string{"../outside"}, marketingSyncDedicatedAdFields); marketingSyncErrorCode(err) != "invalid_meta_graph_path" {
 		t.Fatalf("accepted unsafe ID: %v", err)
 	}
 	if _, _, err := graph.objects(t.Context(), []string{"110"}, "id,access_token"); marketingSyncErrorCode(err) != "invalid_meta_graph_path" {
 		t.Fatalf("accepted unapproved fields: %v", err)
 	}
 	ids := []string{"110", "220", "330"}
-	if _, _, err := graph.objects(t.Context(), ids, marketingSyncAdFields); marketingSyncErrorCode(err) != "meta_invalid_response" {
+	if _, _, err := graph.objects(t.Context(), ids, marketingSyncDedicatedAdFields); marketingSyncErrorCode(err) != "meta_invalid_response" {
 		t.Fatalf("accepted incomplete batch: %v", err)
 	}
-	items, failures, err := graph.objects(t.Context(), ids, marketingSyncAdFields)
+	items, failures, err := graph.objects(t.Context(), ids, marketingSyncDedicatedAdFields)
 	if err != nil || len(items) != 1 || marketingSyncText(items["110"]["id"]) != "110" ||
 		marketingSyncErrorCode(failures["220"]) != "meta_invalid_response" || marketingSyncErrorCode(failures["330"]) != "meta_rate_limited" {
 		t.Fatalf("batch validation lost a success or accepted an invalid result: %v, %v, %v", items, failures, err)
 	}
-	if _, _, err := graph.objects(t.Context(), ids, marketingSyncAdFallbackFields); marketingSyncErrorCode(err) != "meta_rate_limited" || calls.Load() != 2 {
+	if _, _, err := graph.objects(t.Context(), ids, marketingSyncDedicatedAdFallbackFields); marketingSyncErrorCode(err) != "meta_rate_limited" || calls.Load() != 2 {
 		t.Fatalf("batch continued after provider quota: %d calls, %v", calls.Load(), err)
 	}
 }
@@ -250,8 +250,48 @@ func TestDedicatedPaidBatchDoesNotFollowPostRedirects(t *testing.T) {
 	})
 	defer closeServer()
 	graph.dedicatedPaid = true
-	if _, _, err := graph.objects(t.Context(), []string{"110"}, marketingSyncAdFields); err == nil || followed.Load() {
+	if _, _, err := graph.objects(t.Context(), []string{"110"}, marketingSyncDedicatedAdFields); err == nil || followed.Load() {
 		t.Fatalf("batch redirect was followed: %v, %v", followed.Load(), err)
+	}
+}
+
+func TestDedicatedPaidReusesTheProviderNestedCreative(t *testing.T) {
+	var calls atomic.Int32
+	graph, closeServer := newMarketingSyncGraphTestClient(t, func(w http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		if request.URL.Path != "/v25.0/" {
+			t.Errorf("unnecessary metadata lookup at %s", request.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		operations := readMarketingSyncObjectBatch(t, request)
+		if len(operations) != 2 || operations[0].Path != "330" || operations[1].Path != "331" {
+			t.Errorf("unexpected batch: %v", operations)
+			return
+		}
+		for _, operation := range operations {
+			if fields := operation.Query().Get("fields"); fields != marketingSyncDedicatedAdFields || strings.Contains(fields, "effective_image_url") {
+				t.Errorf("requested unsupported Ad fields: %s", fields)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+		}
+		_ = json.NewEncoder(w).Encode([]marketingSyncBatchFixture{
+			{Code: 200, Body: `{"id":"330","account_id":"999","creative":{"id":"440","image_url":"https://images.example.com/creative.jpg"}}`},
+			{Code: 200, Body: `{"id":"331","account_id":"888","creative":{"id":"441","image_url":"https://images.example.com/foreign.jpg"}}`},
+		})
+	})
+	defer closeServer()
+	graph.dedicatedPaid = true
+	day := time.Date(2026, time.October, 5, 0, 0, 0, 0, time.UTC)
+	insights := []marketingSyncInsightResult{{Items: []map[string]any{
+		{"ad_id": "330", "date_start": "2026-10-05"},
+		{"ad_id": "331", "date_start": "2026-10-05"},
+	}}}
+	catalog := fetchMarketingSyncInsightCatalog(t.Context(), graph, "act_999", marketingSyncDateRange{From: day, To: day}, insights)
+	if calls.Load() != 1 || len(catalog.Ads) != 1 || len(catalog.Creatives) != 1 ||
+		!marketingSyncCreativeHasPreview(catalog.Ads["330"], catalog.Creatives["440"]) {
+		t.Fatalf("nested preview wasn't reused, or foreign object was accepted: %d calls, %+v", calls.Load(), catalog)
 	}
 }
 
@@ -304,6 +344,9 @@ func TestDedicatedPaidMediaSurvivesUnrelatedCatalogFailure(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(responses)
 		case "440":
+			if fields := request.URL.Query().Get("fields"); fields != marketingSyncDedicatedCreativeFields || strings.Contains(fields, "effective_image_url") {
+				t.Errorf("requested unsupported creative fields: %s", fields)
+			}
 			creativeHydrated.Store(true)
 			_, _ = fmt.Fprint(w, `{"id":"440","name":"Creative","image_url":"https://images.example.com/creative.jpg"}`)
 		default:
