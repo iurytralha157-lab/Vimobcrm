@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -125,59 +126,96 @@ func fetchMarketingSyncInsightCatalog(ctx context.Context, graph *marketingSyncG
 		Ads:       make(map[string]map[string]any),
 		Creatives: make(map[string]map[string]any),
 	}
-	type request struct {
-		id       string
+	groups := []struct {
+		idField  string
 		fields   string
 		fallback string
 		records  map[string]map[string]any
-	}
-	var requests []request
-	queue := func(id string, fields string, fallback string, records map[string]map[string]any) {
-		if _, exists := records[id]; !exists && marketingSyncAdAccountPattern.MatchString(id) {
-			records[id] = nil
-			requests = append(requests, request{id: id, fields: fields, fallback: fallback, records: records})
-		}
+		ids      map[string]struct{}
+	}{
+		{"ad_id", marketingSyncAdFields, marketingSyncAdFallbackFields, catalog.Ads, make(map[string]struct{})},
+		{"campaign_id", marketingSyncCampaignFields, marketingSyncCampaignFallbackFields, catalog.Campaigns, make(map[string]struct{})},
+		{"adset_id", marketingSyncAdsetFields, marketingSyncAdsetFallbackFields, catalog.Adsets, make(map[string]struct{})},
 	}
 	for _, result := range insights {
 		for _, row := range result.Items {
 			if !marketingSyncInsightInScope(row, accountID, dateRange) {
 				continue
 			}
-			queue(marketingSyncText(row["campaign_id"]), marketingSyncCampaignFields, marketingSyncCampaignFallbackFields, catalog.Campaigns)
-			queue(marketingSyncText(row["adset_id"]), marketingSyncAdsetFields, marketingSyncAdsetFallbackFields, catalog.Adsets)
-			queue(marketingSyncText(row["ad_id"]), marketingSyncAdFields, marketingSyncAdFallbackFields, catalog.Ads)
-		}
-	}
-	type response struct {
-		item map[string]any
-		err  error
-	}
-	responses := marketingSyncMapLimited(ctx, requests, marketingSyncCreativeWorkers, func(ctx context.Context, request request, _ int) response {
-		item, err := graph.object(ctx, request.id, map[string]any{"fields": request.fields})
-		if err != nil && request.fallback != "" && marketingSyncErrorCode(err) == "meta_unsupported_parameter" {
-			item, err = graph.object(ctx, request.id, map[string]any{"fields": request.fallback})
-		}
-		return response{item: item, err: err}
-	})
-	for index, response := range responses {
-		request := requests[index]
-		if response.err != nil {
-			catalog.Errors = append(catalog.Errors, marketingSyncScopedError("entity_"+request.id, response.err))
-		}
-		if marketingSyncText(response.item["id"]) != request.id {
-			if response.err == nil && ctx.Err() == nil {
-				catalog.Errors = append(catalog.Errors, "entity_"+request.id+":meta_invalid_response")
+			for _, group := range groups {
+				if id := marketingSyncText(row[group.idField]); marketingSyncAdAccountPattern.MatchString(id) {
+					group.ids[id] = struct{}{}
+				}
 			}
-			delete(request.records, request.id)
-			continue
 		}
-		request.records[request.id] = response.item
 	}
-	catalog = hydrateMarketingSyncCatalogCreatives(ctx, graph, catalog)
-	if len(requests) > 0 && ctx.Err() != nil {
+	hasEntities := false
+	for _, group := range groups {
+		hasEntities = hasEntities || len(group.ids) != 0
+		ids := make([]string, 0, len(group.ids))
+		for id := range group.ids {
+			ids = append(ids, id)
+		}
+		slices.Sort(ids)
+		for chunk := range slices.Chunk(ids, marketingSyncGraphObjectBatchSize) {
+			if ctx.Err() != nil || graph.rateLimited.Load() {
+				break
+			}
+			items, failures, err := fetchMarketingSyncObjectBatch(ctx, graph, chunk, group.fields, group.fallback)
+			if err != nil {
+				catalog.Errors = append(catalog.Errors, marketingSyncScopedError("entity_batch_"+chunk[0], err))
+			}
+			for _, id := range chunk {
+				if err := failures[id]; err != nil {
+					catalog.Errors = append(catalog.Errors, marketingSyncScopedError("entity_"+id, err))
+				}
+				if item, ok := items[id]; ok {
+					group.records[id] = item
+				}
+			}
+		}
+		if group.idField == "ad_id" && ctx.Err() == nil && !graph.rateLimited.Load() {
+			catalog = hydrateMarketingSyncCatalogCreatives(ctx, graph, catalog)
+		}
+	}
+	if hasEntities && ctx.Err() != nil {
 		catalog.Errors = append(catalog.Errors, "catalog_enrichment_timeout")
 	}
+	if graph.rateLimited.Load() {
+		catalog.Errors = append(catalog.Errors, "catalog_enrichment:meta_rate_limited")
+	}
 	return catalog
+}
+
+func fetchMarketingSyncObjectBatch(ctx context.Context, graph *marketingSyncGraphClient, ids []string, fields string, fallback string) (map[string]map[string]any, map[string]error, error) {
+	items, errorsByID, err := graph.objects(ctx, ids, fields)
+	if err != nil {
+		if marketingSyncErrorCode(err) == "meta_unsupported_parameter" && !graph.rateLimited.Load() {
+			return graph.objects(ctx, ids, fallback)
+		}
+		return nil, nil, err
+	}
+	var fallbackIDs []string
+	for _, id := range ids {
+		if lookupErr := errorsByID[id]; lookupErr != nil && marketingSyncErrorCode(lookupErr) == "meta_unsupported_parameter" {
+			fallbackIDs = append(fallbackIDs, id)
+		}
+	}
+	if len(fallbackIDs) == 0 || graph.rateLimited.Load() {
+		return items, errorsByID, nil
+	}
+	fallbackItems, fallbackErrors, err := graph.objects(ctx, fallbackIDs, fallback)
+	for _, id := range fallbackIDs {
+		if err != nil {
+			errorsByID[id] = err
+		} else if item, ok := fallbackItems[id]; ok {
+			items[id] = item
+			delete(errorsByID, id)
+		} else {
+			errorsByID[id] = fallbackErrors[id]
+		}
+	}
+	return items, errorsByID, nil
 }
 
 func marketingSyncInsightInScope(row map[string]any, accountID string, dateRange marketingSyncDateRange) bool {

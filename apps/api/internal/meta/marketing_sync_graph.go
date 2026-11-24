@@ -42,6 +42,13 @@ type marketingSyncGraphCollection struct {
 	Truncated bool
 }
 
+const marketingSyncGraphObjectBatchSize = 20
+
+type marketingSyncGraphReadOperation struct {
+	Method      string `json:"method"`
+	RelativeURL string `json:"relative_url"`
+}
+
 type marketingSyncGraphClient struct {
 	service       *MarketingSyncService
 	accessToken   string
@@ -70,6 +77,61 @@ func (client *marketingSyncGraphClient) object(ctx context.Context, path string,
 		return nil, newMarketingSyncGraphFailure("meta_invalid_response", http.StatusBadGateway, marketingSyncGraphErrorPayload{})
 	}
 	return record, nil
+}
+
+func (client *marketingSyncGraphClient) objects(ctx context.Context, ids []string, fields string) (map[string]map[string]any, map[string]error, error) {
+	if !client.dedicatedPaid || len(ids) == 0 || len(ids) > marketingSyncGraphObjectBatchSize {
+		return nil, nil, newMarketingSyncFailure("invalid_meta_graph_path", http.StatusInternalServerError, nil)
+	}
+	switch fields {
+	case marketingSyncCampaignFields, marketingSyncCampaignFallbackFields, marketingSyncAdsetFields,
+		marketingSyncAdsetFallbackFields, marketingSyncAdFields, marketingSyncAdFallbackFields:
+	default:
+		return nil, nil, newMarketingSyncFailure("invalid_meta_graph_path", http.StatusInternalServerError, nil)
+	}
+	operations := make([]marketingSyncGraphReadOperation, 0, len(ids))
+	query := url.Values{"fields": {fields}}.Encode()
+	for _, id := range ids {
+		if !marketingSyncAdAccountPattern.MatchString(id) {
+			return nil, nil, newMarketingSyncFailure("invalid_meta_graph_path", http.StatusInternalServerError, nil)
+		}
+		operations = append(operations, marketingSyncGraphReadOperation{Method: http.MethodGet, RelativeURL: id + "?" + query})
+	}
+	encoded, err := json.Marshal(operations)
+	if err != nil {
+		return nil, nil, newMarketingSyncFailure("invalid_meta_graph_path", http.StatusInternalServerError, nil)
+	}
+	payload, err := client.requestGraph(ctx, "/", nil, url.Values{"batch": {string(encoded)}, "include_headers": {"false"}})
+	if err != nil {
+		return nil, nil, err
+	}
+	entries, valid := payload.([]any)
+	if !valid || len(entries) != len(ids) {
+		return nil, nil, newMarketingSyncGraphFailure("meta_invalid_response", http.StatusBadGateway, marketingSyncGraphErrorPayload{})
+	}
+	items := make(map[string]map[string]any, len(ids))
+	errorsByID := make(map[string]error)
+	for index, id := range ids {
+		entry := marketingSyncRecord(entries[index])
+		status := marketingSyncInteger(entry["code"])
+		var item map[string]any
+		decoder := json.NewDecoder(strings.NewReader(marketingSyncText(entry["body"])))
+		decoder.UseNumber()
+		bodyErr := decoder.Decode(&item)
+		if bodyErr == nil && decoder.Decode(new(any)) != io.EOF {
+			item = nil
+		}
+		if status < 100 || status > 599 {
+			errorsByID[id] = newMarketingSyncGraphFailure("meta_invalid_response", http.StatusBadGateway, marketingSyncGraphErrorPayload{})
+		} else if graphError := parseMarketingSyncGraphError(item); graphError != nil || status < 200 || status >= 300 {
+			errorsByID[id] = client.classifyFailure(status, graphError)
+		} else if bodyErr != nil || marketingSyncText(item["id"]) != id {
+			errorsByID[id] = newMarketingSyncGraphFailure("meta_invalid_response", http.StatusBadGateway, marketingSyncGraphErrorPayload{})
+		} else {
+			items[id] = item
+		}
+	}
+	return items, errorsByID, nil
 }
 
 func (client *marketingSyncGraphClient) collection(ctx context.Context, path string, parameters map[string]any, maximumItems int) (marketingSyncGraphCollection, error) {
@@ -131,6 +193,13 @@ func (client *marketingSyncGraphClient) collection(ctx context.Context, path str
 }
 
 func (client *marketingSyncGraphClient) request(ctx context.Context, path string, parameters map[string]any) (any, error) {
+	return client.requestGraph(ctx, path, parameters, nil)
+}
+
+func (client *marketingSyncGraphClient) requestGraph(ctx context.Context, path string, parameters map[string]any, batchForm url.Values) (any, error) {
+	if batchForm != nil && (!client.dedicatedPaid || path != "/") {
+		return nil, newMarketingSyncFailure("invalid_meta_graph_path", http.StatusInternalServerError, nil)
+	}
 	endpoint, err := client.endpoint(path, parameters)
 	if err != nil {
 		return nil, err
@@ -140,19 +209,14 @@ func (client *marketingSyncGraphClient) request(ctx context.Context, path string
 		if err := client.ensureBeforeDeadline(ctx); err != nil {
 			return nil, err
 		}
-		payload, response, requestErr := client.requestOnce(ctx, endpoint)
+		payload, response, requestErr := client.requestOnce(ctx, endpoint, batchForm)
 		if requestErr == nil {
 			graphError := parseMarketingSyncGraphError(payload)
 			if response.StatusCode >= 200 && response.StatusCode < 300 && graphError == nil {
 				return payload, nil
 			}
-			failure := classifyMarketingSyncGraphFailure(response.StatusCode, graphError)
-			if client.dedicatedPaid && (marketingSyncErrorCode(failure) == "meta_rate_limited" ||
-				(graphError != nil && (graphError.Code == 80000 || graphError.Code == 80004) && graphError.Subcode == 2446079)) {
-				client.rateLimited.Store(true)
-				if graphError != nil {
-					return nil, newMarketingSyncGraphFailure("meta_rate_limited", http.StatusTooManyRequests, *graphError)
-				}
+			failure := client.classifyFailure(response.StatusCode, graphError)
+			if client.rateLimited.Load() || (client.dedicatedPaid && marketingSyncErrorCode(failure) == "meta_unsupported_parameter") {
 				return nil, failure
 			}
 			lastFailure = failure
@@ -189,8 +253,8 @@ func (client *marketingSyncGraphClient) request(ctx context.Context, path string
 func (client *marketingSyncGraphClient) endpoint(path string, parameters map[string]any) (*url.URL, error) {
 	path = strings.TrimSpace(path)
 	segments := strings.Split(strings.Trim(path, "/"), "/")
-	if path == "" || len(segments) == 0 {
-		return nil, newMarketingSyncFailure("invalid_meta_graph_path", http.StatusInternalServerError, nil)
+	if path == "/" && client.dedicatedPaid {
+		segments = nil
 	}
 	escaped := make([]string, 0, len(segments))
 	for _, segment := range segments {
@@ -226,7 +290,21 @@ func (client *marketingSyncGraphClient) endpoint(path string, parameters map[str
 	return endpoint, nil
 }
 
-func (client *marketingSyncGraphClient) requestOnce(ctx context.Context, endpoint *url.URL) (any, *http.Response, error) {
+func (client *marketingSyncGraphClient) classifyFailure(status int, graphError *marketingSyncGraphErrorPayload) error {
+	failure := classifyMarketingSyncGraphFailure(status, graphError)
+	if !client.dedicatedPaid {
+		return failure
+	}
+	if graphError != nil && (graphError.Code == 80000 || graphError.Code == 80004) && graphError.Subcode == 2446079 {
+		failure = newMarketingSyncGraphFailure("meta_rate_limited", http.StatusTooManyRequests, *graphError)
+	}
+	if marketingSyncErrorCode(failure) == "meta_rate_limited" {
+		client.rateLimited.Store(true)
+	}
+	return failure
+}
+
+func (client *marketingSyncGraphClient) requestOnce(ctx context.Context, endpoint *url.URL, batchForm url.Values) (any, *http.Response, error) {
 	remaining := time.Until(client.deadline)
 	if remaining <= 0 {
 		return nil, nil, newMarketingSyncFailure("sync_runtime_exceeded", http.StatusServiceUnavailable, context.DeadlineExceeded)
@@ -235,12 +313,21 @@ func (client *marketingSyncGraphClient) requestOnce(ctx context.Context, endpoin
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint.String(), nil)
+	method := http.MethodGet
+	var body io.Reader
+	if batchForm != nil {
+		method = http.MethodPost
+		body = strings.NewReader(batchForm.Encode())
+	}
+	request, err := http.NewRequestWithContext(requestCtx, method, endpoint.String(), body)
 	if err != nil {
 		return nil, nil, newMarketingSyncFailure("meta_request_failed", http.StatusBadGateway, err)
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Authorization", "Bearer "+client.accessToken)
+	if batchForm != nil {
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
 
 	if err := client.acquire(requestCtx); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
