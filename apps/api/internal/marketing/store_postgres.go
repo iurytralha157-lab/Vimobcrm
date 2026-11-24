@@ -15,11 +15,12 @@ import (
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 type PostgresStore struct {
-	pool *pgxpool.Pool
+	pool       *pgxpool.Pool
+	metaAssets MetaAssetAllowlist
 }
 
-func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
-	return &PostgresStore{pool: pool}
+func NewPostgresStore(pool *pgxpool.Pool, metaAssets MetaAssetAllowlist) *PostgresStore {
+	return &PostgresStore{pool: pool, metaAssets: metaAssets}
 }
 
 func storeFailure(err error) error {
@@ -220,6 +221,9 @@ func (store *PostgresStore) ListConnections(ctx context.Context, organizationID 
 			return nil, storeFailure(err)
 		}
 		_ = json.Unmarshal(raw, &asset.Metadata)
+		if !store.metaAssets.allows(organizationID, asset.Type, asset.ExternalID, stringValue(asset.Metadata["page_id"])) {
+			continue
+		}
 		if position, ok := positions[connectionID]; ok {
 			connections[position].Assets = append(connections[position].Assets, asset)
 		}
@@ -234,33 +238,63 @@ func (store *PostgresStore) UpdateSelection(ctx context.Context, organizationID 
 	if !uuidPattern.MatchString(connectionID) {
 		return newFailure("marketing_connection_not_found", http.StatusNotFound)
 	}
+	selected := make([]string, 0, len(assetIDs))
 	for _, id := range assetIDs {
-		if !uuidPattern.MatchString(strings.TrimSpace(id)) {
+		id = strings.ToLower(strings.TrimSpace(id))
+		if !uuidPattern.MatchString(id) {
 			return newFailure("invalid_asset_selection", http.StatusBadRequest)
 		}
+		selected = append(selected, id)
 	}
+	selected = uniqueStrings(selected)
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
 		return storeFailure(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var total, matching int
+	// Serialize selection with reconnects, which also lock the connection before changing its assets.
+	var lockedConnectionID string
 	err = tx.QueryRow(ctx, `
-		select count(*), count(*) filter (where id = any($3::uuid[]))
-		from public.marketing_connection_assets
-		where connection_id = $1::uuid and organization_id = $2::uuid
-	`, connectionID, organizationID, assetIDs).Scan(&total, &matching)
+		select id::text from public.marketing_connections
+		where id = $1::uuid and organization_id = $2::uuid for update
+	`, connectionID, organizationID).Scan(&lockedConnectionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return newFailure("marketing_connection_not_found", http.StatusNotFound)
+	}
 	if err != nil {
 		return storeFailure(err)
 	}
-	if matching != len(uniqueStrings(assetIDs)) {
+	rows, err := tx.Query(ctx, `
+		select asset_type, external_id, coalesce(metadata->>'page_id', '')
+		from public.marketing_connection_assets
+		where connection_id = $1::uuid and organization_id = $2::uuid and id = any($3::uuid[])
+	`, connectionID, organizationID, selected)
+	if err != nil {
+		return storeFailure(err)
+	}
+	defer rows.Close()
+	var matching int
+	for rows.Next() {
+		var assetType, externalID, pageID string
+		if err := rows.Scan(&assetType, &externalID, &pageID); err != nil {
+			return storeFailure(err)
+		}
+		if !store.metaAssets.allows(organizationID, assetType, externalID, pageID) {
+			return newFailure("invalid_asset_selection", http.StatusBadRequest)
+		}
+		matching++
+	}
+	if err := rows.Err(); err != nil {
+		return storeFailure(err)
+	}
+	if matching != len(selected) {
 		return newFailure("invalid_asset_selection", http.StatusBadRequest)
 	}
 	if _, err := tx.Exec(ctx, `
 		update public.marketing_connection_assets
 		set is_selected = (id = any($3::uuid[])), updated_at = now()
 		where connection_id = $1::uuid and organization_id = $2::uuid
-	`, connectionID, organizationID, assetIDs); err != nil {
+	`, connectionID, organizationID, selected); err != nil {
 		return storeFailure(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -332,6 +366,9 @@ func (store *PostgresStore) LoadSyncTarget(ctx context.Context, organizationID s
 		var assetType, externalID, name, pageID string
 		if err := rows.Scan(&assetType, &externalID, &name, &pageID); err != nil {
 			return SyncTarget{}, storeFailure(err)
+		}
+		if !store.metaAssets.allows(organizationID, assetType, externalID, pageID) {
+			return SyncTarget{}, newFailure("invalid_asset_selection", http.StatusBadRequest)
 		}
 		switch assetType {
 		case AssetAdAccount:

@@ -43,6 +43,17 @@ limite de 60 segundos e a resposta leva só um status e um código de erro.
 
 Ficam em `.env.example`. Sem elas, o recurso fica desligado.
 `MARKETING_CONNECTIONS_ENABLED_ORGS` libera por organização.
+Em produção, `MARKETING_META_ASSET_ALLOWLIST` é obrigatório para cada organização liberada.
+Ele recebe um objeto JSON com os UUIDs das organizações e as chaves dos ativos permitidos.
+Use IDs da Meta sem `act_` e inclua a página vinculada ao Instagram.
+
+```json
+{"11111111-1111-4111-8111-111111111111":["ad_account:101","page:202","instagram_account:303:202"]}
+```
+
+O login pode descobrir vários ativos. O CRM só salva, lista, seleciona e sincroniza
+os ativos autorizados para a organização. Escolha contas de anúncios exclusivas
+da organização porque a sincronização carrega os dados da conta inteira.
 
 As variáveis são separadas de `META_APP_ID`. Na homologação, preencha só as de
 Marketing: o OAuth de leads continua desligado e nada desconecta uma Página real.

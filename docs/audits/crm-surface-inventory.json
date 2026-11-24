@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "86a4b2743cd631ae5ed8c3d0e575ca540c717c4226e15ac2c125c9f9c9aa6723",
+  "sourceDigestSha256": "9d9c934af2dc2a9d5fe3b9200cf03ba43b423932cba3a7539f9b31664a288b8b",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -7181,10 +7181,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:ee68765671ef76d7efd9",
+          "id": "cta:59ef89c0b0b63b0f911a",
           "column": 15,
           "file": "app/exclusao-de-dados/page.tsx",
-          "line": 173,
+          "line": 174,
           "owner": "DataDeletionPage",
           "routes": [
             "/exclusao-de-dados"
@@ -47396,7 +47396,7 @@
         }
       ]
     },
-    "digestSha256": "dbda80d2e453b0066753cd93ef404151a6c83ba271b4dbbe9bd8fcc20248c10f"
+    "digestSha256": "4a3f92a2f1b79784a263f17e7033d720467e11f7cdac179725b3bbb7b4310798"
   },
   "routes": [
     {

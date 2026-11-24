@@ -93,6 +93,9 @@ func (service *Service) CompleteMeta(ctx context.Context, state string, code str
 	if flow.Provider != ProviderMeta {
 		return "", newFailure("invalid_oauth_state", http.StatusBadRequest)
 	}
+	if err := service.requireEnabled(flow.OrganizationID); err != nil {
+		return flow.ReturnURL, err
+	}
 	if providerError != "" {
 		return flow.ReturnURL, newFailure("meta_login_cancelled", http.StatusBadRequest)
 	}
@@ -114,6 +117,14 @@ func (service *Service) CompleteMeta(ctx context.Context, state string, code str
 	assets, err := service.meta.fetchAssets(ctx, token)
 	if err != nil && !isPermissionDenied(err) {
 		return flow.ReturnURL, err
+	}
+	assets = slices.DeleteFunc(assets, func(asset DiscoveredAsset) bool {
+		return !service.config.MetaAssets.allows(flow.OrganizationID, asset.Type, asset.ExternalID, stringValue(asset.Metadata["page_id"]))
+	})
+	if _, scoped := service.config.MetaAssets[strings.ToLower(flow.OrganizationID)]; scoped && !slices.ContainsFunc(assets, func(asset DiscoveredAsset) bool {
+		return asset.Type == AssetAdAccount || asset.Type == AssetInstagram
+	}) {
+		return flow.ReturnURL, newFailure("marketing_no_assets_selected", http.StatusBadRequest)
 	}
 	_, err = service.store.SaveConnection(ctx, SaveConnectionInput{
 		OrganizationID:   flow.OrganizationID,

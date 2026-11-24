@@ -32,7 +32,7 @@ func TestPostgresStoreIsolatesTenantsAndCleansSecrets(t *testing.T) {
 	`).Scan(&organizationA, &organizationB, &userID); err != nil {
 		t.Fatalf("load two organizations and a user: %v", err)
 	}
-	store := NewPostgresStore(pool)
+	store := NewPostgresStore(pool, nil)
 	externalUser := "test-" + time.Now().Format("150405.000000")
 	input := SaveConnectionInput{
 		OrganizationID: organizationA, UserID: userID, Provider: ProviderMeta,
@@ -72,6 +72,17 @@ func TestPostgresStoreIsolatesTenantsAndCleansSecrets(t *testing.T) {
 	}
 	if err := store.UpdateSelection(ctx, organizationA, connectionID, []string{assetID}); err != nil {
 		t.Fatalf("select: %v", err)
+	}
+	scopedStore := NewPostgresStore(pool, MetaAssetAllowlist{organizationA: {"page:2"}})
+	scoped := findConnection(t, scopedStore, organizationA, connectionID)
+	if len(scoped.Assets) != 1 || scoped.Assets[0].Type != AssetPage {
+		t.Fatal("the connection exposed a previously persisted, unapproved asset")
+	}
+	if err := scopedStore.UpdateSelection(ctx, organizationA, connectionID, []string{assetID}); failureOf(err).Code != "invalid_asset_selection" {
+		t.Fatalf("unapproved direct selection: %v", err)
+	}
+	if _, err := scopedStore.LoadSyncTarget(ctx, organizationA, connectionID); failureOf(err).Code != "invalid_asset_selection" {
+		t.Fatalf("unapproved pre-existing sync selection: %v", err)
 	}
 
 	// Reconnecting keeps earlier choices, drops lost assets and rotates the secret.

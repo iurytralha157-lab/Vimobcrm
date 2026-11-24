@@ -17,14 +17,15 @@ export const metadata: Metadata = {
 
 const vimobDisconnectSteps = [
   "Entre no Vimob com um usuário autorizado pela organização.",
-  "Acesse Configurações, abra Integrações e selecione Meta.",
-  "Em Gerenciar conexão Meta, localize a conta conectada, selecione Desconectar e confirme a operação.",
+  "Abra Configurações e vá a Integrações. Selecione Meta para a captação de leads ou Meta Marketing para os relatórios.",
+  "Na integração correspondente, localize a conta conectada, selecione Desconectar e confirme a operação.",
 ];
 
 const facebookRemovalSteps = [
   "Acesse o Facebook com a conta que autorizou a integração.",
   "Abra Configurações e privacidade, entre em Configurações e acesse Aplicativos e sites.",
-  "Localize Vimob CRM, selecione Remover e confirme a revogação do acesso.",
+  "Localize Vimob CRM Marketing para revogar o acesso aos relatórios ou Vimob CRM para revogar o acesso à captação de leads.",
+  "Selecione Remover no aplicativo correspondente e confirme a revogação.",
 ];
 
 const requestDetails = [

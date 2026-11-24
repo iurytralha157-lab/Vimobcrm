@@ -135,6 +135,7 @@ type MetaConfig struct {
 type MarketingConfig struct {
 	EnabledOrganizations []string
 	AllowedOrigins       []string
+	MetaAssetAllowlist   string
 	MetaAppID            string
 	MetaAppSecret        string
 	MetaLoginConfigID    string
@@ -381,6 +382,7 @@ func Load() (Config, error) {
 		Marketing: MarketingConfig{
 			EnabledOrganizations: parseCSV(getEnv("MARKETING_CONNECTIONS_ENABLED_ORGS", "")),
 			AllowedOrigins:       parseCSV(getEnv("MARKETING_OAUTH_ALLOWED_ORIGINS", "")),
+			MetaAssetAllowlist:   os.Getenv("MARKETING_META_ASSET_ALLOWLIST"),
 			MetaAppID:            strings.TrimSpace(os.Getenv("MARKETING_META_APP_ID")),
 			MetaAppSecret:        os.Getenv("MARKETING_META_APP_SECRET"),
 			MetaLoginConfigID:    strings.TrimSpace(os.Getenv("MARKETING_META_LOGIN_CONFIG_ID")),

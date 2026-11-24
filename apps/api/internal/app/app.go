@@ -107,9 +107,17 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		return nil, err
 	}
 
+	marketingMetaAssets, marketingAssetErr := marketing.ParseMetaAssetAllowlist(cfg.Marketing.MetaAssetAllowlist)
+	marketingOrganizations := cfg.Marketing.EnabledOrganizations
+	if marketingAssetErr != nil {
+		logger.Warn("Meta Marketing disabled", "error", marketingAssetErr.Error())
+		marketingOrganizations = nil
+	}
 	marketingHandler := marketing.NewHandler(marketing.NewService(marketing.Config{
-		EnabledOrganizations: cfg.Marketing.EnabledOrganizations,
+		EnabledOrganizations: marketingOrganizations,
 		AllowedOrigins:       append([]string{cfg.Email.AppURL}, cfg.Marketing.AllowedOrigins...),
+		MetaAssets:           marketingMetaAssets,
+		RequireMetaAssets:    cfg.Environment == "production",
 		Meta: marketing.MetaConfig{
 			AppID:         cfg.Marketing.MetaAppID,
 			AppSecret:     cfg.Marketing.MetaAppSecret,
@@ -118,7 +126,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			GraphBaseURL:  cfg.Meta.GraphBaseURL,
 			CallbackURL:   cfg.Marketing.MetaCallbackURL,
 		},
-	}, marketing.NewPostgresStore(postgres.Pool()), marketingConnectionSyncer{
+	}, marketing.NewPostgresStore(postgres.Pool(), marketingMetaAssets), marketingConnectionSyncer{
 		service: meta.NewMarketingSyncService(postgres, meta.Config{
 			AppSecret:    cfg.Marketing.MetaAppSecret,
 			GraphVersion: cfg.Marketing.MetaGraphVersion,

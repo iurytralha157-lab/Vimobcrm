@@ -39,6 +39,8 @@ type Config struct {
 	EnabledOrganizations []string
 	AllowedOrigins       []string
 	Meta                 MetaConfig
+	MetaAssets           MetaAssetAllowlist
+	RequireMetaAssets    bool
 }
 
 type MetaConfig struct {
@@ -52,6 +54,9 @@ type MetaConfig struct {
 }
 
 func (config Config) organizationEnabled(organizationID string) bool {
+	if keys, scoped := config.MetaAssets[strings.ToLower(organizationID)]; (scoped || config.RequireMetaAssets) && len(keys) == 0 {
+		return false
+	}
 	for _, item := range config.EnabledOrganizations {
 		item = strings.TrimSpace(item)
 		if item == "*" || (item != "" && strings.EqualFold(item, organizationID)) {

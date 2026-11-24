@@ -57,6 +57,16 @@ func (service *Service) Sync(ctx context.Context, organizationID string, userID 
 	if len(target.AdAccounts) == 0 && len(target.Instagram) == 0 {
 		return SyncResult{}, newFailure("marketing_no_assets_selected", http.StatusBadRequest)
 	}
+	for _, account := range target.AdAccounts {
+		if !service.config.MetaAssets.allows(organizationID, AssetAdAccount, account, "") {
+			return SyncResult{}, newFailure("invalid_asset_selection", http.StatusBadRequest)
+		}
+	}
+	for _, profile := range target.Instagram {
+		if !service.config.MetaAssets.allows(organizationID, AssetInstagram, profile.ID, profile.PageID) {
+			return SyncResult{}, newFailure("invalid_asset_selection", http.StatusBadRequest)
+		}
+	}
 	result, err := service.syncer.Sync(ctx, SyncInput{
 		SyncTarget:     target,
 		OrganizationID: organizationID,

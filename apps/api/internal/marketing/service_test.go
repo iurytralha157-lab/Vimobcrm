@@ -155,6 +155,63 @@ func TestCompleteOnlyUsesGetAndStoresReadOnlyLogin(t *testing.T) {
 	}
 }
 
+func TestScopedMetaMarketingOnlyUsesApprovedAssets(t *testing.T) {
+	graph, store, syncer := newGraph(t), &fakeStore{}, &fakeSyncer{}
+	graph.bodies["/v25.0/me/adaccounts"] = `{"data":[{"account_id":"1404"},{"account_id":"9999"}]}`
+	graph.bodies["/v25.0/me/accounts"] = `{"data":[{"id":"503","instagram_business_account":{"id":"178"}},{"id":"504","instagram_business_account":{"id":"178"}}]}`
+	service := newTestServiceWithSyncer(store, syncer, graph.URL, "*")
+	policy, err := ParseMetaAssetAllowlist(`{"` + testOrganizationID + `":["ad_account:1404","page:503","instagram_account:178:503"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.config.MetaAssets = policy
+	service.config.RequireMetaAssets = true
+	if enabled, _ := service.Availability("22222222-2222-4222-8222-222222222222"); enabled {
+		t.Fatal("organization without an asset policy is enabled")
+	}
+	ctx := context.Background()
+	if _, err := service.CompleteMeta(ctx, startFlow(t, service), "code", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.saved) != 1 || len(store.saved[0].Assets) != 3 {
+		t.Fatal("OAuth saved additional assets or dropped an approved asset")
+	}
+	for _, asset := range store.saved[0].Assets {
+		if !policy.allows(testOrganizationID, asset.Type, asset.ExternalID, stringValue(asset.Metadata["page_id"])) {
+			t.Fatal("OAuth saved an unapproved asset")
+		}
+	}
+	for _, target := range []SyncTarget{
+		{AdAccounts: []string{"1404", "9999"}},
+		{Instagram: []SyncInstagram{{ID: "178", PageID: "504"}}},
+	} {
+		store.target = target
+		if _, err := service.Sync(ctx, testOrganizationID, "u", "c", "2026-10-01", "2026-10-31"); failureOf(err).Code != "invalid_asset_selection" {
+			t.Fatalf("unapproved sync target was accepted: %v", err)
+		}
+	}
+	if syncer.input.OrganizationID != "" {
+		t.Fatal("syncer received an unapproved asset")
+	}
+	store.target = SyncTarget{AdAccounts: []string{"act_1404"}, Instagram: []SyncInstagram{{ID: "178", PageID: "503"}}}
+	if _, err := service.Sync(ctx, testOrganizationID, "u", "c", "2026-10-01", "2026-10-31"); err != nil {
+		t.Fatalf("approved sync: %v", err)
+	}
+	if syncer.input.OrganizationID != testOrganizationID {
+		t.Fatal("syncer did not receive the approved target")
+	}
+}
+
+func TestMetaAssetAllowlistRejectsInvalidPolicy(t *testing.T) {
+	for _, keys := range []string{`null`, `["ad_account:*"]`, `["instagram_account:178:503"]`, `["page:503","instagram_account:178:504"]`} {
+		t.Run(keys, func(t *testing.T) {
+			if _, err := ParseMetaAssetAllowlist(`{"` + testOrganizationID + `":` + keys + `}`); err == nil {
+				t.Fatalf("invalid asset policy accepted: %s", keys)
+			}
+		})
+	}
+}
+
 func TestAssetDiscoveryNeverAsksForPageToken(t *testing.T) {
 	var query string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
