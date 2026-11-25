@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Loader2, ShieldCheck, Target } from "lucide-react";
+import { ExternalLink, Loader2, ShieldCheck, Target } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -345,6 +345,137 @@ export function MetaConversionFeedbackPanel({
           </Alert>
 
           <div className="space-y-4 py-1">
+            {configuredBefore && !editingDestination ? (
+              <div className="app-card-soft flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-sm font-normal">CRM Dataset</p>
+                  <p className="mt-0.5 truncate text-xs text-[var(--app-text-tertiary)]">
+                    {selected ? getDatasetLabel(selected) : "Dataset configurado"}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => setEditingDestination(true)}
+                >
+                  Alterar Dataset
+                </Button>
+              </div>
+            ) : (
+              <>
+                <section className="app-card-soft space-y-3 p-3.5" aria-labelledby="meta-crm-setup-title">
+                  <div className="space-y-1">
+                    <h3 id="meta-crm-setup-title" className="text-sm font-medium">
+                      Onde encontrar o ID e o token
+                    </h3>
+                    <p className="text-xs leading-5 text-[var(--app-text-secondary)]">
+                      O conjunto de dados (Dataset) recebe os resultados dos leads na Meta.
+                      O token é a chave que autoriza o Vimob a enviar para esse destino.
+                    </p>
+                  </div>
+                  <Button
+                    asChild
+                    variant="outline"
+                    size="sm"
+                    className="h-auto min-h-9 w-full whitespace-normal py-2 text-center sm:w-auto"
+                  >
+                    <a
+                      href="https://www.facebook.com/events_manager2/list"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Abrir Gerenciador de Eventos da Meta
+                      <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span className="sr-only">(abre em outra aba)</span>
+                    </a>
+                  </Button>
+                  <ol className="list-decimal space-y-1 pl-4 text-xs leading-5 text-[var(--app-text-secondary)]">
+                    <li>Entre na Meta com acesso de administrador e selecione o portfólio empresarial da imobiliária.</li>
+                    <li>
+                      Abra o conjunto de dados conectado ao CRM. Se ainda não tiver um, use{" "}
+                      <strong>Conectar fontes de dados → CRM</strong> e escolha <strong>Código manual</strong>.
+                      O Vimob já cuida do envio.
+                    </li>
+                    <li>
+                      Em <strong>Configurações</strong>, copie o ID do conjunto de dados. Na seção{" "}
+                      <strong>API de Conversões</strong>, clique em <strong>Gerar token de acesso</strong>.
+                    </li>
+                    <li>Volte ao Vimob e cole o ID e o token nos campos abaixo.</li>
+                  </ol>
+                  <p className="text-xs leading-5 text-[var(--app-text-secondary)]">
+                    Se o conjunto ou o botão de gerar token não aparecer, peça ajuda ao administrador
+                    do portfólio empresarial da Meta.
+                  </p>
+                </section>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="meta-crm-dataset-id">ID do conjunto de dados</Label>
+                    <Input
+                      id="meta-crm-dataset-id"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      value={datasetId}
+                      onChange={(event) =>
+                        setDatasetId(event.target.value.replace(/\D/g, "").slice(0, 30))
+                      }
+                      aria-invalid={Boolean(datasetIdError)}
+                      aria-describedby={datasetIdError ? "meta-crm-dataset-id-error" : undefined}
+                      placeholder="Ex.: 123456789012345"
+                    />
+                    {datasetIdError ? (
+                      <p id="meta-crm-dataset-id-error" className="text-xs text-destructive" role="alert">
+                        {datasetIdError}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="meta-crm-dataset-name">Nome no Vimob (opcional)</Label>
+                    <Input
+                      id="meta-crm-dataset-name"
+                      value={datasetName}
+                      onChange={(event) => setDatasetName(event.target.value.slice(0, 160))}
+                      placeholder="Ex.: Vimob · Imobiliária"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="meta-crm-dataset-token">Token da API de Conversões</Label>
+                  <Input
+                    id="meta-crm-dataset-token"
+                    type="password"
+                    autoComplete="new-password"
+                    value={datasetToken}
+                    onChange={(event) => setDatasetToken(event.target.value)}
+                    maxLength={8192}
+                    aria-invalid={Boolean(datasetTokenError)}
+                    aria-describedby={
+                      datasetTokenError
+                        ? "meta-crm-dataset-token-help meta-crm-dataset-token-error"
+                        : "meta-crm-dataset-token-help"
+                    }
+                    placeholder={
+                      configuredBefore
+                        ? "Token protegido no cofre · deixe em branco para manter"
+                        : "Cole o token gerado no Gerenciador de Eventos"
+                    }
+                  />
+                  <p id="meta-crm-dataset-token-help" className="text-xs leading-5 text-[var(--app-text-tertiary)]">
+                    {configuredBefore
+                      ? "Ao trocar o ID, informe também o token do novo conjunto de dados."
+                      : "Cole aqui o token gerado para o mesmo conjunto de dados do ID acima."}
+                  </p>
+                  {datasetTokenError ? (
+                    <p id="meta-crm-dataset-token-error" className="text-xs text-destructive" role="alert">
+                      {datasetTokenError}
+                    </p>
+                  ) : null}
+                </div>
+              </>
+            )}
+
             <div
               className={cn(
                 "app-card-soft flex items-start justify-between gap-4 p-3.5",
@@ -366,91 +497,6 @@ export function MetaConversionFeedbackPanel({
                 aria-label="Ativar devolução de qualidade para o Meta"
               />
             </div>
-
-            {configuredBefore && !editingDestination ? (
-              <div className="app-card-soft flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <p className="text-sm font-normal">CRM Dataset</p>
-                  <p className="mt-0.5 truncate text-xs text-[var(--app-text-tertiary)]">
-                    {selected ? getDatasetLabel(selected) : "Dataset configurado"}
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0"
-                  onClick={() => setEditingDestination(true)}
-                >
-                  Alterar Dataset
-                </Button>
-              </div>
-            ) : (
-              <>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="meta-crm-dataset-id">ID do CRM Dataset</Label>
-                    <Input
-                      id="meta-crm-dataset-id"
-                      inputMode="numeric"
-                      autoComplete="off"
-                      value={datasetId}
-                      onChange={(event) =>
-                        setDatasetId(event.target.value.replace(/\D/g, "").slice(0, 30))
-                      }
-                      aria-invalid={Boolean(datasetIdError)}
-                      aria-describedby={datasetIdError ? "meta-crm-dataset-id-error" : undefined}
-                      placeholder="Ex.: 123456789012345"
-                    />
-                    {datasetIdError ? (
-                      <p id="meta-crm-dataset-id-error" className="text-xs text-destructive" role="alert">
-                        {datasetIdError}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="meta-crm-dataset-name">Nome para identificação</Label>
-                    <Input
-                      id="meta-crm-dataset-name"
-                      value={datasetName}
-                      onChange={(event) => setDatasetName(event.target.value.slice(0, 160))}
-                      placeholder="Ex.: Vimob · Imobiliária"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="meta-crm-dataset-token">Token de acesso do Dataset</Label>
-                  <Input
-                    id="meta-crm-dataset-token"
-                    type="password"
-                    autoComplete="new-password"
-                    value={datasetToken}
-                    onChange={(event) => setDatasetToken(event.target.value)}
-                    maxLength={8192}
-                    aria-invalid={Boolean(datasetTokenError)}
-                    aria-describedby={
-                      datasetTokenError
-                        ? "meta-crm-dataset-token-help meta-crm-dataset-token-error"
-                        : "meta-crm-dataset-token-help"
-                    }
-                    placeholder={
-                      configuredBefore
-                        ? "Token protegido no cofre · deixe em branco para manter"
-                        : "Cole o token gerado no Gerenciador de Eventos"
-                    }
-                  />
-                  <p id="meta-crm-dataset-token-help" className="text-xs leading-5 text-[var(--app-text-tertiary)]">
-                    Ao trocar o ID do Dataset, informe também um novo token para impedir envio ao ativo errado.
-                  </p>
-                  {datasetTokenError ? (
-                    <p id="meta-crm-dataset-token-error" className="text-xs text-destructive" role="alert">
-                      {datasetTokenError}
-                    </p>
-                  ) : null}
-                </div>
-              </>
-            )}
           </div>
 
           <DialogFooter>
