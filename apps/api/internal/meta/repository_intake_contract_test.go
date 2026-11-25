@@ -10,6 +10,37 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
 )
 
+func TestMetaUnassignedAdminAlertDispatchIsPushOnly(t *testing.T) {
+	t.Parallel()
+
+	const event = "new_lead_received"
+	ordinary := prepareMetaLeadNotificationMetadata(nil, event)
+	ordinary[UnassignedAdminAlertMetadataKey] = true
+	ordinary["email_dispatch"] = map[string]any{"status": "pending"}
+	ordinary["dispatch"].(map[string]any)["email"] = map[string]any{"required": true}
+	admin := prepareMetaLeadNotificationMetadata(ordinary, event)
+	// Intake and the insert helper both prepare the same metadata.
+	admin = prepareMetaLeadNotificationMetadata(admin, event)
+	dispatch := admin["dispatch"].(map[string]any)
+	for channel, required := range map[string]bool{"push": true, "whatsapp": false, "email": false} {
+		if dispatch[channel].(map[string]any)["required"] != required {
+			t.Errorf("administrative notice %s requirement was not %v", channel, required)
+		}
+	}
+	if admin["event_key"] != event || admin["whatsapp_dispatch_required"] != false ||
+		admin["whatsapp_dispatch"] != nil || admin["email_dispatch"] != nil {
+		t.Fatalf("administrative notice lost its classification or allowed an external channel: %+v", admin)
+	}
+	for _, regularEvent := range []string{event, "lead_reentry"} {
+		regular := prepareMetaLeadNotificationMetadata(nil, regularEvent)
+		lanes := regular["dispatch"].(map[string]any)
+		if regular["whatsapp_dispatch_required"] != true || lanes["whatsapp"].(map[string]any)["required"] != true ||
+			lanes["push"].(map[string]any)["required"] != true {
+			t.Fatalf("regular %s alert lost its existing channels: %+v", regularEvent, regular)
+		}
+	}
+}
+
 func TestMetaIntakeNeverMaterializesFallbackBeforeProviderIdentity(t *testing.T) {
 	t.Parallel()
 

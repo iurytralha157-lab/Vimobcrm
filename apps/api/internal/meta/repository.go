@@ -325,10 +325,11 @@ func (repo Repository) persistLeadWithIdentityMode(ctx context.Context, webhookP
 		return "", false, err
 	}
 	notificationRecipients := []string{}
+	adminPush := false
 	if assignedUserID != nil {
 		notificationRecipients = append(notificationRecipients, *assignedUserID)
 	} else {
-		notificationRecipients, err = repo.listFallbackLeadNotificationRecipients(ctx, tx, integration.OrganizationID)
+		notificationRecipients, adminPush, err = repo.listFallbackLeadNotificationRecipients(ctx, tx, integration.OrganizationID, !reentry)
 		if err != nil {
 			return "", false, err
 		}
@@ -364,6 +365,10 @@ func (repo Repository) persistLeadWithIdentityMode(ctx context.Context, webhookP
 		}
 		if reentry && strings.TrimSpace(change.LeadgenID) != "" {
 			notificationMetadata["dedupe_key"] = metaNotificationDedupeKey(eventKey, leadID, recipientID, change.LeadgenID)
+		} else if adminPush {
+			// Keep a later assignment to this same recipient independently deliverable.
+			notificationMetadata[UnassignedAdminAlertMetadataKey] = true
+			notificationMetadata["dedupe_key"] = metaNotificationDedupeKey(UnassignedAdminAlertMetadataKey, leadID, recipientID)
 		} else if !reentry {
 			notificationMetadata["dedupe_key"] = metaNotificationDedupeKey(eventKey, leadID, recipientID)
 		}

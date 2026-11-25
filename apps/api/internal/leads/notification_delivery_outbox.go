@@ -583,7 +583,7 @@ func (repo Repository) prepareNormalizedNotificationDelivery(
 	delivery normalizedNotificationDelivery,
 	notification pendingNotification,
 ) normalizedNotificationPreflight {
-	if rejected := repo.preflightQueueNotification(ctx, notification); rejected != nil {
+	if rejected := repo.preflightQueueNotification(ctx, notification, delivery.Channel); rejected != nil {
 		return normalizedNotificationPreflight{Provider: "vimob", Failure: rejected}
 	}
 	if isCadenceNotificationDeliverySuppressed(notification.Metadata) {

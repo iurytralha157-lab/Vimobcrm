@@ -257,6 +257,9 @@ func (repo Repository) CreateNotification(ctx context.Context, tenantContext ten
 		notificationType = "info"
 	}
 	metadata := request.Metadata
+	if hasMetaUnassignedAdminAlert(metadata) || hasReservedMetaAdminAlertDedupeKey(stringFromMap(metadata, "dedupe_key")) {
+		return Notification{}, tenant.ErrOrganizationAccessDenied
+	}
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
@@ -279,6 +282,9 @@ func (repo Repository) CreateNotification(ctx context.Context, tenantContext ten
 
 func (repo Repository) DispatchNotification(ctx context.Context, tenantContext tenant.Context, request DispatchNotificationRequest) (DispatchNotificationResult, error) {
 	if request.OrganizationID != "" && request.OrganizationID != tenantContext.OrganizationID {
+		return DispatchNotificationResult{}, tenant.ErrOrganizationAccessDenied
+	}
+	if hasMetaUnassignedAdminAlert(request.Variables) || hasReservedMetaAdminAlertDedupeKey(request.DedupeKey) {
 		return DispatchNotificationResult{}, tenant.ErrOrganizationAccessDenied
 	}
 

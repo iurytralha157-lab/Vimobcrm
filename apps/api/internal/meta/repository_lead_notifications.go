@@ -25,9 +25,13 @@ func (repo Repository) findLeadAssignedUser(ctx context.Context, tx pgx.Tx, orga
 	return assignedUserID, err
 }
 
-func (repo Repository) listFallbackLeadNotificationRecipients(ctx context.Context, tx pgx.Tx, organizationID string) ([]string, error) {
+func (repo Repository) listFallbackLeadNotificationRecipients(ctx context.Context, tx pgx.Tx, organizationID string, initialEntry bool) ([]string, bool, error) {
+	// Only the database can activate the new push policy during rollout.
 	rows, err := tx.Query(ctx, `
-		select distinct user_id::text
+		select distinct user_id::text, case when $2::boolean
+			then pg_catalog.to_regprocedure('private.meta_unassigned_admin_push_enabled()') is not null
+			else false
+		end
 		from (
 			select om.user_id
 			from public.organization_members om
@@ -36,23 +40,24 @@ func (repo Repository) listFallbackLeadNotificationRecipients(ctx context.Contex
 			  and om.role in ('owner', 'admin', 'manager')
 		) recipients
 		where user_id is not null
-	`, organizationID)
+	`, organizationID, initialEntry)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 
 	recipients := []string{}
+	var adminPush bool
 	for rows.Next() {
 		var userID string
-		if err := rows.Scan(&userID); err != nil {
-			return nil, err
+		if err := rows.Scan(&userID, &adminPush); err != nil {
+			return nil, false, err
 		}
 		if strings.TrimSpace(userID) != "" {
 			recipients = append(recipients, userID)
 		}
 	}
-	return recipients, rows.Err()
+	return recipients, adminPush, rows.Err()
 }
 
 func (repo Repository) insertLeadNotification(ctx context.Context, tx pgx.Tx, organizationID string, userID string, leadID string, title string, content string, eventKey string, metadata map[string]any) error {
@@ -105,11 +110,25 @@ func (repo Repository) insertLeadNotification(ctx context.Context, tx pgx.Tx, or
 	return err
 }
 
+// UnassignedAdminAlertMetadataKey identifies the backend-owned Meta intake notice.
+const UnassignedAdminAlertMetadataKey = "meta_unassigned_admin_alert"
+
 func prepareMetaLeadNotificationMetadata(metadata map[string]any, eventKey string) map[string]any {
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
 	metadata["event_key"] = eventKey
+	if metadata[UnassignedAdminAlertMetadataKey] == true {
+		metadata["whatsapp_dispatch_required"] = false
+		delete(metadata, "whatsapp_dispatch")
+		delete(metadata, "email_dispatch")
+		metadata["dispatch"] = map[string]any{
+			"push":     map[string]any{"required": true, "status": "pending"},
+			"whatsapp": map[string]any{"required": false},
+			"email":    map[string]any{"required": false},
+		}
+		return metadata
+	}
 	metadata["whatsapp_dispatch_required"] = true
 	if _, exists := metadata["whatsapp_dispatch"]; !exists {
 		metadata["whatsapp_dispatch"] = map[string]any{

@@ -497,7 +497,11 @@ func isCadenceNotificationDeliverySuppressed(metadata map[string]any) bool {
 }
 
 func (repo Repository) dispatchPendingNotificationUnchecked(ctx context.Context, notification pendingNotification, channels []string) notificationDeliveryResult {
-	if rejected := repo.preflightQueueNotification(ctx, notification); rejected != nil {
+	// This event requires the durable attempt-start authorization.
+	if hasMetaUnassignedAdminAlert(notification.Metadata) {
+		return notificationDeliveryResult{Error: "queue_notification_policy_changed", SkipPersistence: true}
+	}
+	if rejected := repo.preflightQueueNotification(ctx, notification, ""); rejected != nil {
 		return notificationDeliveryResult{WhatsApp: *rejected, Push: *rejected, Email: *rejected, Error: rejected.Error}
 	}
 	if isWhatsAppInboundAttendantNotification(notification) {
