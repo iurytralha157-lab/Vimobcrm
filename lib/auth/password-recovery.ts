@@ -1,7 +1,7 @@
 import { isProtectedAppPath } from './post-login-redirect'
 
 const RECOVERY_INTENT_STORAGE_KEY = 'vimob:password-recovery:intent:v1'
-const RECOVERY_PROOF_STORAGE_KEY = 'vimob:password-recovery:proof:v1'
+const RECOVERY_PROOF_STORAGE_KEY = 'vimob:password-recovery:proof:v2'
 const RECOVERY_EVIDENCE_TTL_MS = 15 * 60 * 1000
 const RECOVERY_CODE_MAX_LENGTH = 4 * 1024
 const RECOVERY_TOKEN_HASH_MAX_LENGTH = 4 * 1024
@@ -25,9 +25,12 @@ type RecoveryIntent = {
   capturedAt: number
 }
 
-type RecoveryProof = RecoveryIntent & {
+type RecoveryIdentity = {
   userId: string
+  sessionId: string
 }
+
+type RecoveryProof = RecoveryIntent & RecoveryIdentity
 
 export type PasswordRecoveryStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
@@ -136,7 +139,7 @@ export function isPasswordRecoveryAccessToken(accessToken: string | null | undef
     && hasPasswordRecoveryAuthenticationMethod(readAccessTokenClaims(accessToken)),
   )
 }
-export function readPasswordRecoveryFragmentIdentity(accessToken: string) {
+export function readPasswordRecoverySessionIdentity(accessToken: string): RecoveryIdentity | null {
   const claims = readAccessTokenClaims(accessToken)
   if (!claims || !hasPasswordRecoveryAuthenticationMethod(claims)
     || typeof claims.sub !== 'string' || !claims.sub
@@ -259,13 +262,12 @@ export function capturePasswordRecoveryIntent(
 
 export function grantPasswordRecoveryProof(
   storage: PasswordRecoveryStorage,
-  userId: string,
+  identity: RecoveryIdentity,
   now = Date.now(),
 ) {
-  const normalizedUserId = userId.trim()
   const intent = safeRead<RecoveryIntent>(storage, RECOVERY_INTENT_STORAGE_KEY)
 
-  if (!normalizedUserId || !intent || !isFresh(intent.capturedAt, now)) {
+  if (!intent || !isFresh(intent.capturedAt, now)) {
     if (intent && !isFresh(intent.capturedAt, now)) {
       clearPasswordRecoveryEvidence(storage)
     }
@@ -274,7 +276,7 @@ export function grantPasswordRecoveryProof(
 
   const written = safeWrite(storage, RECOVERY_PROOF_STORAGE_KEY, {
     ...intent,
-    userId: normalizedUserId,
+    ...identity,
   } satisfies RecoveryProof)
 
   if (written) {
@@ -285,18 +287,17 @@ export function grantPasswordRecoveryProof(
 
 export function hasPasswordRecoveryProof(
   storage: PasswordRecoveryStorage,
-  userId: string,
+  identity: RecoveryIdentity,
   now = Date.now(),
 ) {
   const proof = safeRead<RecoveryProof>(storage, RECOVERY_PROOF_STORAGE_KEY)
-  const normalizedUserId = userId.trim()
 
   if (!proof || !isFresh(proof.capturedAt, now)) {
     if (proof) clearPasswordRecoveryEvidence(storage)
     return false
   }
 
-  return Boolean(normalizedUserId && proof.userId === normalizedUserId)
+  return proof.userId === identity.userId && proof.sessionId === identity.sessionId
 }
 
 export function isPasswordRecoveryIdentityMatch(

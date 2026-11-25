@@ -103,9 +103,16 @@ test('the actual form submit handler blocks simultaneous click and Enter', async
   const first = submit({ preventDefault() { prevented += 1; } });
   const second = submit({ preventDefault() { prevented += 1; } });
   await flush(); assert.equal(calls, 1); assert.equal(prevented, 2);
+  assert.equal(h.render().remainingSeconds, 60);
+  assert.equal(h.render().requestReceived, false);
+  h.advance(1_000);
+  assert.equal(h.render().remainingSeconds, 59);
   response.resolve({ error: null }); await Promise.all([first, second]);
   assert.equal(h.render().message, PASSWORD_RECOVERY_REQUEST_NOTICE);
-  assert.equal(h.render().remainingSeconds, 60);
+  assert.equal(h.render().remainingSeconds, 59);
+  h.advance(59_000);
+  assert.equal(h.render().blocked, false);
+  assert.equal(h.render().isRetry, true);
   h.unmount();
 });
 
@@ -122,6 +129,8 @@ test('returned errors and thrown failures never expose account or provider detai
     await h.render().submit();
     const output = h.render();
     assert.equal(output.message, PASSWORD_RECOVERY_REQUEST_NOTICE);
+    assert.equal(output.requestReceived, true);
+    assert.equal(output.isRetry, true);
     assert.equal(output.error, null); assert.equal(output.blocked, true); assert.equal(output.remainingSeconds, 60);
     assert.doesNotMatch(output.message, /SMTP|503|user_not_found|enviamos|você receberá/);
     h.unmount();
@@ -163,12 +172,14 @@ test('visual timeout reports uncertainty while the real promise continues to own
   const pending = h.render().submit(); await flush();
   h.waits[0](); await pending;
   assert.equal(h.render().message, PASSWORD_RECOVERY_REQUEST_UNCONFIRMED_NOTICE);
+  assert.equal(h.render().requestReceived, false);
   assert.equal(h.render().isSubmitting, false); assert.equal(h.render().pending, true);
   h.advance(61_000);
   await h.render().submit(); assert.equal(calls, 1); assert.equal(h.render().blocked, true);
   const before = h.writes;
   response.resolve({ error: null }); await flush();
   assert.equal(h.writes, before); assert.equal(h.render().blocked, false);
+  assert.equal(h.render().isRetry, true);
   assert.equal(h.render().message, PASSWORD_RECOVERY_REQUEST_UNCONFIRMED_NOTICE); h.unmount();
 });
 

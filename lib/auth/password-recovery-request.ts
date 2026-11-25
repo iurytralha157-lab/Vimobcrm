@@ -1,7 +1,7 @@
 export const PASSWORD_RECOVERY_REQUEST_COOLDOWN_MS = 60_000;
 
 export const PASSWORD_RECOVERY_REQUEST_NOTICE =
-  'Se existir uma conta com esse e-mail, você poderá receber um link de recuperação. Não é possível confirmar o envio por aqui. Aguarde antes de tentar novamente.';
+  'Solicitação recebida. Confira sua caixa de entrada e o spam. Abra o link mais recente neste mesmo navegador.';
 export const PASSWORD_RECOVERY_REQUEST_UNCONFIRMED_NOTICE =
   'Não foi possível confirmar a solicitação a tempo. O envio ainda pode estar em andamento. Aguarde antes de tentar novamente.';
 export const PASSWORD_RECOVERY_REQUEST_PENDING_NOTICE =

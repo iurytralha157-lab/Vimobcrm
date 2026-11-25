@@ -74,7 +74,8 @@ export function usePasswordRecoveryRequest({ active, email, request, coordinator
 
   const currentFeedback = feedback?.context === context ? feedback : null;
   const isSubmitting = currentFeedback?.status === 'sending';
-  const message = currentFeedback?.status === 'requested'
+  const requestReceived = currentFeedback?.status === 'requested';
+  const message = requestReceived
     ? PASSWORD_RECOVERY_REQUEST_NOTICE
     : currentFeedback?.status === 'unconfirmed'
       ? PASSWORD_RECOVERY_REQUEST_UNCONFIRMED_NOTICE
@@ -87,6 +88,8 @@ export function usePasswordRecoveryRequest({ active, email, request, coordinator
     pending: snapshot.pending,
     blocked: snapshot.pending || snapshot.remainingSeconds > 0,
     remainingSeconds: snapshot.remainingSeconds,
+    requestReceived,
+    isRetry: requestReceived || currentFeedback?.status === 'unconfirmed',
     message,
     error: currentFeedback?.error ?? null,
   };

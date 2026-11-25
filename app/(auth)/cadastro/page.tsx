@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import OnboardingScreen from "@/components/features/onboarding/onboarding-screen";
+import { OnboardingForm } from "@/components/features/onboarding/onboarding-form";
 import { AuthSplitLayout } from "@/components/features/auth/AuthSplitLayout";
 
 export const metadata: Metadata = {
@@ -28,7 +28,7 @@ export default function CadastroPage() {
         </p>
       )}
     >
-      <OnboardingScreen />
+      <OnboardingForm />
     </AuthSplitLayout>
   );
 }

@@ -15,10 +15,14 @@ import {
   type UserProfile,
 } from '@/lib/validation/auth-context';
 import {
+  getVimobAPIAccessTokenSessionId,
+  getVimobAPIAccessTokenUserId,
   setVimobAPIAccessToken,
 } from '@/lib/api/vimob-client';
 import {
   isPasswordRecoveryAccessToken,
+  isPasswordRecoveryPath,
+  readPasswordRecoverySessionIdentity,
 } from '@/lib/auth/password-recovery';
 import {
   initializeSignedInUserContext,
@@ -118,6 +122,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signOutInFlightIdentityRef = useRef<{ generation: number; key: string | null } | null>(null);
   const automaticLogoutSequenceRef = useRef(0);
   const recoveryActionScheduledRef = useRef<{ key: string | null } | null>(null);
+  const recoveryRequestedHereRef = useRef(false);
   const credentialSignInInFlightRef = useRef(false);
 
   const [session, setSessionState] = useState<Session | null>(null);
@@ -583,13 +588,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let lastMembershipRefreshAt = 0;
     authDebug('AuthProvider mounted');
 
-    const clearAllStates = () => {
+    const clearAllStates = (preserveApiToken = false) => {
       authDebug('Cleaning auth states');
       credentialSignInInFlightRef.current = false;
       organizationListRequestRef.current += 1;
       validatedAccessUserRef.current = null;
       markAccessValidationStale(false);
-      setVimobAPIAccessToken(null, null);
+      if (!preserveApiToken) setVimobAPIAccessToken(null, null);
       const currentUserId = userRef.current?.id;
       if (currentUserId) {
         localStorage.removeItem(`vimob_active_organization_${currentUserId}`);
@@ -616,16 +621,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const isolatePasswordRecoverySession = (recoverySession: Session) => {
       if (!isPasswordRecoveryAccessToken(recoverySession.access_token)) return false;
 
+      const pathname = window.location.pathname;
+      const onResetPage = isPasswordRecoveryPath(pathname);
+      const identity = onResetPage ? readPasswordRecoverySessionIdentity(recoverySession.access_token) : null;
+      // Another tab can announce the same recovery while its password request is in flight.
+      const preserveApiToken = identity !== null && identity.userId === recoverySession.user.id
+        && identity.userId === getVimobAPIAccessTokenUserId()
+        && identity.sessionId === getVimobAPIAccessTokenSessionId();
       // This SDK event precedes the regular session setter. Record its visit
       // synchronously before isolating it from the CRM's authenticated state.
       trackGlobalSignOutSession(logoutLifecycleRef.current, recoverySession);
       const guard = captureGlobalSignOutGuard(recoverySession, recoverySession.user.id, logoutLifecycleRef.current);
-      clearAllStates();
+      clearAllStates(preserveApiToken);
       setLoading(false);
       setAuthInitialized(true);
       setOrganizationsLoaded(true);
 
-      if (window.location.pathname.startsWith(ROUTES.RESET_PASSWORD)) {
+      if (onResetPage || (pathname === ROUTES.LOGIN && recoveryRequestedHereRef.current)) {
         return true;
       }
 
@@ -982,6 +994,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [failOrganizationValidation, markAccessValidationStale, retainValidatedAccess, setSession]);
 
   const signIn = async (email: string, password: string) => {
+    recoveryRequestedHereRef.current = false;
     credentialSignInInFlightRef.current = true;
 
     try {
@@ -994,6 +1007,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const resetPassword = async (email: string) => {
+    recoveryRequestedHereRef.current = true;
     try {
       const { error } = await authAPI.resetPassword(email);
 

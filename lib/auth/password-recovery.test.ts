@@ -50,6 +50,7 @@ const selfHostedAuthEmailEnvExampleSource = readFileSync(
 )
 const recoveryTemplateLink =
   '{{ .ConfirmationURL }}'
+const recoveryIdentity = { userId: 'user-1', sessionId: 'recovery-session' }
 
 function unsignedToken(payload: Record<string, unknown>) {
   const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')
@@ -84,8 +85,8 @@ test('available browser recovery storage retains its existing evidence contract'
   const storage = memoryStorage()
   assert.equal(getPasswordRecoveryStorage({ sessionStorage: storage }), storage)
   assert.equal(capturePasswordRecoveryIntent(storage, new URL('https://app.test/reset-password?code=synthetic-code'), 1_000), true)
-  assert.equal(grantPasswordRecoveryProof(storage, 'synthetic-user', 1_001), true)
-  assert.equal(hasPasswordRecoveryProof(storage, 'synthetic-user', 1_002), true)
+  assert.equal(grantPasswordRecoveryProof(storage, recoveryIdentity, 1_001), true)
+  assert.equal(hasPasswordRecoveryProof(storage, recoveryIdentity, 1_002), true)
 })
 
 test('recognizes only explicit recovery URL formats on /reset-password', () => {
@@ -138,15 +139,15 @@ test('rejects duplicate, conflicting or oversized recovery credentials', () => {
 
 test('an existing session is never enough without a recovery proof', () => {
   const storage = memoryStorage()
-  assert.equal(hasPasswordRecoveryProof(storage, 'existing-user', 1_000), false)
+  assert.equal(hasPasswordRecoveryProof(storage, recoveryIdentity, 1_000), false)
   assert.equal(isPasswordRecoveryIdentityMatch(null, 'existing-user', 'existing-user'), false)
 })
 
-test('PASSWORD_RECOVERY proof is granted only after a fresh recovery intent', () => {
+test('recovery proof binds the user and exact session after a fresh recovery intent', () => {
   const storage = memoryStorage()
   const now = 10_000
 
-  assert.equal(grantPasswordRecoveryProof(storage, 'user-1', now), false)
+  assert.equal(grantPasswordRecoveryProof(storage, recoveryIdentity, now), false)
   assert.equal(
     capturePasswordRecoveryIntent(
       storage,
@@ -155,9 +156,10 @@ test('PASSWORD_RECOVERY proof is granted only after a fresh recovery intent', ()
     ),
     true,
   )
-  assert.equal(grantPasswordRecoveryProof(storage, 'user-1', now + 1), true)
-  assert.equal(hasPasswordRecoveryProof(storage, 'user-1', now + 2), true)
-  assert.equal(hasPasswordRecoveryProof(storage, 'other-user', now + 2), false)
+  assert.equal(grantPasswordRecoveryProof(storage, recoveryIdentity, now + 1), true)
+  assert.equal(hasPasswordRecoveryProof(storage, recoveryIdentity, now + 2), true)
+  assert.equal(hasPasswordRecoveryProof(storage, { ...recoveryIdentity, userId: 'other-user' }, now + 2), false)
+  assert.equal(hasPasswordRecoveryProof(storage, { ...recoveryIdentity, sessionId: 'other-session' }, now + 2), false)
 })
 
 test('recovery proof expires and can be explicitly cleared', () => {
@@ -168,18 +170,18 @@ test('recovery proof expires and can be explicitly cleared', () => {
     new URL('https://app.test/reset-password?token_hash=hash&type=recovery'),
     now,
   )
-  grantPasswordRecoveryProof(storage, 'user-1', now)
+  grantPasswordRecoveryProof(storage, recoveryIdentity, now)
 
-  assert.equal(hasPasswordRecoveryProof(storage, 'user-1', now + (15 * 60 * 1000) + 1), false)
+  assert.equal(hasPasswordRecoveryProof(storage, recoveryIdentity, now + (15 * 60 * 1000) + 1), false)
 
   capturePasswordRecoveryIntent(
     storage,
     new URL('https://app.test/reset-password?code=another-code'),
     now,
   )
-  grantPasswordRecoveryProof(storage, 'user-1', now)
+  grantPasswordRecoveryProof(storage, recoveryIdentity, now)
   clearPasswordRecoveryEvidence(storage)
-  assert.equal(hasPasswordRecoveryProof(storage, 'user-1', now), false)
+  assert.equal(hasPasswordRecoveryProof(storage, recoveryIdentity, now), false)
 })
 
 test('identity check binds submit to the user authenticated by recovery', () => {
@@ -267,8 +269,7 @@ test('telemetry provider sends only the sanitized browser location', () => {
 })
 
 test('reset screen maps external auth errors to fixed copy', () => {
-  assert.match(recoverySessionHookSource, /hash\.has\('error_description'\)/)
-  assert.match(recoverySessionHookSource, /Este link de recuperação expirou, já foi usado ou foi aberto em outro navegador\./)
+  assert.match(recoverySessionHookSource, /Cada link só pode ser usado uma vez\. Se o formulário já abriu, volte àquela aba\./)
   assert.doesNotMatch(recoverySessionHookSource, /invalid\(hashError\)/)
   assert.doesNotMatch(recoverySessionHookSource, /hash\.get\('error_description'\)/)
 })
@@ -307,6 +308,10 @@ test('recovery email keeps the exact reset contract in the light Vimob layout', 
   assert.match(recoveryEmailTemplateSource, /height="48" bgcolor="#ff4529"/)
   assert.match(recoveryEmailTemplateSource, /mso-padding-alt:14px 18px/)
   assert.match(recoveryEmailTemplateSource, /<td class="email-content" align="left"/)
+  assert.match(
+    recoveryEmailTemplateSource,
+    /abra o link no mesmo navegador em que fez o pedido\.[\s\S]*?<table class="email-action"/,
+  )
   assert.match(recoveryEmailTemplateSource, /<table class="email-action"[^>]*style="margin:0 0 26px/)
   assert.doesNotMatch(recoveryEmailTemplateSource, /<table class="email-action"[^>]*width="100%"/)
   assert.doesNotMatch(recoveryEmailTemplateSource, /\.email-action\s*\{\s*width:\s*100%/)

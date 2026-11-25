@@ -51,7 +51,6 @@ const publicSignupCompletionSchema = z.object({
 const publicSignupRetrySchema = z.object({
   attemptId: signupAttemptIdSchema,
   email: z.string().email(),
-  reason: z.literal('document_conflict'),
 })
 
 export type StoredPublicSignupCompletion = z.infer<typeof publicSignupCompletionSchema>
@@ -95,7 +94,6 @@ export function persistPublicSignupRetry(
   const retry = publicSignupRetrySchema.parse({
     attemptId,
     email: email.trim().toLowerCase(),
-    reason: 'document_conflict',
   })
   storage.setItem(PUBLIC_SIGNUP_ATTEMPT_STORAGE_KEY, retry.attemptId)
   storage.setItem(PUBLIC_SIGNUP_RETRY_STORAGE_KEY, JSON.stringify(retry))

@@ -35,7 +35,6 @@ func (row onboardingPrevalidationRow) Scan(destinations ...any) error {
 
 type onboardingPrevalidationQueryer struct {
 	limiterResults []bool
-	lookupExists   bool
 	queries        []string
 	arguments      [][]any
 }
@@ -55,7 +54,7 @@ func (queryer *onboardingPrevalidationQueryer) QueryRow(
 		}
 		return onboardingPrevalidationRow{value: allowed}
 	}
-	return onboardingPrevalidationRow{value: queryer.lookupExists}
+	return onboardingPrevalidationRow{err: errors.New("prevalidation attempted a business-data lookup")}
 }
 
 func TestValidatePublicOnboardingStepValidationRequestNormalizesEachStep(t *testing.T) {
@@ -106,15 +105,13 @@ func TestValidatePublicOnboardingStepValidationRequestRejectsInvalidOrMixedPaylo
 	}
 }
 
-func TestPublicOnboardingValidateStepDetectsExistingDocumentAndEmail(t *testing.T) {
+func TestPublicOnboardingValidateStepChecksFormatAndRateLimitsOnly(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name          string
-		request       PublicOnboardingStepValidationRequest
-		wantError     error
-		lookupSnippet string
-		lookupValue   string
+		name    string
+		request PublicOnboardingStepValidationRequest
+		value   string
 	}{
 		{
 			name: "document",
@@ -122,32 +119,29 @@ func TestPublicOnboardingValidateStepDetectsExistingDocumentAndEmail(t *testing.
 				Step: publicOnboardingOrganizationStep, CompanyName: "Vimob Imoveis",
 				DocumentNumber: "04252011000110", ipAddress: "192.0.2.10",
 			},
-			wantError: ErrPublicSignupDocumentExists, lookupSnippet: "from public.organizations", lookupValue: "04252011000110",
+			value: "04252011000110",
 		},
 		{
 			name: "email",
 			request: PublicOnboardingStepValidationRequest{
 				Step: publicOnboardingAccessStep, Email: "andre@example.com", ipAddress: "192.0.2.10",
 			},
-			wantError: ErrPublicSignupEmailExists, lookupSnippet: "from auth.users", lookupValue: "andre@example.com",
+			value: "andre@example.com",
 		},
 	}
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			queryer := &onboardingPrevalidationQueryer{lookupExists: true}
-			_, err := publicOnboardingValidateStepWithQueryer(context.Background(), queryer, "production", testCase.request)
-			if !errors.Is(err, testCase.wantError) {
-				t.Fatalf("error = %v, want %v", err, testCase.wantError)
+			queryer := &onboardingPrevalidationQueryer{}
+			result, err := publicOnboardingValidateStepWithQueryer(context.Background(), queryer, "production", testCase.request)
+			if err != nil || !result.OK || !result.Valid || result.Step != testCase.request.Step {
+				t.Fatalf("result = %#v, error = %v", result, err)
 			}
-			if len(queryer.queries) != 3 || !strings.Contains(queryer.queries[2], testCase.lookupSnippet) {
+			if len(queryer.queries) != 2 {
 				t.Fatalf("unexpected query sequence: %#v", queryer.queries)
 			}
-			if len(queryer.arguments[2]) != 1 || queryer.arguments[2][0] != testCase.lookupValue {
-				t.Fatalf("lookup did not use normalized value: %#v", queryer.arguments[2])
-			}
 			for index := 0; index < 2; index++ {
-				if len(queryer.arguments[index]) < 2 || queryer.arguments[index][1] == testCase.lookupValue {
+				if len(queryer.arguments[index]) < 2 || queryer.arguments[index][1] == testCase.value {
 					t.Fatalf("rate limiter stored raw PII instead of its digest: %#v", queryer.arguments[index])
 				}
 			}
@@ -197,26 +191,32 @@ func TestPublicOnboardingValidateStepDoesNotAcceptPassword(t *testing.T) {
 	}
 }
 
-func TestPublicOnboardingPrevalidationUsesStableConflictCodes(t *testing.T) {
+func TestPublicOnboardingFinalizationUsesIdenticalConflictResponses(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name string
 		err  error
-		code string
 	}{
-		{name: "document", err: ErrPublicSignupDocumentExists, code: "signup_document_exists"},
-		{name: "email", err: ErrPublicSignupEmailExists, code: "signup_email_exists"},
+		{name: "document", err: ErrPublicSignupDocumentExists},
+		{name: "email", err: ErrPublicSignupEmailExists},
+		{name: "attempt", err: ErrSignupAttemptConflict},
 	}
 
+	var firstBody string
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodPost, "/v1/public/onboarding/validate-step", nil)
+			request := httptest.NewRequest(http.MethodPost, "/v1/public/onboarding/signup", nil)
 			writeOnboardingError(recorder, request, testCase.err)
 			if recorder.Code != http.StatusConflict ||
-				!strings.Contains(recorder.Body.String(), `"code":"`+testCase.code+`"`) {
+				!strings.Contains(recorder.Body.String(), `"code":"signup_conflict"`) {
 				t.Fatalf("unexpected conflict response: status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if firstBody == "" {
+				firstBody = recorder.Body.String()
+			} else if recorder.Body.String() != firstBody {
+				t.Fatalf("conflict returned a different public response: %s", recorder.Body.String())
 			}
 		})
 	}

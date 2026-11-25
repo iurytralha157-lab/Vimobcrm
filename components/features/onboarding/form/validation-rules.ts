@@ -19,14 +19,9 @@ const signupFieldErrorKeySet = new Set<SignupFieldErrorKey>(
 );
 
 export function translateSignupMessage(message?: string, code?: string) {
-  if (code === "signup_email_exists") {
-    return "Este e-mail já está cadastrado. Faça login ou use outro e-mail.";
-  }
-  if (code === "signup_document_exists") {
-    return "Já existe uma organização cadastrada com este CPF ou CNPJ.";
-  }
-  if (code === "signup_attempt_conflict") {
-    return "A tentativa anterior estava vinculada a outro e-mail. Reiniciamos com segurança; tente novamente.";
+  if (code === "signup_conflict" || code === "signup_email_exists" ||
+    code === "signup_document_exists" || code === "signup_attempt_conflict") {
+    return "Não foi possível concluir o cadastro com os dados informados. Revise os dados ou, se já tem acesso ao Vimob, faça login ou recupere sua senha.";
   }
   if (code === "signup_rate_limited") {
     return "Muitas tentativas. Aguarde um pouco antes de tentar novamente.";
@@ -39,7 +34,7 @@ export function translateSignupMessage(message?: string, code?: string) {
     normalized.includes("already registered") ||
     normalized.includes("user already exists")
   ) {
-    return "Este e-mail ja esta cadastrado. Faca login ou use outro e-mail.";
+    return "Não foi possível concluir o cadastro com os dados informados.";
   }
 
   return message || "Não foi possível concluir o cadastro.";

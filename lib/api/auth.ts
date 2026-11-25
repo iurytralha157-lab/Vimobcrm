@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase/client'
+import { requestPasswordRecovery, supabase } from '@/lib/supabase/client'
 import { ROUTES, getPublicAppUrl } from '@/config/constants'
 import { meAPI } from './me'
 import { settingsAPI } from './settings'
@@ -23,11 +23,7 @@ export const authAPI = {
 
   async resetPassword(email: string) {
     const input = parseDomainInput(resetPasswordSchema, { email }, 'auth.reset-password')
-    const redirectUrl = getPublicAppUrl(ROUTES.RESET_PASSWORD);
-
-    return supabase.auth.resetPasswordForEmail(input.email, {
-      redirectTo: redirectUrl,
-    });
+    return requestPasswordRecovery(input.email, getPublicAppUrl(ROUTES.RESET_PASSWORD))
   },
 
   async resendSignupEmailConfirmation(email: string) {

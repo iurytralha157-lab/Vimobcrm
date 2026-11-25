@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import {
   onboardingSignupResponseSchema,
   onboardingSignupSchema,
@@ -106,7 +107,8 @@ export async function POST(request: Request) {
 
   const input = parsed.data
   try {
-    enforceServerRateLimit(`onboarding-signup:email:${input.email}`, [
+    const emailIdentity = createHash('sha256').update(input.email).digest('hex')
+    enforceServerRateLimit(`onboarding-signup:email:${emailIdentity}`, [
       { limit: 2, windowMs: 60_000 },
       { limit: 5, windowMs: 60 * 60_000 },
     ])
@@ -132,6 +134,14 @@ export async function POST(request: Request) {
       },
       forwardedFor,
     )
+
+    if (response.status === 409) {
+      return jsonResponse({
+        ok: false,
+        code: 'signup_conflict',
+        message: 'Não foi possível concluir o cadastro com os dados informados. Revise os dados ou, se já tem acesso ao Vimob, faça login ou recupere sua senha.',
+      }, 409)
+    }
 
     if (!payload.success) {
       return jsonResponse(

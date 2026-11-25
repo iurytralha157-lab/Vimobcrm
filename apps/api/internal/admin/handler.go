@@ -333,6 +333,7 @@ func setInvitationCapabilityResponseHeaders(w http.ResponseWriter) {
 }
 
 func (handler Handler) PublicOnboardingSignup(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	defer r.Body.Close()
 	var request OnboardingSignupRequest
 	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
@@ -349,6 +350,7 @@ func (handler Handler) PublicOnboardingSignup(w http.ResponseWriter, r *http.Req
 }
 
 func (handler Handler) PublicOnboardingValidateStep(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	defer r.Body.Close()
 	var request PublicOnboardingStepValidationRequest
 	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
@@ -986,20 +988,16 @@ func writeOnboardingError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrPublicSignupRateLimited):
 		httpserver.WriteJSON(w, http.StatusTooManyRequests, map[string]any{"ok": false, "code": "signup_rate_limited", "message": "Muitas tentativas. Aguarde antes de tentar novamente."})
-	case errors.Is(err, ErrSignupAttemptConflict):
-		httpserver.WriteJSON(w, http.StatusConflict, map[string]any{"ok": false, "code": "signup_attempt_conflict", "message": "Esta tentativa ja foi usada com outro e-mail. Use o e-mail original ou inicie o cadastro em uma nova aba."})
-	case errors.Is(err, ErrPublicSignupEmailExists):
-		httpserver.WriteJSON(w, http.StatusConflict, map[string]any{"ok": false, "code": "signup_email_exists", "message": "Este e-mail ja esta cadastrado. Faca login ou use outro e-mail."})
-	case errors.Is(err, ErrPublicSignupDocumentExists):
-		httpserver.WriteJSON(w, http.StatusConflict, map[string]any{"ok": false, "code": "signup_document_exists", "message": "Ja existe uma organizacao cadastrada com este CPF ou CNPJ."})
+	case errors.Is(err, ErrSignupAttemptConflict),
+		errors.Is(err, ErrPublicSignupEmailExists),
+		errors.Is(err, ErrPublicSignupDocumentExists):
+		httpserver.WriteJSON(w, http.StatusConflict, map[string]any{"ok": false, "code": "signup_conflict", "message": "Não foi possível concluir o cadastro com os dados informados. Revise os dados ou, se já tem acesso ao Vimob, faça login ou recupere sua senha."})
 	case errors.Is(err, ErrPublicSignupConfirmationFailed):
 		httpserver.WriteJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "code": "signup_confirmation_failed", "message": "Nao foi possivel preparar a confirmacao do e-mail. Tente novamente em alguns instantes."})
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "code": "signup_invalid_input", "message": "Dados de cadastro invalidos."})
 	case errors.Is(err, ErrNotFound):
 		httpserver.WriteJSON(w, http.StatusNotFound, map[string]any{"ok": false, "code": "signup_plan_not_found", "message": "Plano de cadastro nao encontrado."})
-	case strings.Contains(strings.ToLower(err.Error()), "already"):
-		httpserver.WriteJSON(w, http.StatusConflict, map[string]any{"ok": false, "code": "signup_email_exists", "message": "Este e-mail ja esta cadastrado. Faca login ou use outro e-mail."})
 	default:
 		httpserver.WriteJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "code": "signup_failed", "message": "Nao foi possivel concluir o cadastro. Tente novamente em alguns instantes."})
 	}

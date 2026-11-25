@@ -102,8 +102,10 @@ export async function proxy(request: NextRequest) {
   const isPasswordResetReturnToLogin =
     request.nextUrl.pathname.startsWith('/login') &&
     request.nextUrl.searchParams.get('passwordReset') === 'success'
+  const isPasswordRecoveryRequest =
+    request.nextUrl.pathname === '/login' && request.nextUrl.searchParams.get('recover') === '1'
   if (publicAuthRoute) {
-    if (user && !isPasswordResetReturnToLogin) {
+    if (user && !isPasswordResetReturnToLogin && !isPasswordRecoveryRequest) {
       const destination = getSafePostLoginPath(
         request.nextUrl.searchParams.get('redirectTo'),
         DEFAULT_AUTHENTICATED_ROUTE,

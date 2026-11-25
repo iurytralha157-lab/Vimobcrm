@@ -2296,11 +2296,14 @@ body {
   box-shadow: 0 14px 40px rgb(15 23 42 / 0.12);
 }
 
-@media (max-width: 767px) {
-  .auth-page :where(input, select, textarea) {
+@media (max-width: 767px), (pointer: coarse) {
+  .auth-page :where(input, select, textarea),
+  .checkout-page :where(input, select, textarea) {
     font-size: 16px;
   }
+}
 
+@media (max-width: 767px) {
   .auth-page :where(a, button, input, select, textarea) {
     touch-action: manipulation;
   }

@@ -89,7 +89,9 @@ test.describe('contratos públicos de autenticação e onboarding', () => {
     let loginErrorCode = 'invalid_credentials';
     let loginStatus = 400;
     let recoveryStatus = 200;
-    const recoveryNotice = 'Se existir uma conta com esse e-mail, você poderá receber um link de recuperação. Não é possível confirmar o envio por aqui. Aguarde antes de tentar novamente.';
+    const recoveryNotice = 'Solicitação recebida. Confira sua caixa de entrada e o spam. Abra o link mais recente neste mesmo navegador.';
+    let releaseRecoveryResponse: () => void = () => {};
+    const firstRecoveryResponse = new Promise<void>(resolve => { releaseRecoveryResponse = resolve; });
     const consoleErrors: string[] = [];
     page.on('console', (message) => {
       if (message.type() === 'error') consoleErrors.push(message.text());
@@ -125,6 +127,7 @@ test.describe('contratos públicos de autenticação e onboarding', () => {
 
       recoveryRequests += 1;
       recoveryRedirectTo = new URL(route.request().url()).searchParams.get('redirect_to');
+      if (recoveryRequests === 1) await firstRecoveryResponse;
       await route.fulfill({
         status: recoveryStatus,
         contentType: 'application/json',
@@ -168,38 +171,31 @@ test.describe('contratos públicos de autenticação e onboarding', () => {
     await page.getByLabel('Seu e-mail').fill('recuperacao@vimob.test');
     await page.getByRole('button', { name: 'Enviar link de recuperação' }).click();
 
-    await expect(
-      page.getByText(recoveryNotice),
-    ).toBeVisible();
-    expect(recoveryRequests).toBe(1);
+    const countdown = page.getByRole('button', { name: /^Reenviar link em \d\d:\d\d$/ });
+    const notice = page.locator('#recovery-notice');
+    try {
+      await expect.poll(() => recoveryRequests).toBe(1);
+      await expect(countdown).toBeDisabled();
+      await expect(notice).toHaveCount(0);
+    } finally {
+      releaseRecoveryResponse();
+    }
+    await expect(notice).toHaveText(recoveryNotice);
+    await expect(notice).toHaveClass(/\btext-emerald-700\b/);
     expect(recoveryRedirectTo).toBe(`${new URL(page.url()).origin}/reset-password`);
-    await expect(page.getByRole('button', { name: /Solicitar novamente em/ })).toBeDisabled();
-    await page.clock.fastForward(60_000);
 
-    recoveryStatus = 400;
-    await page.getByLabel('Seu e-mail').fill('outro@vimob.test');
-    await page.getByRole('button', { name: 'Enviar link de recuperação' }).click();
-    await expect(
-      page.getByText(recoveryNotice),
-    ).toBeVisible();
-    expect(recoveryRequests).toBe(2);
-    await expect(page.getByRole('button', { name: /Solicitar novamente em/ })).toBeDisabled();
-    await page.clock.fastForward(60_000);
-
-    recoveryStatus = 429;
-    await page.getByLabel('Seu e-mail').fill('limite@vimob.test');
-    await page.getByRole('button', { name: 'Enviar link de recuperação' }).click();
-    await expect(
-      page.getByText(recoveryNotice),
-    ).toBeVisible();
-    expect(recoveryRequests).toBe(3);
-    await expect(page.getByRole('button', { name: /Solicitar novamente em/ })).toBeDisabled();
-    await page.clock.fastForward(60_000);
-    recoveryStatus = 503;
-    await page.getByLabel('Seu e-mail').fill('indisponivel@vimob.test');
-    await page.getByRole('button', { name: 'Enviar link de recuperação' }).click();
-    await expect(page.getByText(recoveryNotice)).toBeVisible();
-    await expect(page.getByRole('button', { name: /Solicitar novamente em/ })).toBeDisabled();
+    for (const [status, email] of [[400, 'outro@vimob.test'], [429, 'limite@vimob.test'], [503, 'indisponivel@vimob.test']] as const) {
+      await expect(countdown).toBeDisabled();
+      await page.clock.fastForward(60_000);
+      await expect(page.getByRole('button', { name: 'Reenviar link', exact: true })).toBeEnabled();
+      recoveryStatus = status;
+      await page.getByLabel('Seu e-mail').fill(email);
+      await expect(notice).toHaveCount(0);
+      await page.getByRole('button', { name: 'Enviar link de recuperação' }).click();
+      await expect(notice).toHaveText(recoveryNotice);
+      await expect(notice).toHaveClass(/\btext-emerald-700\b/);
+    }
+    await expect(countdown).toBeDisabled();
     expect(recoveryRequests).toBe(4);
     expect(consoleErrors.join(' ')).not.toMatch(/user_not_found|User not found/i);
   });
@@ -334,7 +330,9 @@ test.describe('contratos públicos de autenticação e onboarding', () => {
 
   test('cadastro percorre as três etapas com validação mockada sem criar conta', async ({ page }) => {
     const validationPayloads: unknown[] = [];
-    let signupRequests = 0;
+    const signupPlans: string[] = [];
+    let submittedAttemptId: string | undefined;
+    const pendingSignup = Promise.withResolvers<void>();
 
     await page.route('**/api/onboarding/validate-step', async (route) => {
       validationPayloads.push(route.request().postDataJSON());
@@ -363,13 +361,29 @@ test.describe('contratos públicos de autenticação e onboarding', () => {
             display_order: 1,
             modules: ['crm'],
             display_features: ['CRM completo'],
+          }, {
+            id: '10000000-0000-4000-8000-000000000002',
+            slug: 'equipe',
+            name: 'Vimob Equipe',
+            price: 299,
+            billing_cycle: 'monthly',
+            trial_enabled: false,
+            max_users: 20,
+            display_order: 2,
+            modules: ['crm'],
           }],
         }),
       });
     });
     await page.route('**/api/onboarding/signup', async (route) => {
-      signupRequests += 1;
-      await route.abort('blockedbyclient');
+      const submitted = route.request().postDataJSON();
+      signupPlans.push(submitted.planSlug);
+      submittedAttemptId = submitted.attemptId;
+      await pendingSignup.promise;
+      await route.fulfill({
+        status: 409,
+        json: { ok: false, code: 'signup_conflict', message: 'Cadastro indisponível' },
+      });
     });
 
     await page.goto('/cadastro');
@@ -404,7 +418,32 @@ test.describe('contratos públicos de autenticação e onboarding', () => {
       },
       { step: 'access', email: 'gestor@vimob.test' },
     ]);
-    expect(signupRequests).toBe(0);
+    expect(signupPlans).toEqual([]);
+
+    await page.getByRole('button', { name: 'Iniciar teste Profissional' }).click();
+    try {
+      await expect(page.getByRole('button', { name: 'Criando ambiente' })).toBeDisabled();
+      await expect(page.getByRole('button', { name: 'Plano selecionado' })).toBeDisabled();
+      await expect(page.getByRole('button', { name: 'Ver próximo plano' })).toBeDisabled();
+      await expect(page.getByRole('button', { name: 'Mostrar plano Equipe' })).toBeDisabled();
+      await expect.poll(() => signupPlans).toEqual(['profissional']);
+    } finally {
+      pendingSignup.resolve();
+    }
+    await expect(page.getByRole('alert')).toContainText('Revise os dados');
+    await expect(progress).toHaveAttribute('aria-valuetext', 'Etapa 3 de 3');
+    await expect(page.getByRole('button', { name: 'Ver próximo plano' })).toBeEnabled();
+    await expect(page.getByRole('link', { name: 'Fazer login', exact: true })).toHaveAttribute('href', '/login');
+    await expect(page.getByRole('link', { name: 'Recuperar senha', exact: true })).toHaveAttribute('href', '/login?recover=1');
+
+    const getStoredAttempt = () => page.evaluate(() => sessionStorage.getItem('vimob:public-signup:attempt:v1'));
+    expect(submittedAttemptId).toBeTruthy();
+    expect(await getStoredAttempt()).toBe(submittedAttemptId);
+    await page.getByRole('button', { name: 'Iniciar nova tentativa' }).click();
+    await expect(progress).toHaveAttribute('aria-valuetext', 'Etapa 1 de 3');
+    const newAttemptId = await getStoredAttempt();
+    expect(newAttemptId).toBeTruthy();
+    expect(newAttemptId).not.toBe(submittedAttemptId);
   });
 
   test('login, recuperação, cadastro e reset não criam overflow no mobile', async ({ page }) => {

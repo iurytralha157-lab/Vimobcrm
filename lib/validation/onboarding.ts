@@ -3,7 +3,11 @@ import {
   CURRENT_PRIVACY_VERSION,
   CURRENT_TERMS_VERSION,
 } from '../../config/legal-documents'
-import { isValidBrazilianTaxId, normalizeBrazilianTaxId } from './brazilian-tax-id'
+import {
+  BRAZILIAN_NUMERIC_TAX_ID_INPUT,
+  isValidBrazilianTaxId,
+  normalizeBrazilianTaxId,
+} from './brazilian-tax-id'
 import { strongPasswordSchema } from './password'
 
 export { CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION }
@@ -14,10 +18,10 @@ const optionalTrimmedString = z
   .optional()
   .transform((value) => value || undefined)
 
-const onboardingStepDocumentSchema = z.string()
+const onboardingDocumentSchema = z.string()
   .trim()
   .min(1, 'Informe o CPF ou CNPJ')
-  .regex(/^[\d./\-\s]+$/, 'Informe somente os dígitos e a máscara do CPF ou CNPJ')
+  .regex(BRAZILIAN_NUMERIC_TAX_ID_INPUT, 'O cadastro online aceita CPF ou CNPJ numérico.')
   .transform(normalizeBrazilianTaxId)
   .refine(isValidBrazilianTaxId, 'Informe um CPF ou CNPJ válido')
 
@@ -92,7 +96,7 @@ function validateOnboardingAdminCpf(
 
 export const onboardingOrganizationStepSchema = z.object({
   companyName: z.string().trim().min(2, 'Informe o nome da imobiliária').max(160),
-  documentNumber: onboardingStepDocumentSchema,
+  documentNumber: onboardingDocumentSchema,
   brokersCount: z.coerce
     .number()
     .int('Informe uma quantidade inteira de corretores')
@@ -101,7 +105,7 @@ export const onboardingOrganizationStepSchema = z.object({
 })
 
 export const onboardingAccessStepSchema = z.object({
-  documentNumber: onboardingStepDocumentSchema,
+  documentNumber: onboardingDocumentSchema,
   adminName: z.string().trim().min(2, 'Informe o nome completo do gestor').max(140),
   adminCpf: optionalOnboardingAdminCpfSchema,
   phoneCountryCode: onboardingStepPhoneCountryCodeSchema,
@@ -119,7 +123,7 @@ export const onboardingStepValidationRequestSchema = z.discriminatedUnion('step'
   z.object({
     step: z.literal('organization'),
     companyName: z.string().trim().min(2).max(160),
-    documentNumber: onboardingStepDocumentSchema,
+    documentNumber: onboardingDocumentSchema,
   }),
   z.object({
     step: z.literal('access'),
@@ -144,12 +148,7 @@ export const onboardingStepValidationResponseSchema = z.union([
 export const onboardingSignupSchema = z.object({
   attemptId: z.string().regex(z.regexes.guid, "Invalid uuid"),
   companyName: z.string().trim().min(2).max(160),
-  documentNumber: z.string()
-    .trim()
-    .min(1, 'Informe o CPF ou CNPJ')
-    .regex(/^[\d./\-\s]+$/, 'Informe somente os digitos e a mascara do CPF ou CNPJ')
-    .transform(normalizeBrazilianTaxId)
-    .refine(isValidBrazilianTaxId, 'Informe um CPF ou CNPJ valido'),
+  documentNumber: onboardingDocumentSchema,
   brokersCount: z.coerce.number().int().min(1).max(500).default(1),
   adminName: z.string().trim().min(2).max(140),
   adminCpf: optionalOnboardingAdminCpfSchema,

@@ -1,3 +1,5 @@
+export const BRAZILIAN_NUMERIC_TAX_ID_INPUT = /^[0-9./\s-]*$/
+
 export function normalizeBrazilianTaxId(value: string) {
   return value.replace(/\D/g, '')
 }

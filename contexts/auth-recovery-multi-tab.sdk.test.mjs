@@ -6,34 +6,46 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { createBrowserClient } from '@supabase/ssr';
 
-// Actual installed SSR/auth-js, shared cookies and native BroadcastChannel.
-// Only HTTP/provider responses and the AuthContext's React state setters are
-// synthetic. No real account, email link, token, password or network is used.
-const contextSource = ts.createSourceFile('AuthContext.tsx', readFileSync(new URL('./AuthContext.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let recoveryBoundary;
-function visit(node) {
-  if (ts.isVariableDeclaration(node) && node.name.getText(contextSource) === 'isolatePasswordRecoverySession') recoveryBoundary = node.initializer.getText(contextSource);
-  ts.forEachChild(node, visit);
+// Actual installed SSR/auth-js, native BroadcastChannel and password submit.
+// Browser storage, React state and HTTP/provider responses are synthetic.
+function sourceNode(file, matches) {
+  const source = ts.createSourceFile(file, readFileSync(new URL(file, import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let found;
+  function visit(node) {
+    if (matches(node)) found = node;
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  assert.ok(found, file + ' no longer contains the expected source');
+  return found;
 }
-visit(contextSource);
-assert.ok(recoveryBoundary);
+const contextInitializer = name => sourceNode('./AuthContext.tsx', node =>
+  ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name).initializer.getText();
+const recoveryBoundary = contextInitializer('isolatePasswordRecoverySession');
+const clearStates = contextInitializer('clearAllStates');
+const signedOutBranch = sourceNode('./AuthContext.tsx', node =>
+  ts.isIfStatement(node) && node.expression.getText() === "authEvent === 'SIGNED_OUT'").getText();
+const passwordSubmit = sourceNode('../components/features/auth/screens/ResetPasswordScreen.tsx', node =>
+  ts.isFunctionDeclaration(node) && node.name?.text === 'handleSubmit').getText();
 const compile = source => ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 const user = { id: '11111111-1111-4111-8111-111111111111', aud: 'authenticated', role: 'authenticated',
   email: 'synthetic@example.invalid', app_metadata: {}, user_metadata: {}, created_at: '2026-01-01T00:00:00Z' };
 const claims = { sub: user.id, session_id: '22222222-2222-4222-8222-222222222222',
   exp: Math.floor(Date.now() / 1000) + 3600, amr: [{ method: 'recovery' }] };
-const recoverySession = { user, access_token: 'e30.' + Buffer.from(JSON.stringify(claims)).toString('base64url') + '.synthetic',
+const syntheticToken = payload => ['{}', JSON.stringify(payload), 'synthetic signature']
+  .map(value => Buffer.from(value).toString('base64url')).join('.');
+const recoverySession = { user, access_token: syntheticToken(claims),
   refresh_token: 'synthetic-refresh', expires_in: 3600, expires_at: claims.exp, token_type: 'bearer' };
 let caseId = 0;
 
-async function harness(pathname) {
+async function harness(pathname, recoveryRequestedHere = false) {
   const previous = new Map(['window', 'document', 'BroadcastChannel'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const document = { visibilityState: 'hidden' };
   const window = { document, location: { href: 'https://app.test' + pathname, pathname }, addEventListener() {}, removeEventListener() {} };
   for (const [key, value] of Object.entries({ window, document, BroadcastChannel })) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   const cookies = new Map(), storageKey = 'sb-multitab-synthetic-' + ++caseId;
-  const h = { requests: [], ownerEvents: [], idleEvents: [], redirects: [], isolated: 0, serverRevoked: false };
+  const h = { requests: [], ownerEvents: [], idleEvents: [], redirects: [], isolated: 0, serverRevoked: false, finished: [] };
   const cookieOptions = {
     getAll: () => [...cookies].map(([name, value]) => ({ name, value })),
     setAll: items => items.forEach(({ name, value, options }) => { if (!value || options?.maxAge === 0) cookies.delete(name); else cookies.set(name, value); }),
@@ -60,33 +72,89 @@ async function harness(pathname) {
   } finally { console.warn = originalWarn; }
   await Promise.all([owner.auth.initialize(), idle.auth.initialize()]);
   const idleStorage = new Map();
-  const idleWindow = { location: { pathname, replace: destination => h.redirects.push(destination) }, sessionStorage: {
+  const storage = {
     getItem: key => idleStorage.get(key) ?? null, setItem: (key, value) => idleStorage.set(key, value), removeItem: key => idleStorage.delete(key),
-  } };
-  const globals = { window: idleWindow, URL, URLSearchParams, atob, Uint8Array, TextDecoder, AbortController, setTimeout, clearTimeout };
-  function load(file, dependencies = {}) {
+  };
+  const idleWindow = { location: { href: 'https://app.test' + pathname, origin: 'https://app.test', hostname: 'app.test',
+    protocol: 'https:', search: '', pathname, replace: destination => h.redirects.push(destination) }, sessionStorage: storage };
+  const globals = { window: idleWindow, localStorage: storage, URL, URLSearchParams, atob, Uint8Array, TextDecoder,
+    AbortController, DOMException, FormData, Headers, Request, Response, setTimeout, clearTimeout };
+  function load(file, dependencies = {}, environment = {}) {
     const record = { exports: {} };
-    vm.runInNewContext(compile(readFileSync(new URL(file, import.meta.url), 'utf8')), { ...globals, exports: record.exports, module: record,
+    vm.runInNewContext(compile(readFileSync(new URL(file, import.meta.url), 'utf8')), { ...globals, ...environment, exports: record.exports, module: record,
       require: name => { assert(name in dependencies, 'Unexpected helper import'); return dependencies[name]; } });
     return record.exports;
   }
   const signOut = load('../lib/auth/global-sign-out.ts');
   const redirect = load('../lib/auth/post-login-redirect.ts');
   const recovery = load('../lib/auth/password-recovery.ts', { './post-login-redirect': redirect });
-  const sandbox = { ...globals, ...signOut, ...recovery, isMounted: true, supabase: idle,
-    logoutLifecycleRef: { current: { generation: 0, sessionKey: null, userId: null, mounted: true, pendingPush: new Set() } },
+  const errors = load('../lib/api/vimob-error.ts');
+  const passwordRequest = Promise.withResolvers();
+  const passwordReply = Promise.withResolvers();
+  const vimobApi = load('../lib/api/vimob-client.ts', {
+    '@/lib/supabase/client': { supabase: idle },
+    '@/lib/auth/global-sign-out': signOut,
+    '@/lib/auth/password-recovery': recovery,
+    '@/lib/api/vimob-error': errors,
+    '@/lib/local-read-only': { shouldBlockLocalMutation: () => false },
+    '@/lib/utils/json': load('../lib/utils/json.ts'),
+  }, {
+    process: { env: { NEXT_PUBLIC_VIMOB_API_URL: 'https://api.example.test', NODE_ENV: 'production' } },
+    fetch: async (url, options) => {
+      assert.equal(String(url), 'https://api.example.test/v1/settings/password');
+      assert.equal(options.method, 'POST');
+      assert.equal(new Headers(options.headers).get('authorization'), 'Bearer ' + recoverySession.access_token);
+      assert.equal(JSON.parse(options.body).source, 'recovery');
+      passwordRequest.resolve();
+      return passwordReply.promise;
+    },
+  });
+  const noop = () => {};
+  const logoutLifecycleRef = { current: { generation: 0, sessionKey: null, userId: null, mounted: true, pendingPush: new Set() } };
+  const sandbox = { ...globals, ...signOut, ...recovery, ...vimobApi, isMounted: true, supabase: idle,
+    logoutLifecycleRef,
+    recoveryRequestedHereRef: { current: recoveryRequestedHere },
     recoveryActionScheduledRef: { current: null }, ROUTES: { RESET_PASSWORD: '/reset-password', LOGIN: '/login', SIGNUP: '/cadastro' },
-    clearAllStates: () => { h.isolated += 1; }, setLoading() {}, setAuthInitialized() {}, setOrganizationsLoaded() {},
-    setVimobAPIAccessToken() {}, authDebugWarn() {},
+    credentialSignInInFlightRef: { current: false }, organizationListRequestRef: { current: 0 },
+    validatedAccessUserRef: { current: null }, userRef: { current: null }, profileRef: { current: null },
+    organizationRef: { current: null }, isLoggingOutRef: { current: false },
+    setSession: session => signOut.trackGlobalSignOutSession(logoutLifecycleRef.current, session),
+    markAccessValidationStale: noop, setUser: noop, setProfile: noop, setOrganization: noop, setTenantContext: noop,
+    setIsSuperAdmin: noop, setImpersonating: noop, setOrganizationsLoaded: noop, setOrganizationsError: noop,
+    setUserOrganizations: noop, setIsInitializingOrg: noop, setLoading: noop, setAuthInitialized: noop,
+    authDebug: noop, authDebugWarn: noop,
   };
-  vm.runInNewContext(compile(`globalThis.isolateRecovery = ${recoveryBoundary}`), sandbox);
+  vm.runInNewContext(compile(`
+    const clearAllStates = ${clearStates};
+    globalThis.isolateRecovery = ${recoveryBoundary};
+    globalThis.signOut = () => { const authEvent = 'SIGNED_OUT'; ${signedOutBranch} };
+  `), sandbox);
   owner.auth.onAuthStateChange(event => { h.ownerEvents.push(event); });
   idle.auth.onAuthStateChange((event, current) => {
     h.idleEvents.push(event);
-    if (current) sandbox.isolateRecovery(current);
+    if (current && sandbox.isolateRecovery(current)) h.isolated++;
+    if (event === 'SIGNED_OUT') sandbox.signOut();
   });
+  const submit = { ...globals, ...signOut, ...recovery, ...errors, supabase: idle,
+    resetSchema: { safeParse: data => ({ success: true, data }) },
+    submissionInFlightRef: { current: null },
+    password: 'Synthetic-password1!', confirmPassword: 'Synthetic-password1!', passwordStrength: { isValid: true },
+    captureGuard: () => ({ expectedUserId: user.id, expectedSessionId: claims.session_id, isCurrent: () => true }),
+    captureRequest: () => ({ signal: new AbortController().signal, finish: noop }),
+    setErrors: noop, setLoading: noop, setPassword: noop, setConfirmPassword: noop, setEmailNotificationSent: noop,
+    setRecoveryState: state => { h.recoveryState = state; }, setValidationMessage: noop, toast: noop,
+    setVimobAPIAccessToken: vimobApi.setVimobAPIAccessToken, passwordErrorMessage: error => error.message,
+    settingsAPI: { changePassword: (body, organizationId, intent) => vimobApi.vimobAPIRequest('/v1/settings/password', {
+      ...intent, method: 'POST', organizationId, body, skipTelemetry: true,
+    }) },
+    finishPasswordRecovery: async outcome => { h.finished.push(outcome); },
+  };
+  vm.runInNewContext(compile(`${passwordSubmit}\nglobalThis.submit = handleSubmit;`), submit);
   cookies.set(storageKey + '-code-verifier', 'base64-' + Buffer.from(JSON.stringify('synthetic-verifier/recovery')).toString('base64url'));
-  return { h, owner, idle, cookies, storageKey,
+  return { h, owner, idle, cookies, storageKey, vimobApi,
+    submitPassword: () => submit.submit({ preventDefault() {} }),
+    passwordRequestStarted: passwordRequest.promise,
+    finishPasswordRequest: () => passwordReply.resolve(Response.json({ allowed: true, sessionsRevoked: true })),
     settle: async () => { for (let i = 0; i < 12; i++) await tick(); },
     dispose: async () => {
       await Promise.all([owner.auth.dispose(), idle.auth.dispose()]);
@@ -111,7 +179,64 @@ for (const path of ['/login', '/cadastro', '/onboarding', '/crm', '/reset-passwo
       assert.equal(h.h.serverRevoked, false);
       assert.equal(h.h.ownerEvents.includes('SIGNED_OUT'), false);
       assert.equal((await h.owner.auth.getSession()).data.session?.user.id, user.id);
+      assert.equal(h.vimobApi.getVimobAPIAccessTokenUserId(), null, 'passive recovery never installs a token');
       assert.deepEqual(h.h.redirects, path === '/reset-password' ? [] : ['/reset-password']);
     } finally { await h.dispose(); }
   });
 }
+
+test('the login tab that requested recovery stays on login without pinning a recovery token', async () => {
+  const h = await harness('/login', true);
+  try {
+    assert.equal((await h.owner.auth.exchangeCodeForSession('synthetic-code')).error, null);
+    await h.settle();
+    assert(h.h.idleEvents.includes('PASSWORD_RECOVERY'));
+    assert(h.h.isolated > 0);
+    assert.deepEqual(h.h.redirects, []);
+    assert.equal(h.vimobApi.getVimobAPIAccessTokenUserId(), null);
+  } finally { await h.dispose(); }
+});
+
+test('another tab announcing the same recovery session keeps a submitted password response authorized', async () => {
+  const h = await harness('/reset-password');
+  try {
+    assert.equal((await h.owner.auth.exchangeCodeForSession('synthetic-code')).error, null);
+    await h.settle();
+    assert.equal(h.vimobApi.getVimobAPIAccessTokenUserId(), null);
+    const submitted = h.submitPassword();
+    try {
+      await Promise.race([h.passwordRequestStarted, submitted.then(() => assert.fail('Password request never started.'))]);
+      assert.equal(h.vimobApi.getVimobAPIAccessTokenSessionId(), claims.session_id);
+      assert.equal((await h.owner.auth.setSession(recoverySession)).error, null);
+      assert.equal((await h.owner.auth.setSession(recoverySession)).error, null);
+      await h.settle();
+      assert(h.h.idleEvents.filter(event => event === 'SIGNED_IN').length >= 2);
+      assert.equal(h.vimobApi.getVimobAPIAccessTokenSessionId(), claims.session_id);
+    } finally {
+      h.finishPasswordRequest();
+      await submitted;
+    }
+    assert.equal(h.h.recoveryState, 'success');
+    assert.deepEqual(h.h.finished, ['success']);
+  } finally { await h.dispose(); }
+});
+
+test('a different recovery session or sign-out clears the previously pinned token', async () => {
+  const h = await harness('/reset-password');
+  try {
+    assert.equal((await h.owner.auth.exchangeCodeForSession('synthetic-code')).error, null);
+    await h.settle();
+    h.vimobApi.setVimobAPIAccessToken(recoverySession.access_token, user.id);
+    const replacementClaims = { ...claims, session_id: '33333333-3333-4333-8333-333333333333' };
+    const replacement = { ...recoverySession, access_token: syntheticToken(replacementClaims) };
+    assert.equal((await h.owner.auth.setSession(replacement)).error, null);
+    await h.settle();
+    assert(h.h.idleEvents.includes('SIGNED_IN'));
+    assert.equal(h.vimobApi.getVimobAPIAccessTokenSessionId(), null, 'an actual session replacement clears the pin');
+    h.vimobApi.setVimobAPIAccessToken(replacement.access_token, user.id);
+    assert.equal((await h.owner.auth.signOut({ scope: 'local' })).error, null);
+    await h.settle();
+    assert(h.h.idleEvents.includes('SIGNED_OUT'));
+    assert.equal(h.vimobApi.getVimobAPIAccessTokenSessionId(), null, 'sign-out clears the pin');
+  } finally { await h.dispose(); }
+});

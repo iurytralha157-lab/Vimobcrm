@@ -10,7 +10,7 @@ import { LEGAL_DOCUMENTS } from '@/config/legal-documents'
 const document = LEGAL_DOCUMENTS.privacy
 
 export const metadata: Metadata = {
-  title: `${document.title} | Vimob`,
+  title: document.title,
   description:
     'Política de Privacidade da plataforma Vimob sobre tratamento de dados pessoais em conformidade com a LGPD.',
 }

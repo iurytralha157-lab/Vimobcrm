@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { ROUTES } from '@/config/constants'
-import { preparePasswordRecoveryFragment, supabase } from '@/lib/supabase/client'
+import { installPasswordRecoverySession, preparePasswordRecoverySession, supabase } from '@/lib/supabase/client'
 import { setVimobAPIAccessToken } from '@/lib/api/vimob-client'
 import {
   captureGlobalSignOutGuard, getGlobalSignOutSessionKey, trackGlobalSignOutSession,
@@ -13,13 +13,13 @@ import { exitPasswordRecovery, type PasswordRecoveryGuard } from '@/lib/auth/pas
 import {
   capturePasswordRecoveryIntent, clearPasswordRecoveryEvidence, getPasswordRecoveryStorage,
   grantPasswordRecoveryProof, hasPasswordRecoveryProof, isPasswordRecoveryAccessToken,
-  readPasswordRecoveryFragmentIdentity, readPasswordRecoveryUrlEvidence,
+  readPasswordRecoverySessionIdentity, readPasswordRecoveryUrlEvidence,
 } from '@/lib/auth/password-recovery'
 
 export type RecoveryState = 'checking' | 'ready' | 'invalid' | 'incomplete' | 'success'
 
 function cleanRecoveryUrl() { window.history.replaceState({}, '', ROUTES.RESET_PASSWORD) }
-const invalidLinkMessage = 'Este link de recuperação expirou, já foi usado ou foi aberto em outro navegador. Solicite um novo link e abra-o no mesmo navegador em que fez o pedido.'
+const invalidLinkMessage = 'Cada link só pode ser usado uma vez. Se o formulário já abriu, volte àquela aba. Solicite um novo link se precisar recomeçar e abra o e-mail mais recente no navegador em que fez o pedido.'
 const changedSessionMessage = 'A sessão de recuperação mudou. Solicite um novo link para proteger sua conta.'
 
 /** Owns this page's effects; does not start cleanup after observing a replacement. */
@@ -137,15 +137,15 @@ export function usePasswordRecoverySession(searchParams: { get: (key: string) =>
     recoveryGuardRef.current = null
     closingRef.current = false
     const current = () => mounted && lifecycleRef.current.mounted && visitRef.current === visit
-    const initialEvidence = readPasswordRecoveryUrlEvidence(new URL(window.location.href))
-    let awaitingInitialFragmentSession = initialEvidence.kind === 'implicit'
-    if (initialEvidence.kind !== 'none') {
+    const url = new URL(window.location.href)
+    const currentUrl = () => current() && window.location.href === url.href
+    const evidence = readPasswordRecoveryUrlEvidence(url)
+    let awaitingInitialSession = evidence.kind !== 'none'
+    let baselineKey: string | null = null
+    if (evidence.kind !== 'none') {
       recoverySessionRef.current = null
-      recoveryGuardRef.current = null
     }
     let candidateKey = getGlobalSignOutSessionKey(recoverySessionRef.current)
-    let establishing = true
-    const timers = new Set<number>()
     const invalid = (message: string, invalidateVisit = false) => {
       if (!current()) return
       recoverySessionRef.current = null
@@ -155,17 +155,16 @@ export function usePasswordRecoverySession(searchParams: { get: (key: string) =>
       setValidationMessage(message)
       if (invalidateVisit) visitRef.current += 1
     }
-    const authorize = async (session: Session, requireRecordedProof = false) => {
-      if (!current()) return false
+    const authorize = async (session: Session, requireRecordedProof: boolean) => {
+      if (!currentUrl()) return false
       const key = getGlobalSignOutSessionKey(session)
-      if (!isPasswordRecoveryAccessToken(session.access_token) || (candidateKey && candidateKey !== key)) return false
+      const identity = readPasswordRecoverySessionIdentity(session.access_token)
+      if (!identity || session.user.id !== identity.userId || (candidateKey && candidateKey !== key)) return false
       const fresh = await supabase.auth.getSession()
-      if (!current() || fresh.error || getGlobalSignOutSessionKey(fresh.data.session) !== key) return false
+      if (!currentUrl() || fresh.error || getGlobalSignOutSessionKey(fresh.data.session) !== key) return false
       const storage = getPasswordRecoveryStorage()
-      if (requireRecordedProof && (!storage || !hasPasswordRecoveryProof(storage, session.user.id))) return false
-      // These effects must follow both the visit check and the fresh SDK check.
-      if (!current()) return false
-      if (storage) grantPasswordRecoveryProof(storage, session.user.id)
+      if (requireRecordedProof && (!storage || !hasPasswordRecoveryProof(storage, identity))) return false
+      if (storage) grantPasswordRecoveryProof(storage, identity)
       cleanRecoveryUrl()
       candidateKey = key
       trackGlobalSignOutSession(lifecycleRef.current, fresh.data.session)
@@ -190,72 +189,49 @@ export function usePasswordRecoverySession(searchParams: { get: (key: string) =>
       if (!current()) return
       setRecoveryState('checking')
       setValidationMessage(null)
-      const url = new URL(window.location.href)
-      const evidence = readPasswordRecoveryUrlEvidence(url)
       const storage = getPasswordRecoveryStorage()
       if (storage) capturePasswordRecoveryIntent(storage, url)
       const hash = new URLSearchParams(url.hash.replace(/^#/, ''))
-      if (hash.has('error') || hash.has('error_description')) {
-        if (!current()) return
-        if (storage) clearPasswordRecoveryEvidence(storage)
-        cleanRecoveryUrl()
-        invalid(invalidLinkMessage)
-        return
-      }
+      const providerError = [url.searchParams, hash].some(params =>
+        ['error', 'error_code', 'error_description'].some(key => params.has(key)))
+      const malformedLink = evidence.kind === 'none' && [url.searchParams, hash].some(params =>
+        ['code', 'token_hash', 'access_token', 'refresh_token'].some(key => params.has(key)))
       try {
-        let session: Session | null = null
-        if (evidence.kind === 'pkce') {
-          const { data, error } = await supabase.auth.exchangeCodeForSession(evidence.code)
-          if (!current()) return
-          if (error || !('redirectType' in data) || data.redirectType !== 'recovery') throw error || new Error('invalid_recovery')
-          session = data.session
-        } else if (evidence.kind === 'token_hash') {
-          const { data, error } = await supabase.auth.verifyOtp({ token_hash: evidence.tokenHash, type: 'recovery' })
-          if (!current()) return
-          if (error) throw error
-          session = data.session
-        } else if (evidence.kind === 'implicit') {
-          const identity = readPasswordRecoveryFragmentIdentity(evidence.accessToken)
-          if (!identity) throw new Error('invalid_recovery')
-
-          const initial = await supabase.auth.getSession()
-          awaitingInitialFragmentSession = false
-          if (!current()) return
-          const initialKey = getGlobalSignOutSessionKey(initial.data.session)
-          if (initial.error || (initial.data.session && initial.data.session.user.id !== identity.userId)
-            || (lifecycle.sessionKey !== null && lifecycle.sessionKey !== initialKey)) {
-            throw new Error('invalid_recovery')
-          }
-          trackGlobalSignOutSession(lifecycle, initial.data.session)
-          const generation = lifecycle.generation
-          const verified = await preparePasswordRecoveryFragment(evidence)
-          if (!current() || window.location.href !== url.href) return
-          if (!verified) throw new Error('invalid_recovery')
-
-          const latest = await supabase.auth.getSession()
-          if (!current() || window.location.href !== url.href) return
-          if (latest.error || lifecycle.generation !== generation
-            || getGlobalSignOutSessionKey(latest.data.session) !== initialKey) throw new Error('invalid_recovery')
-
-          const { data, error } = await supabase.auth.setSession(verified)
-          if (!current()) return
-          if (error) throw error
-          session = data.session
+        if (providerError || malformedLink) throw new Error('invalid_recovery')
+        if (evidence.kind === 'none') {
+          if (!await recordedRecovery() && currentUrl()) invalid(invalidLinkMessage)
+          return
         }
-        if (!current()) return
-        if (session && await authorize(session)) return
-        if (!current()) return
-        if (evidence.kind === 'implicit') throw new Error('invalid_recovery')
-        if (await recordedRecovery()) return
-        if (current()) invalid(invalidLinkMessage)
+
+        const initial = await supabase.auth.getSession()
+        if (!currentUrl()) return
+        baselineKey = getGlobalSignOutSessionKey(initial.data.session)
+        if (initial.error || (lifecycle.sessionKey !== null && lifecycle.sessionKey !== baselineKey)) {
+          throw new Error('invalid_recovery')
+        }
+        trackGlobalSignOutSession(lifecycle, initial.data.session)
+        awaitingInitialSession = false
+        const generation = lifecycle.generation
+        const verified = await preparePasswordRecoverySession(evidence, initial.data.session?.user.id)
+        if (!currentUrl()) return
+        if (!verified) throw new Error('invalid_recovery')
+
+        const latest = await supabase.auth.getSession()
+        if (!currentUrl()) return
+        if (latest.error || lifecycle.generation !== generation
+          || getGlobalSignOutSessionKey(latest.data.session) !== baselineKey) throw new Error('invalid_recovery')
+
+        candidateKey = getGlobalSignOutSessionKey(verified.session)
+        const session = await installPasswordRecoverySession(verified, () =>
+          currentUrl() && lifecycle.generation === generation)
+        if (!currentUrl()) return
+        if (!session || !await authorize(session, false)) throw new Error('invalid_recovery')
       } catch {
-        if (!current()) return
-        if (evidence.kind !== 'implicit' && await recordedRecovery().catch(() => false)) return
-        if (!current()) return
+        if (!currentUrl()) return
         if (storage) clearPasswordRecoveryEvidence(storage)
-        cleanRecoveryUrl()
+        if (evidence.kind !== 'none' || providerError || malformedLink) cleanRecoveryUrl()
         invalid(invalidLinkMessage)
-      } finally { if (current()) establishing = false }
+      }
     }
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       // A closed validation visit must still observe replacements while this
@@ -264,30 +240,24 @@ export function usePasswordRecoverySession(searchParams: { get: (key: string) =>
       const key = getGlobalSignOutSessionKey(session)
       trackGlobalSignOutSession(lifecycleRef.current, session)
       if (!current()) return
-      // SDK startup can announce its unchanged cookie as SIGNED_IN. The
-      // fragment must first read that session before treating later events
-      // as replacements.
-      if (event === 'INITIAL_SESSION' || (event === 'SIGNED_IN' && awaitingInitialFragmentSession)) return
+      if (event === 'INITIAL_SESSION') return
       if (event === 'SIGNED_OUT') {
         if (!closingRef.current) invalid(changedSessionMessage, true)
         return
       }
       if (!session) return
+      // SDK startup and refresh can announce the unchanged cookie during a
+      // private exchange. Another session must invalidate that exchange.
+      if (evidence.kind !== 'none' && !candidateKey) {
+        if (!awaitingInitialSession && key !== baselineKey) invalid(changedSessionMessage, true)
+        return
+      }
       if (!isPasswordRecoveryAccessToken(session.access_token) || (candidateKey && candidateKey !== key)) {
         invalid(changedSessionMessage, true)
         return
       }
       candidateKey = key
       if (event === 'TOKEN_REFRESHED' && recoverySessionRef.current) recoverySessionRef.current = session
-      if (event === 'PASSWORD_RECOVERY' && !establishing) {
-        const timer = window.setTimeout(() => {
-          timers.delete(timer)
-          if (current()) void authorize(session, true).catch(() => {
-            if (current()) invalid(invalidLinkMessage)
-          })
-        }, 0)
-        timers.add(timer)
-      }
     })
     void establish().catch(() => {
       if (current()) invalid(invalidLinkMessage)
@@ -297,7 +267,6 @@ export function usePasswordRecoverySession(searchParams: { get: (key: string) =>
       visitRef.current += 1
       lifecycle.pendingPush?.forEach(controller => controller.abort())
       lifecycle.pendingPush?.clear()
-      timers.forEach(timer => window.clearTimeout(timer))
       subscription.unsubscribe()
     }
   }, [searchParams, captureGuard, exitTo])

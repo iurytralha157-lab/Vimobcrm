@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"crypto/hmac"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -52,12 +53,6 @@ func (repo Repository) PublicOnboardingSignup(ctx context.Context, request Onboa
 	}
 	email := request.Email
 
-	if completedResult, found, lookupErr := repo.publicSignupResultForAttempt(ctx, request.AttemptID, email); lookupErr != nil {
-		return nil, lookupErr
-	} else if found {
-		return completedResult, nil
-	}
-
 	allowDevelopmentFallback := repo.environment == "development" || repo.environment == "local" || repo.environment == "test"
 	allowed, err := publicingress.AllowWithOptions(
 		ctx,
@@ -91,6 +86,12 @@ func (repo Repository) PublicOnboardingSignup(ctx context.Context, request Onboa
 		return nil, ErrPublicSignupRateLimited
 	}
 
+	if completedResult, found, lookupErr := repo.publicSignupResultForAttempt(ctx, request.AttemptID, email, request.Password); lookupErr != nil {
+		return nil, lookupErr
+	} else if found {
+		return completedResult, nil
+	}
+
 	attemptClaim, claimOutcome, err := repo.claimPublicSignupAttempt(ctx, request.AttemptID, email)
 	if err != nil {
 		return nil, err
@@ -99,7 +100,7 @@ func (repo Repository) PublicOnboardingSignup(ctx context.Context, request Onboa
 		return nil, ErrPublicSignupRateLimited
 	}
 	if claimOutcome == publicSignupAttemptClaimCompleted {
-		completedResult, found, lookupErr := repo.publicSignupResultForAttempt(ctx, request.AttemptID, email)
+		completedResult, found, lookupErr := repo.publicSignupResultForAttempt(ctx, request.AttemptID, email, request.Password)
 		if lookupErr != nil {
 			return nil, lookupErr
 		}
@@ -129,7 +130,7 @@ func (repo Repository) PublicOnboardingSignup(ctx context.Context, request Onboa
 		}
 	}()
 
-	if completedResult, found, lookupErr := repo.publicSignupResultForAttempt(ctx, request.AttemptID, email); lookupErr != nil {
+	if completedResult, found, lookupErr := repo.publicSignupResultForAttempt(ctx, request.AttemptID, email, request.Password); lookupErr != nil {
 		return nil, lookupErr
 	} else if found {
 		return completedResult, nil
@@ -141,6 +142,12 @@ func (repo Repository) PublicOnboardingSignup(ctx context.Context, request Onboa
 	}
 	plan, err := repo.activeSignupPlan(ctx, planSlug)
 	if err != nil {
+		return nil, err
+	}
+
+	canonicalDocument := request.DocumentNumber
+	// Keep common document conflicts from leaving an unnecessary Auth orphan.
+	if err := checkPublicSignupDocument(ctx, repo.db.Pool(), canonicalDocument, request.AttemptID); err != nil {
 		return nil, err
 	}
 
@@ -206,7 +213,6 @@ func (repo Repository) PublicOnboardingSignup(ctx context.Context, request Onboa
 		claimOwnershipUncertain = true
 		return nil, err
 	}
-	canonicalDocument := onlyDigitsAdmin(request.DocumentNumber)
 	if _, err := tx.Exec(ctx, `
 		select pg_advisory_xact_lock(
 			pg_catalog.hashtextextended('public-signup-document:' || $1, 0)
@@ -214,24 +220,8 @@ func (repo Repository) PublicOnboardingSignup(ctx context.Context, request Onboa
 	`, canonicalDocument); err != nil {
 		return nil, err
 	}
-	var documentAlreadyProvisioned bool
-	if err := tx.QueryRow(ctx, `
-		select exists (
-			select 1
-			from public.organizations existing
-			where existing.signup_attempt_id is distinct from $2::uuid
-			  and (
-				regexp_replace(coalesce(existing.cnpj, ''), '[^0-9]', '', 'g') = $1
-				or regexp_replace(coalesce(existing.billing_tax_id, ''), '[^0-9]', '', 'g') = $1
-			  )
-		)
-	`, canonicalDocument, request.AttemptID).Scan(&documentAlreadyProvisioned); err != nil {
+	if err := checkPublicSignupDocument(ctx, tx, canonicalDocument, request.AttemptID); err != nil {
 		return nil, err
-	}
-	if documentAlreadyProvisioned {
-		// The deterministic advisory lock closes the race that a SELECT-only
-		// duplicate check would leave while the sentinel avoids tenant details.
-		return nil, ErrPublicSignupDocumentExists
 	}
 
 	err = tx.QueryRow(ctx, `
@@ -548,6 +538,7 @@ func (repo Repository) PublicOnboardingSignup(ctx context.Context, request Onboa
 			reconciliationContext,
 			request.AttemptID,
 			email,
+			request.Password,
 			createdUserID,
 		)
 		if reconcileErr != nil {
@@ -577,17 +568,19 @@ func (repo Repository) PublicOnboardingSignup(ctx context.Context, request Onboa
 	}
 
 	result = publicSignupSuccessResult(createdOrganizationID, checkoutTokenValue, redirectTo, !isTrial)
-	if err := repo.attachPublicSignupRecoveryCapability(result, request.AttemptID, createdUserID, createdOrganizationID, email); err != nil {
+	if err := repo.attachPublicSignupRecoveryCapability(result, request.AttemptID, createdUserID, createdOrganizationID, email, now.Add(publicSignupRecoveryCapabilityTTL)); err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
-func (repo Repository) publicSignupResultForAttempt(ctx context.Context, attemptID string, email string) (map[string]any, bool, error) {
+func (repo Repository) publicSignupResultForAttempt(ctx context.Context, attemptID string, email string, password string) (map[string]any, bool, error) {
 	var organizationID string
 	var checkoutToken sql.NullString
 	var storedEmail string
 	var authUserID string
+	var storedPasswordBinding string
+	var completedAt sql.NullTime
 	var requiresPayment bool
 	err := repo.db.Pool().QueryRow(ctx, `
 		select
@@ -595,13 +588,27 @@ func (repo Repository) publicSignupResultForAttempt(ctx context.Context, attempt
 			checkout_capability.checkout_token,
 			organization.signup_attempt_email,
 			organization.created_by::text,
-			organization.signup_requires_payment
+			organization.signup_requires_payment,
+			coalesce(auth_user.raw_app_meta_data ->> 'signup_password_binding', ''),
+			claim.completed_at
 		from public.organizations as organization
 		left join public.organization_checkout_capabilities as checkout_capability
 		  on checkout_capability.organization_id = organization.id
+		left join private.public_signup_attempt_claims claim
+		  on claim.attempt_id = organization.signup_attempt_id
+		 and claim.organization_id = organization.id
+		 and claim.auth_user_id = organization.created_by
+		 and claim.status = 'completed'
+		left join auth.users as auth_user
+		  on auth_user.id = organization.created_by
+		 and lower(auth_user.email) = organization.signup_attempt_email
+		 and auth_user.deleted_at is null
+		 and auth_user.email_confirmed_at is null
+		 and auth_user.raw_app_meta_data ->> 'signup_attempt_id' = organization.signup_attempt_id::text
+		 and auth_user.raw_app_meta_data ->> 'provisioning_source' = 'public_onboarding'
 		where organization.signup_attempt_id = $1::uuid
 		limit 1
-	`, attemptID).Scan(&organizationID, &checkoutToken, &storedEmail, &authUserID, &requiresPayment)
+	`, attemptID).Scan(&organizationID, &checkoutToken, &storedEmail, &authUserID, &requiresPayment, &storedPasswordBinding, &completedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -609,6 +616,15 @@ func (repo Repository) publicSignupResultForAttempt(ctx context.Context, attempt
 		return nil, false, err
 	}
 	if storedEmail != email {
+		return nil, false, ErrSignupAttemptConflict
+	}
+	passwordBinding, err := repo.publicSignupAuthPasswordBinding(attemptID, email, password)
+	if err != nil {
+		return nil, false, err
+	}
+	expiresAt := completedAt.Time.Add(publicSignupRecoveryCapabilityTTL)
+	if !completedAt.Valid || time.Now().Unix() >= expiresAt.Unix() ||
+		!hmac.Equal([]byte(storedPasswordBinding), []byte(passwordBinding)) {
 		return nil, false, ErrSignupAttemptConflict
 	}
 
@@ -625,10 +641,31 @@ func (repo Repository) publicSignupResultForAttempt(ctx context.Context, attempt
 	}
 
 	result := publicSignupSuccessResult(organizationID, checkoutTokenValue, redirectTo, requiresPayment)
-	if err := repo.attachPublicSignupRecoveryCapability(result, attemptID, authUserID, organizationID, storedEmail); err != nil {
+	if err := repo.attachPublicSignupRecoveryCapability(result, attemptID, authUserID, organizationID, storedEmail, expiresAt); err != nil {
 		return nil, false, err
 	}
 	return result, true, nil
+}
+
+func checkPublicSignupDocument(ctx context.Context, queryer publicingress.QueryRower, documentNumber string, attemptID string) error {
+	var alreadyProvisioned bool
+	if err := queryer.QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.organizations existing
+			where existing.signup_attempt_id is distinct from $2::uuid
+			  and (
+				regexp_replace(coalesce(existing.cnpj, ''), '[^0-9]', '', 'g') = $1
+				or regexp_replace(coalesce(existing.billing_tax_id, ''), '[^0-9]', '', 'g') = $1
+			  )
+		)
+	`, documentNumber, attemptID).Scan(&alreadyProvisioned); err != nil {
+		return err
+	}
+	if alreadyProvisioned {
+		return ErrPublicSignupDocumentExists
+	}
+	return nil
 }
 
 func (repo Repository) attachPublicSignupRecoveryCapability(
@@ -637,8 +674,9 @@ func (repo Repository) attachPublicSignupRecoveryCapability(
 	authUserID string,
 	organizationID string,
 	email string,
+	expiresAt time.Time,
 ) error {
-	capability, err := repo.issuePublicSignupRecoveryCapability(attemptID, authUserID, organizationID, email)
+	capability, err := repo.issuePublicSignupRecoveryCapability(attemptID, authUserID, organizationID, email, expiresAt)
 	if err != nil {
 		return err
 	}
@@ -650,6 +688,7 @@ func (repo Repository) reconcilePublicSignupCommit(
 	ctx context.Context,
 	attemptID string,
 	email string,
+	password string,
 	userID string,
 ) (map[string]any, bool, error) {
 	var provisioned bool
@@ -686,7 +725,7 @@ func (repo Repository) reconcilePublicSignupCommit(
 		return nil, false, nil
 	}
 
-	return repo.publicSignupResultForAttempt(ctx, attemptID, email)
+	return repo.publicSignupResultForAttempt(ctx, attemptID, email, password)
 }
 
 func publicSignupSuccessResult(organizationID string, checkoutToken string, redirectTo string, requiresPayment bool) map[string]any {

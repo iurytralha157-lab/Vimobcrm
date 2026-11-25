@@ -105,10 +105,11 @@ test("password recovery exposes a labelled heading and an honest back action", (
 });
 
 test("password recovery preserves the email and delegates pending requests and feedback to its lifecycle hook", () => {
-  assert.match(loginFormSource, /id="recovery-email"[\s\S]*?value=\{email\}/);
-  assert.match(loginFormSource, /usePasswordRecoveryRequest\(\{ active: isRecoveringPassword, email, request: resetPassword \}\)/);
+  assert.match(loginFormSource, /const recoveryEmail = signedInEmail \|\| email/);
+  assert.match(loginFormSource, /id="recovery-email"[^>]*value=\{recoveryEmail\}[^>]*readOnly=\{Boolean\(signedInEmail\)\}/);
+  assert.match(loginFormSource, /usePasswordRecoveryRequest\(\{\s*active: isRecoveringPassword && authInitialized,\s*email: recoveryEmail,\s*request: resetPassword\s*\}\)/);
   assert.match(loginFormSource, /await recoveryRequest\.submit\(\)/);
-  assert.match(loginFormSource, /disabled=\{recoveryRequest\.blocked\}/);
+  assert.match(loginFormSource, /disabled=\{!authInitialized \|\| recoveryRequest\.blocked\}/);
   assert.match(loginFormSource, /recoveryRequest\.invalidate\(\)/);
   assert.doesNotMatch(loginFormSource, /setRecoveryMessage\(\s*"Se existir uma conta/);
 });

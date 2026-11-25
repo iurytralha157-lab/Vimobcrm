@@ -16,8 +16,17 @@ const AUTHENTICATION_SURFACES = [
   "/reset-password",
   "/confirmar-email",
   "/convite/:path*",
+  "/checkout/:path*",
   "/admin",
   "/admin/:path*",
+];
+
+const PRIVATE_LINK_SURFACES = [
+  "/reset-password",
+  "/confirmar-email",
+  "/convite/:path*",
+  "/checkout/:path*",
+  "/comprovantes/:path*",
 ];
 
 const nextConfig: NextConfig = {
@@ -67,8 +76,8 @@ const nextConfig: NextConfig = {
           },
         ],
       },
-      {
-        source: "/comprovantes/:path*",
+      ...PRIVATE_LINK_SURFACES.map((source) => ({
+        source,
         headers: [
           { key: "Referrer-Policy", value: "no-referrer" },
           {
@@ -77,7 +86,7 @@ const nextConfig: NextConfig = {
           },
           { key: "Pragma", value: "no-cache" },
         ],
-      },
+      })),
     ];
   },
 };

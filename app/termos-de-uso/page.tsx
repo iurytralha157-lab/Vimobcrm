@@ -10,7 +10,7 @@ import { LEGAL_DOCUMENTS } from '@/config/legal-documents'
 const document = LEGAL_DOCUMENTS.terms
 
 export const metadata: Metadata = {
-  title: `${document.title} | Vimob`,
+  title: document.title,
   description:
     'Termos de Uso da plataforma Vimob para licenciamento e utilização do CRM imobiliário.',
 }

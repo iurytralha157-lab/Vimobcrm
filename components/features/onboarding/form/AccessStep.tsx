@@ -258,14 +258,14 @@ export function AccessStep({
         {isRetryingAttemptEmail ? (
           <p
             id="password-retry-help"
-            className="text-[11px] font-light leading-5 text-[var(--app-text-secondary)]"
+            className="text-[13px] font-light leading-5 text-[var(--app-text-secondary)]"
           >
             Para retomar o cadastro com segurança, use a mesma senha informada no primeiro envio.
           </p>
         ) : null}
         <div
           id="password-requirements"
-          className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-[11px] font-light"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-[13px] font-light"
         >
           {passwordRules.map((rule) => (
             <span

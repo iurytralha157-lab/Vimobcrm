@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "648a2b26a37d4c61b129d9d280c52dd2a345bf6299b6ba5b717fd981bfee8d56",
+  "sourceDigestSha256": "6f4069f94d8f75d010e0eb91b3072e75627e6228e53a2e8ca8182478ced6f291",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -6300,10 +6300,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:1c5598d7c61eb6a243f2",
+          "id": "form:250f553a5fa2716aa4a5",
           "column": 9,
           "file": "components/features/auth/invitation-screen.tsx",
-          "line": 487,
+          "line": 495,
           "owner": "InvitationScreen",
           "routes": [
             "/convite/[token]"
@@ -6312,10 +6312,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:af78fe69da9fce4e49dd",
+          "id": "form:0d3504e2697ff429770a",
           "column": 9,
           "file": "components/features/auth/login-form.tsx",
-          "line": 599,
+          "line": 600,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -6324,10 +6324,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:88120ffd42d58891df52",
+          "id": "form:99926a6fdfb9a915faad",
           "column": 11,
           "file": "components/features/auth/login-form.tsx",
-          "line": 684,
+          "line": 679,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -6614,10 +6614,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:f9206079dbe5eeb5f0ec",
+          "id": "form:08114fc69ea28416442e",
           "column": 9,
           "file": "components/features/onboarding/onboarding-form.tsx",
-          "line": 699,
+          "line": 626,
           "owner": "OnboardingForm",
           "routes": [
             "/cadastro"
@@ -10606,10 +10606,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:8a2ca23b6d7468b1ee87",
+          "id": "cta:d8c358cdf047b9bfb73e",
           "column": 11,
           "file": "components/features/auth/invitation-screen.tsx",
-          "line": 430,
+          "line": 438,
           "owner": "InvitationScreen",
           "routes": [
             "/convite/[token]"
@@ -10619,10 +10619,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:99b3daee45aac905e1fe",
+          "id": "cta:4e78be69ac466e59288b",
           "column": 11,
           "file": "components/features/auth/invitation-screen.tsx",
-          "line": 453,
+          "line": 461,
           "owner": "InvitationScreen",
           "routes": [
             "/convite/[token]"
@@ -10631,10 +10631,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:5fea884216f249c40001",
+          "id": "cta:0449ea70a02fb65bedf5",
           "column": 11,
           "file": "components/features/auth/invitation-screen.tsx",
-          "line": 470,
+          "line": 478,
           "owner": "InvitationScreen",
           "routes": [
             "/convite/[token]"
@@ -10644,10 +10644,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:823bba3b10d06ff0c17d",
+          "id": "cta:f96ce50cf6105fe63f3d",
           "column": 11,
           "file": "components/features/auth/invitation-screen.tsx",
-          "line": 482,
+          "line": 490,
           "owner": "InvitationScreen",
           "routes": [
             "/convite/[token]"
@@ -10657,10 +10657,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:c1d07e0985d5e12ee942",
+          "id": "cta:8940570bd65dfb9e46ea",
           "column": 15,
           "file": "components/features/auth/invitation-screen.tsx",
-          "line": 551,
+          "line": 559,
           "owner": "InvitationScreen",
           "routes": [
             "/convite/[token]"
@@ -10669,10 +10669,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:6816ccd2961e6d0d4a56",
+          "id": "cta:8334b9f99fbed1865133",
           "column": 21,
           "file": "components/features/auth/invitation-screen.tsx",
-          "line": 641,
+          "line": 649,
           "owner": "InvitationScreen",
           "routes": [
             "/convite/[token]"
@@ -10681,10 +10681,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:7437356fdeae7f549781",
+          "id": "cta:285f965cca43a381d480",
           "column": 21,
           "file": "components/features/auth/invitation-screen.tsx",
-          "line": 676,
+          "line": 684,
           "owner": "InvitationScreen",
           "routes": [
             "/convite/[token]"
@@ -10693,10 +10693,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:f6ad2b63d32271d121ea",
+          "id": "cta:0b8f30d5c71a04a3902a",
           "column": 15,
           "file": "components/features/auth/invitation-screen.tsx",
-          "line": 741,
+          "line": 749,
           "owner": "InvitationScreen",
           "routes": [
             "/convite/[token]"
@@ -10705,10 +10705,35 @@
           "tag": "button"
         },
         {
-          "id": "cta:1e54b026751f02c7573a",
+          "id": "cta:5f8d3375e6be634cc951",
+          "column": 13,
+          "file": "components/features/auth/login-form.tsx",
+          "line": 550,
+          "owner": "LoginForm",
+          "routes": [
+            "/login"
+          ],
+          "href": "defaultPostLoginPath",
+          "kind": "internalDynamic",
+          "tag": "Link"
+        },
+        {
+          "id": "cta:fcd8857e5b21f87ab213",
+          "column": 13,
+          "file": "components/features/auth/login-form.tsx",
+          "line": 558,
+          "owner": "LoginForm",
+          "routes": [
+            "/login"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
+        },
+        {
+          "id": "cta:6dfc051241cd412729c4",
           "column": 11,
           "file": "components/features/auth/login-form.tsx",
-          "line": 560,
+          "line": 649,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10717,22 +10742,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:fd104738372d83b62077",
-          "column": 11,
-          "file": "components/features/auth/login-form.tsx",
-          "line": 648,
-          "owner": "LoginForm",
-          "routes": [
-            "/login"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:eaf32785ca360cb0811c",
+          "id": "cta:4a362ee611dcb0d02fe4",
           "column": 17,
           "file": "components/features/auth/login-form.tsx",
-          "line": 747,
+          "line": 745,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10741,10 +10754,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:465df935141bf19634e4",
+          "id": "cta:a5dd34576f47e35e35df",
           "column": 13,
           "file": "components/features/auth/login-form.tsx",
-          "line": 776,
+          "line": 785,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10753,10 +10766,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:a44301cf7e6dbf50ca1d",
+          "id": "cta:eb754bbb1cc71a11d09c",
           "column": 17,
           "file": "components/features/auth/login-form.tsx",
-          "line": 796,
+          "line": 805,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10765,10 +10778,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:8912921857d7c20c0020",
+          "id": "cta:ad0af4baf2c5ee289059",
           "column": 13,
           "file": "components/features/auth/login-form.tsx",
-          "line": 825,
+          "line": 834,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10777,10 +10790,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:bdb53a676a1ddb80deba",
+          "id": "cta:ff4cf32d4cce8000af6f",
           "column": 13,
           "file": "components/features/auth/login-form.tsx",
-          "line": 835,
+          "line": 844,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -19460,10 +19473,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:44277c5ccd3226c717a3",
+          "id": "cta:2d13969f749a45c04fa9",
           "column": 13,
           "file": "components/features/onboarding/form/PlanStep.tsx",
-          "line": 59,
+          "line": 64,
           "owner": "PlanStep",
           "routes": [
             "/cadastro"
@@ -19472,10 +19485,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:4aa4c16443a9409ac4a5",
+          "id": "cta:2847ec096a250f0a6f13",
           "column": 9,
           "file": "components/features/onboarding/form/PlanStep.tsx",
-          "line": 92,
+          "line": 97,
           "owner": "PlanStep",
           "routes": [
             "/cadastro"
@@ -19484,10 +19497,48 @@
           "tag": "button"
         },
         {
-          "id": "cta:27da99d871732ee30452",
+          "id": "cta:fba74befe94768a2b8f5",
           "column": 9,
           "file": "components/features/onboarding/form/PlanStep.tsx",
-          "line": 100,
+          "line": 105,
+          "owner": "PlanStep",
+          "routes": [
+            "/cadastro"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
+        },
+        {
+          "id": "cta:de8c5bbf7b63a6cb8fba",
+          "column": 15,
+          "file": "components/features/onboarding/form/PlanStep.tsx",
+          "line": 131,
+          "owner": "PlanStep",
+          "routes": [
+            "/cadastro"
+          ],
+          "href": "/login",
+          "kind": "internal",
+          "tag": "Link"
+        },
+        {
+          "id": "cta:54ba45190baf99318b06",
+          "column": 15,
+          "file": "components/features/onboarding/form/PlanStep.tsx",
+          "line": 132,
+          "owner": "PlanStep",
+          "routes": [
+            "/cadastro"
+          ],
+          "href": "/login?recover=1",
+          "kind": "internal",
+          "tag": "Link"
+        },
+        {
+          "id": "cta:7343906a95a91da17ad5",
+          "column": 15,
+          "file": "components/features/onboarding/form/PlanStep.tsx",
+          "line": 133,
           "owner": "PlanStep",
           "routes": [
             "/cadastro"
@@ -47478,7 +47529,7 @@
         }
       ]
     },
-    "digestSha256": "e740b4080990785d38d06684b65089ced7465f4238d8366c3fc992e13be55d5b"
+    "digestSha256": "3d47a88c88c72ac2b5d6d0eb736e57966c0dbdcbb9fad30c0d1aba8fcfd0afd2"
   },
   "routes": [
     {
@@ -53868,15 +53919,6 @@
         "auth"
       ],
       "file": "components/features/onboarding/onboarding-form.tsx",
-      "routes": [
-        "/cadastro"
-      ]
-    },
-    {
-      "access": [
-        "auth"
-      ],
-      "file": "components/features/onboarding/onboarding-screen.tsx",
       "routes": [
         "/cadastro"
       ]
@@ -62691,19 +62733,19 @@
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 89,
       "asChildPrimitiveControlsWithUnrecognizedChild": 2,
-      "ctasAll": 1623,
+      "ctasAll": 1627,
       "ctasByKind": {
-        "actionButton": 1447,
+        "actionButton": 1448,
         "external": 7,
-        "internal": 35,
-        "internalDynamic": 79,
+        "internal": 37,
+        "internalDynamic": 80,
         "unknownDynamic": 55
       },
       "forms": 54,
       "formsRouteReachable": 54,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1561,
-      "internalCtasRouteReachable": 1534,
+      "internalCtas": 1565,
+      "internalCtasRouteReachable": 1538,
       "overlays": 253,
       "overlaysByKind": {
         "alertDialog": 74,
@@ -62731,7 +62773,7 @@
     "protectedAccessChecksThreePersonas": 213,
     "renderableRouteViewportChecksDesktopAndMobile": 174,
     "routeReachableFormImplementations": 54,
-    "routeReachableInternalCtaImplementations": 1534,
+    "routeReachableInternalCtaImplementations": 1538,
     "routeReachableOverlayImplementations": 250,
     "routeReachableSupplementalOverlayAndTabControls": 292
   },

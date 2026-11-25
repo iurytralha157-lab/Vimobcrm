@@ -121,6 +121,12 @@ export async function POST(request: Request) {
       )
     }
 
+    // Older API replicas can still return account or organization conflicts.
+    if (response.status === 409 && !payload.data.ok &&
+      (payload.data.code === 'signup_email_exists' || payload.data.code === 'signup_document_exists')) {
+      return jsonResponse({ ok: true, valid: true }, 200)
+    }
+
     return jsonResponse(payload.data, response.status)
   } catch (error) {
     const timedOut = error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError')

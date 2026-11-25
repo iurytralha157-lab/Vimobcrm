@@ -15,12 +15,16 @@ func TestSignupAndSuperadminCreationShareCanonicalDocumentLock(t *testing.T) {
 		}
 		source := string(raw)
 		lock := strings.Index(source, "public-signup-document:")
-		duplicateCheck := strings.Index(source, "regexp_replace(coalesce(existing.cnpj")
+		duplicateQuery := "regexp_replace(coalesce(existing.cnpj"
+		duplicateCheck := strings.Index(source, duplicateQuery)
+		if file == "onboarding.go" {
+			duplicateCheck = strings.Index(source, "checkPublicSignupDocument(ctx, tx,")
+		}
 		insert := strings.Index(source, "insert into public.organizations")
 		if lock < 0 || duplicateCheck < 0 || insert < 0 || !(lock < duplicateCheck && duplicateCheck < insert) {
 			t.Fatalf("%s must lock the shared canonical document key, reject duplicates, then insert", file)
 		}
-		if !strings.Contains(source, "pg_advisory_xact_lock") || !strings.Contains(source, "billing_tax_id") {
+		if !strings.Contains(source, "pg_advisory_xact_lock") || !strings.Contains(source, duplicateQuery) || !strings.Contains(source, "billing_tax_id") {
 			t.Fatalf("%s is missing the race-safe CPF/CNPJ contract", file)
 		}
 	}

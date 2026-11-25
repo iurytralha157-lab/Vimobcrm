@@ -7,7 +7,7 @@ export function CheckoutPageShell({
   children,
 }: Readonly<{ children: ReactNode }>) {
   return (
-    <div className="app-shell min-h-screen bg-[var(--app-background)] text-[var(--app-text-primary)]">
+    <div className="app-shell checkout-page min-h-screen bg-[var(--app-background)] text-[var(--app-text-primary)]">
       <header className="sticky top-0 z-30 bg-[var(--app-background)]">
         <div
           className="mx-auto flex h-[72px] w-full items-center justify-between px-4 sm:px-6 lg:px-8"

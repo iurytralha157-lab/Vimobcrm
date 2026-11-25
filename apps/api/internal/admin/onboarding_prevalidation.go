@@ -81,9 +81,9 @@ func publicOnboardingValidateStepWithQueryer(
 	request PublicOnboardingStepValidationRequest,
 ) (PublicOnboardingStepValidationResult, error) {
 	allowDevelopmentFallback := environment == "development" || environment == "local" || environment == "test"
-	availableValue := request.DocumentNumber
+	value := request.DocumentNumber
 	if request.Step == publicOnboardingAccessStep {
-		availableValue = request.Email
+		value = request.Email
 	}
 
 	allowed, err := publicingress.AllowWithOptions(
@@ -106,7 +106,7 @@ func publicOnboardingValidateStepWithQueryer(
 		ctx,
 		queryer,
 		"onboarding_validate_step_value",
-		[]string{request.Step, availableValue},
+		[]string{request.Step, value},
 		6,
 		10*time.Minute,
 		publicingress.AllowOptions{ProcessFallbackEnabled: allowDevelopmentFallback},
@@ -116,40 +116,6 @@ func publicOnboardingValidateStepWithQueryer(
 	}
 	if !allowed {
 		return PublicOnboardingStepValidationResult{}, ErrPublicSignupRateLimited
-	}
-
-	var alreadyExists bool
-	switch request.Step {
-	case publicOnboardingOrganizationStep:
-		err = queryer.QueryRow(ctx, `
-			select exists (
-				select 1
-				from public.organizations existing
-				where regexp_replace(coalesce(existing.cnpj, ''), '[^0-9]', '', 'g') = $1
-				   or regexp_replace(coalesce(existing.billing_tax_id, ''), '[^0-9]', '', 'g') = $1
-			)
-		`, request.DocumentNumber).Scan(&alreadyExists)
-		if err != nil {
-			return PublicOnboardingStepValidationResult{}, err
-		}
-		if alreadyExists {
-			return PublicOnboardingStepValidationResult{}, ErrPublicSignupDocumentExists
-		}
-	case publicOnboardingAccessStep:
-		err = queryer.QueryRow(ctx, `
-			select exists (
-				select 1
-				from auth.users auth_user
-				where lower(auth_user.email) = $1
-				  and auth_user.deleted_at is null
-			)
-		`, request.Email).Scan(&alreadyExists)
-		if err != nil {
-			return PublicOnboardingStepValidationResult{}, err
-		}
-		if alreadyExists {
-			return PublicOnboardingStepValidationResult{}, ErrPublicSignupEmailExists
-		}
 	}
 
 	return PublicOnboardingStepValidationResult{

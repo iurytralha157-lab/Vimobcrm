@@ -398,10 +398,18 @@ export function InvitationScreen({ token }: { token: string | null; }) {
   }
 
   async function handleLoginForInvitation() {
+    if (submissionInFlightRef.current) return;
+    submissionInFlightRef.current = true;
+    setIsSubmitting(true);
+    setErrorMessage(null);
     try {
-      await supabase.auth.signOut({ scope: "local" });
-    } finally {
+      const { error } = await supabase.auth.signOut({ scope: "local" });
+      if (error) throw error;
       router.replace(loginForInvitationPath);
+    } catch {
+      setErrorMessage("Não foi possível sair da conta atual. Tente entrar novamente pelo convite.");
+      submissionInFlightRef.current = false;
+      setIsSubmitting(false);
     }
   }
 

@@ -20,11 +20,14 @@ func TestPublicSignupRecoveryCapabilityIsSignedExactAndExpiring(t *testing.T) {
 		Environment:          "test",
 		SignupRecoverySecret: "test-only-public-signup-recovery-secret-32-bytes",
 	})
+	now := time.Now().UTC()
+	expiresAt := now.Add(15 * time.Minute)
 	capability, err := repo.issuePublicSignupRecoveryCapability(
 		testRecoveryAttemptID,
 		testRecoveryUserID,
 		testRecoveryOrganizationID,
 		"Admin@Example.com",
+		expiresAt,
 	)
 	if err != nil {
 		t.Fatalf("issue recovery capability: %v", err)
@@ -39,6 +42,9 @@ func TestPublicSignupRecoveryCapabilityIsSignedExactAndExpiring(t *testing.T) {
 	if claims.EmailHash != sha256Hex("admin@example.com") {
 		t.Fatalf("capability e-mail hash = %q", claims.EmailHash)
 	}
+	if claims.ExpiresAt != expiresAt.Unix() {
+		t.Fatalf("capability extended the original deadline: %v", time.Unix(claims.ExpiresAt, 0))
+	}
 
 	replacement := "A"
 	if strings.HasSuffix(capability, replacement) {
@@ -48,7 +54,7 @@ func TestPublicSignupRecoveryCapabilityIsSignedExactAndExpiring(t *testing.T) {
 	if _, err := repo.verifyPublicSignupRecoveryCapability(tampered, time.Now().UTC()); !errors.Is(err, ErrPublicSignupRecoveryUnavailable) {
 		t.Fatalf("tampered capability accepted: %v", err)
 	}
-	if _, err := repo.verifyPublicSignupRecoveryCapability(capability, time.Now().UTC().Add(3*time.Hour)); !errors.Is(err, ErrPublicSignupRecoveryUnavailable) {
+	if _, err := repo.verifyPublicSignupRecoveryCapability(capability, expiresAt); !errors.Is(err, ErrPublicSignupRecoveryUnavailable) {
 		t.Fatalf("expired capability accepted: %v", err)
 	}
 }

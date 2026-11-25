@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
+import nextConfig from "../../next.config";
 
 import {
   getBillingPeriodLabel,
@@ -123,18 +124,17 @@ test("checkout accepts only the sanitized internal receipt reference", () => {
   );
 });
 
-test("pÃ¡gina bearer do comprovante nÃ£o vaza token por referer nem cache", () => {
+test("página bearer do comprovante protege o token contra referrer e cache", async () => {
   const page = readFileSync(
     resolve(process.cwd(), "app/comprovantes/[token]/page.tsx"),
     "utf8",
   );
-  const nextConfig = readFileSync(
-    resolve(process.cwd(), "next.config.ts"),
-    "utf8",
-  );
-
   assert.match(page, /referrer:\s*['"]no-referrer['"]/);
-  assert.match(nextConfig, /source:\s*['"]\/comprovantes\/:path\*['"]/);
-  assert.match(nextConfig, /Referrer-Policy[\s\S]*no-referrer/);
-  assert.match(nextConfig, /Cache-Control[\s\S]*private, no-store, max-age=0/);
+  const rules = await nextConfig.headers?.();
+  assert.ok(Array.isArray(rules));
+  const receiptHeaders = rules.find((rule) => rule.source === "/comprovantes/:path*")?.headers;
+  assert.ok(receiptHeaders);
+  const headers = new Map(receiptHeaders.map(({ key, value }) => [key, value]));
+  assert.equal(headers.get("Referrer-Policy"), "no-referrer");
+  assert.match(headers.get("Cache-Control") ?? "", /private, no-store, max-age=0/);
 });

@@ -71,7 +71,9 @@ export function OnboardingForm() {
   const [isValidatingStep, setIsValidatingStep] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<SignupFieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [hasSignupConflict, setHasSignupConflict] = useState(false);
   const stepValidationInFlight = useRef(false);
+  const signupInFlight = useRef(false);
   const signupAttemptIdRef = useRef<string | null>(null);
   const [retryableAttemptEmail, setRetryableAttemptEmail] = useState<string | null>(null);
   const [checkoutToken, setCheckoutToken] = useState<string | null>(null);
@@ -236,8 +238,6 @@ export function OnboardingForm() {
       rotatePublicSignupAttemptId(window.sessionStorage, () => nextAttemptId);
     } catch {
       // Keep the fresh identity in memory when browser storage is unavailable.
-      // Retries in this mounted form remain idempotent and are no longer pinned
-      // to an attempt that the API proved belongs to another e-mail.
     }
     signupAttemptIdRef.current = nextAttemptId;
     setRetryableAttemptEmail(null);
@@ -249,6 +249,7 @@ export function OnboardingForm() {
   }
 
   async function selectPlan(plan: PlanOption) {
+    if (signupInFlight.current) return;
     setSubmitError(null);
 
     if (!checkoutToken) {
@@ -311,6 +312,7 @@ export function OnboardingForm() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitError(null);
+    setHasSignupConflict(false);
 
     if (step === 1) {
       const parsedStep = onboardingOrganizationStepSchema.safeParse({
@@ -341,18 +343,11 @@ export function OnboardingForm() {
         });
 
         if (!response.ok || !result.ok) {
-          if (!result.ok && result.code === "signup_document_exists") {
-            showFieldErrors(
-              { documentNumber: translateSignupMessage(result.message, result.code) },
-              ["documentNumber"],
-            );
-          } else {
-            setSubmitError(
-              !result.ok
-                ? translateSignupMessage(result.message, result.code)
-                : "Não foi possível validar os dados agora. Tente novamente.",
-            );
-          }
+          setSubmitError(
+            !result.ok
+              ? translateSignupMessage(result.message, result.code)
+              : "Não foi possível validar os dados agora. Tente novamente.",
+          );
           return;
         }
 
@@ -398,27 +393,7 @@ export function OnboardingForm() {
         ]);
         return;
       }
-      if (
-        signupAttemptIdRef.current &&
-        retryableAttemptEmail === parsedStep.data.email
-      ) {
-        // A document conflict can happen after Auth created the exact
-        // attempt-owned, unconfirmed identity. Rechecking availability would
-        // see that safe orphan as a duplicate and prevent the idempotent retry.
-        setFieldErrors({});
-        setFormData((current) => ({
-          ...current,
-          adminName: parsedStep.data.adminName,
-          adminCpf: isOrganizationCnpj
-            ? formatCpfDigits(parsedStep.data.adminCpf || "")
-            : "",
-          phone: parsedStep.data.phone,
-          email: parsedStep.data.email,
-        }));
-        setStep(3);
-        return;
-      }
-      if (retryableAttemptEmail) {
+      if (retryableAttemptEmail && retryableAttemptEmail !== parsedStep.data.email) {
         // Changing the e-mail leaves the attempt-owned Auth orphan behind. A
         // new address must start in a fresh idempotency scope.
         rotateSignupAttempt();
@@ -436,18 +411,11 @@ export function OnboardingForm() {
         });
 
         if (!response.ok || !result.ok) {
-          if (!result.ok && result.code === "signup_email_exists") {
-            showFieldErrors(
-              { email: translateSignupMessage(result.message, result.code) },
-              ["email"],
-            );
-          } else {
-            setSubmitError(
-              !result.ok
-                ? translateSignupMessage(result.message, result.code)
-                : "Não foi possível validar os dados agora. Tente novamente.",
-            );
-          }
+          setSubmitError(
+            !result.ok
+              ? translateSignupMessage(result.message, result.code)
+              : "Não foi possível validar os dados agora. Tente novamente.",
+          );
           return;
         }
 
@@ -474,7 +442,8 @@ export function OnboardingForm() {
       return;
     }
 
-    if (step === 3 && canSubmitPlan) {
+    if (step === 3 && canSubmitPlan && !signupInFlight.current) {
+      signupInFlight.current = true;
       setIsSubmitting(true);
       let signupCompleted = false;
 
@@ -489,6 +458,13 @@ export function OnboardingForm() {
             attemptId = window.crypto.randomUUID();
           }
           signupAttemptIdRef.current = attemptId;
+        }
+        const submittedEmail = formData.email.trim().toLowerCase();
+        setRetryableAttemptEmail(submittedEmail);
+        try {
+          persistPublicSignupRetry(window.sessionStorage, attemptId, submittedEmail);
+        } catch {
+          // A mounted form can still resume the same attempt from memory.
         }
         const response = await fetch("/api/onboarding/signup", {
           method: "POST",
@@ -532,57 +508,7 @@ export function OnboardingForm() {
             setSubmitError(result.message || "Não foi possível concluir o cadastro.");
             return;
           }
-          if (result.code === "signup_document_exists") {
-            const retryableEmail = formData.email.trim().toLowerCase();
-            setRetryableAttemptEmail(retryableEmail);
-            try {
-              persistPublicSignupRetry(
-                window.sessionStorage,
-                attemptId,
-                retryableEmail,
-              );
-            } catch {
-              // The in-memory marker still preserves a safe retry while this
-              // mounted form remains open.
-            }
-            setStep(1);
-            showFieldErrors(
-              { documentNumber: translateSignupMessage(result.message, result.code) },
-              ["documentNumber"],
-            );
-            return;
-          }
-          if (result.code === "signup_email_exists") {
-            if (
-              signupAttemptIdRef.current &&
-              retryableAttemptEmail === formData.email.trim().toLowerCase()
-            ) {
-              setStep(2);
-              showFieldErrors(
-                {
-                  password:
-                    "Para retomar esta tentativa, informe a mesma senha usada no primeiro envio.",
-                },
-                ["password"],
-              );
-              return;
-            }
-            rotateSignupAttempt();
-            setStep(2);
-            showFieldErrors(
-              { email: translateSignupMessage(result.message, result.code) },
-              ["email"],
-            );
-            return;
-          }
-          if (result.code === "signup_attempt_conflict") {
-            rotateSignupAttempt();
-            setSubmitError(
-              "A tentativa anterior estava vinculada a outro e-mail. Reiniciamos com segurança; tente novamente.",
-            );
-            return;
-          }
-
+          setHasSignupConflict(response.status === 409 && result.code === "signup_conflict");
           setSubmitError(translateSignupMessage(result.message, result.code));
           return;
         }
@@ -640,6 +566,7 @@ export function OnboardingForm() {
           setSubmitError("Não foi possível concluir o cadastro agora.");
         }
       } finally {
+        signupInFlight.current = false;
         setIsSubmitting(false);
       }
     }
@@ -752,7 +679,16 @@ export function OnboardingForm() {
               selectedPlan={selectedPlan}
               selectedPlanSlug={formData.planSlug}
               submitError={submitError}
+              hasSignupConflict={hasSignupConflict}
               onBack={() => setStep(2)}
+              onRestartSignup={() => {
+                rotateSignupAttempt();
+                setSubmitError(null);
+                setHasSignupConflict(false);
+                setFormData((current) => ({ ...current, password: "" }));
+                setShowPassword(false);
+                setStep(1);
+              }}
               onRetryPlans={() =>
                 setPlansRequestVersion((current) => current + 1)
               }

@@ -42,7 +42,7 @@ func TestPublicSignupClaimsAttemptBeforeAuthMutation(t *testing.T) {
 		)
 	}
 	claimedReplay := claim + 1 + claimedReplayRelative
-	if !(validation < optimisticReplay && optimisticReplay < ipLimit && ipLimit < emailLimit && emailLimit < claim && claim < claimedReplay && claimedReplay < authMutation) {
+	if !(validation < ipLimit && ipLimit < emailLimit && emailLimit < optimisticReplay && optimisticReplay < claim && claim < claimedReplay && claimedReplay < authMutation) {
 		t.Fatalf(
 			"unsafe signup order: validation=%d optimistic=%d ip=%d email=%d claim=%d replay=%d auth=%d",
 			validation,
@@ -56,7 +56,7 @@ func TestPublicSignupClaimsAttemptBeforeAuthMutation(t *testing.T) {
 	}
 }
 
-func TestPublicSignupReplayIsBoundToEmailAndAuthoritativeResult(t *testing.T) {
+func TestPublicSignupReplayIsBoundToEmailAndPasswordAndAuthoritativeResult(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile("onboarding.go")
@@ -72,6 +72,14 @@ func TestPublicSignupReplayIsBoundToEmailAndAuthoritativeResult(t *testing.T) {
 	for _, required := range []string{
 		"where organization.signup_attempt_id = $1::uuid",
 		"if storedEmail != email",
+		"repo.publicSignupAuthPasswordBinding(attemptID, email, password)",
+		"hmac.Equal([]byte(storedPasswordBinding), []byte(passwordBinding))",
+		"auth_user.raw_app_meta_data ->> 'signup_attempt_id' = organization.signup_attempt_id::text",
+		"auth_user.email_confirmed_at is null",
+		"claim.completed_at",
+		"completedAt.Time.Add(publicSignupRecoveryCapabilityTTL)",
+		"time.Now().Unix() >= expiresAt.Unix()",
+		"storedEmail, expiresAt",
 		"ErrSignupAttemptConflict",
 		`"organizationId":  organizationID`,
 		`"checkoutToken":             nullableText(checkoutToken)`,

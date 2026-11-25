@@ -52,6 +52,7 @@ func (repo Repository) issuePublicSignupRecoveryCapability(
 	authUserID string,
 	organizationID string,
 	email string,
+	expiresAt time.Time,
 ) (string, error) {
 	key, err := repo.publicSignupRecoveryKey()
 	if err != nil {
@@ -67,7 +68,7 @@ func (repo Repository) issuePublicSignupRecoveryCapability(
 		AuthUserID:     authUserID,
 		OrganizationID: organizationID,
 		EmailHash:      sha256Hex(strings.ToLower(strings.TrimSpace(email))),
-		ExpiresAt:      time.Now().UTC().Add(publicSignupRecoveryCapabilityTTL).Unix(),
+		ExpiresAt:      expiresAt.Unix(),
 		Nonce:          base64.RawURLEncoding.EncodeToString(nonce),
 	}
 	payload, err := json.Marshal(claims)

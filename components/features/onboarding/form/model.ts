@@ -1,5 +1,8 @@
 import { maskCNPJ, maskCPF } from "@/lib/masks";
-import { normalizeBrazilianTaxId } from "@/lib/validation/brazilian-tax-id";
+import {
+  BRAZILIAN_NUMERIC_TAX_ID_INPUT,
+  normalizeBrazilianTaxId,
+} from "@/lib/validation/brazilian-tax-id";
 import type {
   CountryCodeOption,
   OnboardingData,
@@ -50,7 +53,10 @@ export function formatCpfDigits(value: string) {
 }
 
 export function formatCpfCnpj(value: string) {
-  const documentDigits = digits(value);
+  if (!BRAZILIAN_NUMERIC_TAX_ID_INPUT.test(value)) return value;
+
+  const documentDigits = normalizeBrazilianTaxId(value);
+  if (documentDigits.length > 14) return value;
 
   if (documentDigits.length <= 11) {
     return maskCPF(documentDigits);

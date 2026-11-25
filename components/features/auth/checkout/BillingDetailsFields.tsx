@@ -28,7 +28,7 @@ export type BillingDetailsFieldsProps = {
 };
 
 const INPUT_CLASS_NAME =
-  "h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 py-0 !text-[12px] font-light text-[var(--app-text-secondary)] shadow-none placeholder:text-[var(--app-text-secondary)] placeholder:opacity-100 focus-visible:ring-1 focus-visible:ring-primary/40 focus-visible:ring-offset-0";
+  "h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 py-0 text-[12px] font-light text-[var(--app-text-secondary)] shadow-none placeholder:text-[var(--app-text-secondary)] placeholder:opacity-100 focus-visible:ring-1 focus-visible:ring-primary/40 focus-visible:ring-offset-0 md:text-[12px]";
 
 export function BillingDetailsFields({
   name,

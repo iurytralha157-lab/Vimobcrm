@@ -10,6 +10,7 @@ import {
   comparePlansByDisplayOrder,
   mapPublicPlan,
 } from '../../components/features/onboarding/form/plan-rules'
+import { formatCpfCnpj } from '../../components/features/onboarding/form/model'
 import {
   collectStepFieldErrors,
   translateSignupMessage,
@@ -66,6 +67,23 @@ test('normalizacao de CPF/CNPJ remove apenas a mascara', () => {
   assert.equal(normalizeBrazilianTaxId('529.982.247-25'), '52998224725')
 })
 
+test('cadastro preserva o documento ao colar e rejeita formatos ainda não aceitos', () => {
+  assert.equal(formatCpfCnpj('52998224725'), '529.982.247-25')
+  assert.equal(formatCpfCnpj('04252011000110'), '04.252.011/0001-10')
+
+  const alphanumericCnpj = '12.ABC.345/01DE-35'
+  const documentNumber = formatCpfCnpj(alphanumericCnpj)
+  assert.equal(documentNumber, alphanumericCnpj)
+  const result = onboardingOrganizationStepSchema.safeParse({ ...validSignup, documentNumber })
+  assert.equal(result.success, false)
+  assert.equal(result.error?.issues[0]?.message, 'O cadastro online aceita CPF ou CNPJ numérico.')
+  assert.equal(onboardingSignupSchema.safeParse({ ...validSignup, documentNumber }).success, false)
+
+  const tooManyDigits = '042520110001101'
+  assert.equal(formatCpfCnpj(tooManyDigits), tooManyDigits)
+  assert.equal(onboardingSignupSchema.safeParse({ ...validSignup, documentNumber: tooManyDigits }).success, false)
+})
+
 test('cadastro publico exige documento valido e entrega dados canonicos ao backend', () => {
   const parsed = onboardingSignupSchema.parse(validSignup)
 
@@ -86,7 +104,7 @@ test('cadastro publico exige documento valido e entrega dados canonicos ao backe
   }
 })
 
-test('etapa da organizacao valida e normaliza antes de consultar disponibilidade', () => {
+test('etapa da organização valida e normaliza o documento antes de avançar', () => {
   const parsed = onboardingOrganizationStepSchema.parse({
     companyName: ' Vimob Imoveis ',
     documentNumber: '04.252.011/0001-10',
@@ -381,13 +399,13 @@ test('adaptador puro do formulario preserva prioridade, campos e mensagens publi
       legal: 'Aceite os termos',
     },
   )
-  assert.equal(
-    translateSignupMessage(undefined, 'signup_attempt_conflict'),
-    'A tentativa anterior estava vinculada a outro e-mail. Reiniciamos com segurança; tente novamente.',
-  )
+  const neutralConflict = translateSignupMessage(undefined, 'signup_conflict')
+  for (const legacyCode of ['signup_attempt_conflict', 'signup_email_exists', 'signup_document_exists']) {
+    assert.equal(translateSignupMessage('Mensagem específica do legado', legacyCode), neutralConflict)
+  }
   assert.equal(
     translateSignupMessage('User already exists'),
-    'Este e-mail ja esta cadastrado. Faca login ou use outro e-mail.',
+    'Não foi possível concluir o cadastro com os dados informados.',
   )
   assert.equal(
     translateSignupMessage(),
@@ -427,12 +445,11 @@ test('proxy e formulario preservam idempotencia e obedecem o redirect do backend
   assert.match(form, /<PlanStep/)
   assert.match(form, /<CompletionStep/)
   assert.match(form, /adminCpf: isOrganizationCnpj/)
-  assert.match(form, /retryableAttemptEmail === parsedStep\.data\.email/)
-  assert.match(form, /const retryableEmail = formData\.email\.trim\(\)\.toLowerCase\(\)/)
-  assert.match(form, /setRetryableAttemptEmail\(retryableEmail\)/)
-  assert.match(form, /persistPublicSignupRetry\(/)
+  assert.match(form, /retryableAttemptEmail !== parsedStep\.data\.email/)
+  assert.match(submit, /persistPublicSignupRetry\([\s\S]*?fetch\("\/api\/onboarding\/signup"/)
   assert.match(form, /readPublicSignupRetry\(window\.sessionStorage\)/)
-  assert.match(form, /mesma senha usada no primeiro envio/)
+  assert.match(form, /if \(signupInFlight\.current\) return;/)
+  assert.match(planStep, /disabled=\{isSubmitting \|\| isCheckoutPlanLocked \|\| isUpdatingCheckoutPlan\}/)
 })
 
 test('formularios publicos nao degradam para GET nem registram o e-mail de recuperacao', () => {

@@ -2,7 +2,12 @@
 
 `ResetPasswordScreen` mantém os campos e mensagens da tela. A validação do link
 e o ciclo da visita ficam em `hooks/auth/use-password-recovery-session.ts`.
-PKCE, token hash e sessão implícita continuam usando o cliente Supabase canônico.
+PKCE, token hash e links administrativos com sessão implícita passam por um
+cliente Supabase isolado em memória. Na recuperação PKCE, ele lê apenas o
+verificador da solicitação feita no navegador. O cliente compartilhado recebe
+a sessão depois que o Auth confirma o link, o token indica AMR `recovery` e
+o usuário corresponde à conta já aberta, quando houver uma. Um verificador
+de solicitação mais recente impede a instalação da recuperação anterior.
 
 O proxy encaminha sessões assinadas de recuperação das rotas de login, cadastro,
 onboarding e CRM para `/reset-password`, preservando a sessão. Uma navegação ou
@@ -10,7 +15,8 @@ evento recebido por outra aba não representa cancelamento. A query `cancel=1`
 também não encerra a sessão: a saída usa a ação explícita da tela e os guards
 da identidade que está sendo recuperada.
 
-Na tela inválida, `Voltar ao login` pode encerrar a recuperação atual mesmo sem
+Na tela inválida é possível solicitar outro e-mail de recuperação. A saída
+explícita pode encerrar a recuperação atual mesmo sem
 prova local do link. O clique captura visita e identidade antes de consultar a
 sessão fresca; só encerra a mesma sessão com AMR `recovery`, sem autorizar troca
 de senha. Sessões normais/OTP estáveis são preservadas, e uma substituição durante
@@ -28,20 +34,18 @@ visita novamente antes de limpar evidências ou navegar. Falha na limpeza local
 mantém a tela disponível para tentar sair novamente, evitando retornar ao proxy
 com uma cookie de recuperação ainda presente.
 
-Troca de usuário, nova sessão ou desmontagem invalida os efeitos pendentes da
-tela. Uma resposta tardia não pode atualizar a UI, autorizar a visita, limpar sua
-URL ou iniciar a troca de senha por esse controlador. O formulário isola loading,
-senhas e mensagens por identidade para não herdá-los ao abrir outro link.
-Isso **não cancela** os
-efeitos internos de `verifyOtp`, `exchangeCodeForSession` ou `setSession` já
-iniciados no SDK, nem seu listener global de Auth. O controlador não inicia a
-limpeza após observar uma sessão substituta e não a revoga como compensação de
-resposta antiga. Uma chamada SDK de logout local já iniciada também possui
-efeitos internos que esses guards não cancelam.
+Troca de usuário, nova sessão ou desmontagem impedem uma resposta tardia da
+validação privada de alterar a sessão compartilhada ou o formulário. O
+controlador compara a visita e a sessão antes de chamar o SDK. Na etapa final,
+uma troca de sessão visível antes da resposta de verificação do Auth impede a
+instalação. A gravação subsequente de cookie pelo SDK e o logout local podem
+intercalar com outra aba. A validação confere a identidade antes de liberar
+a troca de senha.
 
 Sem acesso a `sessionStorage`, uma sessão pré-existente sozinha não autoriza o
 reset. Um link verificado na visita corrente pode continuar em memória; recuperar
-essa prova após recarregar a página exige armazenamento disponível.
+essa prova após recarregar a página exige armazenamento disponível e a mesma
+sessão de recuperação.
 
 Verificações focadas, sem rede ou banco:
 

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { LockKeyhole } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { DEFAULT_AUTHENTICATED_ROUTE } from "@/config/constants";
 import {
@@ -26,6 +27,7 @@ type FormMode = "login" | "recover";
 
 const defaultPostLoginPath = DEFAULT_AUTHENTICATED_ROUTE;
 const sensitiveLoginParams = ["email", "password", "senha", "pass", "pwd"];
+const rememberedEmailKey = "remembered_email";
 
 function getCurrentRedirectPath() {
   if (typeof window === "undefined") {
@@ -168,8 +170,16 @@ export function LoginForm() {
   const routingStillWaitingRef = useRef(false);
 
   const isRecoveringPassword = formMode === "recover";
-  const recoveryRequest = usePasswordRecoveryRequest({ active: isRecoveringPassword, email, request: resetPassword });
+  const signedInEmail = user?.email;
+  const recoveryEmail = signedInEmail || email;
+  const recoveryRequest = usePasswordRecoveryRequest({ active: isRecoveringPassword && authInitialized, email: recoveryEmail, request: resetPassword });
   const { isSubmitting: isSubmittingRecovery, error: recoveryError, message: recoveryRequestMessage } = recoveryRequest;
+  const remainingSeconds = recoveryRequest.remainingSeconds;
+  const countdown = `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`;
+  const recoveryButtonLabel = remainingSeconds > 0
+    ? `Reenviar link em ${countdown}`
+    : recoveryRequest.pending ? "Aguardando confirmação..."
+    : recoveryRequest.isRetry ? "Reenviar link" : "Enviar link de recuperação";
   const textClass = "text-[var(--app-text-primary)]";
   const mutedTextClass = "text-[var(--app-text-tertiary)]";
   const paragraphTextClass = "text-[var(--app-text-secondary)]";
@@ -183,71 +193,57 @@ export function LoginForm() {
     "auth-login-field h-12 w-full rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-4 text-base text-[var(--app-text-primary)] shadow-none outline-none ring-0 transition-colors placeholder:text-[var(--app-text-secondary)] sm:text-sm focus:bg-[var(--app-surface-solid)] focus:ring-1 focus:ring-primary/40";
   const checkboxBorderClass =
     "border-[var(--app-border-strong)] peer-checked:border-primary peer-focus-visible:border-primary";
+  const recoveryBackClass =
+    `-ml-2 inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-[6px] px-2 text-sm font-light outline-none transition-colors hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 ${textClass}`;
 
   useEffect(() => {
     sanitizeLoginUrl();
-    if (typeof window === "undefined") return;
-
-    const url = new URL(window.location.href);
-    let messageTimer: number | undefined;
-    let rememberedEmailTimer: number | undefined;
-
-    try {
-      const rememberedEmail = localStorage.getItem("remembered_email");
-      if (rememberedEmail) {
-        rememberedEmailTimer = window.setTimeout(() => {
-          setEmail(rememberedEmail);
+    const initialHref = window.location.href;
+    const url = new URL(initialHref);
+    const timer = window.setTimeout(() => {
+      const passwordReset = url.searchParams.get("passwordReset");
+      const logout = url.searchParams.get("logout");
+      const emailConfirmation = url.searchParams.get("emailConfirmation");
+      const openRecovery = url.searchParams.get("recover") === "1";
+      try {
+        const rememberedEmail = localStorage.getItem(rememberedEmailKey);
+        if (rememberedEmail) {
+          setEmail((current) => current || rememberedEmail);
           setRememberMe(true);
-        }, 0);
+        }
+      } catch {
+        // Browser storage can be unavailable in restricted contexts.
       }
-    } catch {
-      // Browser storage can be unavailable in restricted contexts.
-    }
-
-    if (url.searchParams.get("passwordReset") === "success") {
-      url.searchParams.delete("passwordReset");
-      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-      messageTimer = window.setTimeout(() => {
+      if (openRecovery) {
+        url.searchParams.delete("recover");
+        setFormMode("recover");
+      }
+      if (passwordReset === "success") {
+        url.searchParams.delete("passwordReset");
         setRecoveryMessage("Senha alterada com sucesso. Entre usando sua nova senha.");
-      }, 0);
-    } else if (url.searchParams.get("passwordReset") === "unverified") {
-      url.searchParams.delete("passwordReset");
-      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-      messageTimer = window.setTimeout(() => {
+      } else if (passwordReset === "unverified") {
+        url.searchParams.delete("passwordReset");
         setLoginError("A senha foi alterada, mas não conseguimos confirmar o encerramento das outras sessões. Entre com a nova senha e contate o suporte se notar atividade desconhecida.");
-      }, 0);
-    }
-
-    if (url.searchParams.get("logout") === "unverified") {
-      url.searchParams.delete("logout");
-      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-      messageTimer = window.setTimeout(() => {
+      }
+      if (logout === "unverified") {
+        url.searchParams.delete("logout");
         setLoginError("Você saiu deste dispositivo, mas não conseguimos confirmar o encerramento das outras sessões. Entre novamente para tentar sair de todos os dispositivos.");
-      }, 0);
-    }
-
-    const emailConfirmation = url.searchParams.get("emailConfirmation");
-    if (emailConfirmation === "required" || emailConfirmation === "success") {
-      url.searchParams.delete("emailConfirmation");
-      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-    }
-    if (emailConfirmation === "required") {
-      messageTimer = window.setTimeout(() => {
+      }
+      if (emailConfirmation === "required") {
+        url.searchParams.delete("emailConfirmation");
         setEmailConfirmationPending(true);
         setRecoveryMessage("Confirme o link enviado ao seu e-mail antes de entrar.");
-      }, 0);
-    } else if (emailConfirmation === "success") {
-      messageTimer = window.setTimeout(() => {
+      } else if (emailConfirmation === "success") {
+        url.searchParams.delete("emailConfirmation");
         setEmailConfirmationPending(false);
         setRecoveryMessage("Confirmação recebida. Estamos validando seu acesso.");
         setRouteAfterEmailConfirmation(true);
-      }, 0);
-    }
-
-    return () => {
-      if (messageTimer) window.clearTimeout(messageTimer);
-      if (rememberedEmailTimer) window.clearTimeout(rememberedEmailTimer);
-    };
+      }
+      if (url.href !== initialHref && window.location.href === initialHref) {
+        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -478,18 +474,11 @@ export function LoginForm() {
 
       setEmailConfirmationPending(false);
 
-      if (rememberMe) {
-        try {
-          localStorage.setItem("remembered_email", email);
-        } catch {
-          // Browser storage can be unavailable in restricted contexts.
-        }
-      } else {
-        try {
-          localStorage.removeItem("remembered_email");
-        } catch {
-          // Browser storage can be unavailable in restricted contexts.
-        }
+      try {
+        if (rememberMe) localStorage.setItem(rememberedEmailKey, email);
+        else localStorage.removeItem(rememberedEmailKey);
+      } catch {
+        // Browser storage can be unavailable in restricted contexts.
       }
 
       shouldKeepRouting = true;
@@ -557,14 +546,24 @@ export function LoginForm() {
     <div className="w-full max-w-[400px]">
       {isRecoveringPassword ? (
         <header className="mb-8 text-left lg:mb-10">
-          <button
-            type="button"
-            onClick={showLoginForm}
-            className={`-ml-2 inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-[6px] px-2 text-sm font-light outline-none transition-colors hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 ${textClass}`}
-          >
-            <ArrowLeftIcon />
-            Voltar para o login
-          </button>
+          {user ? (
+            <Link
+              href={defaultPostLoginPath}
+              className={recoveryBackClass}
+            >
+              <ArrowLeftIcon />
+              Voltar ao CRM
+            </Link>
+          ) : (
+            <button
+              type="button"
+              onClick={showLoginForm}
+              className={recoveryBackClass}
+            >
+              <ArrowLeftIcon />
+              Voltar para o login
+            </button>
+          )}
           <h1
             id="password-recovery-title"
             ref={recoveryTitleRef}
@@ -577,7 +576,9 @@ export function LoginForm() {
             id="password-recovery-description"
             className={`mt-1.5 text-[12px] font-light leading-[18px] ${paragraphTextClass}`}
           >
-            Digite seu e-mail para solicitar um link de recuperação. Abra o link neste mesmo navegador.
+            {signedInEmail
+              ? "O link será enviado para o e-mail da conta aberta. Para recuperar outra conta, use uma janela privativa e abra o link nela."
+              : "Digite seu e-mail para solicitar um link de recuperação. Abra o link neste mesmo navegador."}
           </p>
         </header>
       ) : (
@@ -628,7 +629,8 @@ export function LoginForm() {
                 enterKeyHint="send"
                 required
                 placeholder="seu@email.com"
-                value={email}
+                value={recoveryEmail}
+                readOnly={Boolean(signedInEmail)}
                 onChange={(event) => {
                   recoveryRequest.invalidate();
                   setEmail(event.target.value);
@@ -638,7 +640,6 @@ export function LoginForm() {
                   "password-recovery-description",
                   recoveryError ? "recovery-error" : null,
                   recoveryRequestMessage ? "recovery-notice" : null,
-                  recoveryRequest.remainingSeconds > 0 ? "recovery-cooldown" : null,
                 ].filter(Boolean).join(" ")}
                 className={`${inputClass} pl-11`}
               />
@@ -647,11 +648,10 @@ export function LoginForm() {
 
           <button
             type="submit"
-            disabled={recoveryRequest.blocked}
+            disabled={!authInitialized || recoveryRequest.blocked}
             className="auth-primary-action h-12 w-full cursor-pointer rounded-[6px] text-[12px] font-light shadow-none outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-55"
           >
-            {isSubmittingRecovery ? "Enviando..." : recoveryRequest.pending ? "Aguardando confirmação..." :
-              recoveryRequest.remainingSeconds > 0 ? `Solicitar novamente em ${recoveryRequest.remainingSeconds}s` : "Enviar link de recuperação"}
+            {recoveryButtonLabel}
           </button>
 
           {recoveryError ? (
@@ -667,15 +667,10 @@ export function LoginForm() {
           {recoveryRequestMessage ? (
             <p
               id="recovery-notice"
-              className={`text-center text-sm font-light leading-5 ${paragraphTextClass}`}
+              className={`text-center text-sm font-light leading-5 ${recoveryRequest.requestReceived ? "text-emerald-700 dark:text-emerald-300" : paragraphTextClass}`}
               role="status"
             >
               {recoveryRequestMessage}
-            </p>
-          ) : null}
-          {recoveryRequest.remainingSeconds > 0 ? (
-            <p id="recovery-cooldown" className={`text-center text-xs leading-5 ${mutedTextClass}`}>
-              Aguarde {recoveryRequest.remainingSeconds} segundos antes de solicitar outro link.
             </p>
           ) : null}
         </form>
@@ -733,6 +728,9 @@ export function LoginForm() {
                 Sua senha
               </label>
               <div className="relative">
+                <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4">
+                  <LockKeyhole size={16} strokeWidth={1.15} className={iconClass} aria-hidden="true" />
+                </span>
                 <input
                   id="password"
                   name="password"
@@ -742,7 +740,7 @@ export function LoginForm() {
                   placeholder="••••••••"
                   aria-invalid={Boolean(loginError)}
                   aria-describedby={loginError ? "login-error" : undefined}
-                  className={`${inputClass} pr-12`}
+                  className={`${inputClass} pl-11 pr-12`}
                 />
                 <button
                   type="button"
@@ -762,10 +760,21 @@ export function LoginForm() {
                   name="remember-email"
                   type="checkbox"
                   checked={rememberMe}
-                  onChange={(event) => setRememberMe(event.target.checked)}
+                  disabled={isSubmittingLogin}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setRememberMe(checked);
+                    if (!checked) {
+                      try {
+                        localStorage.removeItem(rememberedEmailKey);
+                      } catch {
+                        // Browser storage can be unavailable in restricted contexts.
+                      }
+                    }
+                  }}
                   className="peer sr-only"
                 />
-                <span className={`h-4 w-4 rounded-[4px] border transition-colors ${checkboxBorderClass}`} />
+                <span className={`h-4 w-4 rounded-[4px] border transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary ${checkboxBorderClass}`} />
                 <span className="pointer-events-none absolute hidden h-2 w-2 rounded-[2px] bg-primary peer-checked:block" />
               </span>
               <span className={`text-[13px] font-light ${textClass}`}>

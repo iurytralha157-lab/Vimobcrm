@@ -36,13 +36,13 @@ export function OrganizationStep({
           name="documentNumber"
           type="text"
           inputMode="numeric"
-          maxLength={18}
+          maxLength={32}
           pattern="(\d{3}\.\d{3}\.\d{3}-\d{2}|\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})"
           required
           disabled={isValidatingStep}
           aria-invalid={Boolean(fieldErrors.documentNumber) || undefined}
           aria-describedby={getFieldDescription(fieldErrors, "documentNumber")}
-          title="Informe um CPF com 11 números ou CNPJ com 14 números."
+          title="O cadastro online aceita CPF de 11 números ou CNPJ numérico de 14 números."
           placeholder="CPF ou CNPJ"
           value={formData.documentNumber}
           onChange={(event) =>

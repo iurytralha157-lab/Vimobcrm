@@ -314,6 +314,13 @@ function CheckoutContent({
   const [cardExpiryYear, setCardExpiryYear] = useState("");
   const [cardCcv, setCardCcv] = useState("");
 
+  const clearCardCredentials = useCallback(() => {
+    setCardNumber("");
+    setCardExpiryMonth("");
+    setCardExpiryYear("");
+    setCardCcv("");
+  }, []);
+
   const clearPaymentState = useCallback((clearCard = false) => {
     setActiveCheckout(null);
     setPixResult(null);
@@ -334,13 +341,8 @@ function CheckoutContent({
     setPaymentReceiptLoading(false);
     setAwaitingCardConfirmation(false);
     setDirectPollingExpired(false);
-    if (clearCard) {
-      setCardNumber("");
-      setCardExpiryMonth("");
-      setCardExpiryYear("");
-      setCardCcv("");
-    }
-  }, []);
+    if (clearCard) clearCardCredentials();
+  }, [clearCardCredentials]);
 
   const applyCardRecurrenceSignal = useCallback(
     (signal: CardRecurrenceSignal, message?: string | null) => {
@@ -383,10 +385,7 @@ function CheckoutContent({
       setDirectPollingExpired(false);
 
       if (checkout.billing_method === "CREDIT_CARD") {
-        setCardNumber("");
-        setCardExpiryMonth("");
-        setCardExpiryYear("");
-        setCardCcv("");
+        clearCardCredentials();
         setDirectCardSubscriptionId(checkout.subscription_id);
         setAwaitingCardConfirmation(true);
         setProcessingMethod(null);
@@ -401,7 +400,7 @@ function CheckoutContent({
 
       setProcessingMethod(checkout.billing_method);
     },
-    [clearPaymentState],
+    [clearCardCredentials, clearPaymentState],
   );
 
   useEffect(() => {
@@ -1580,10 +1579,7 @@ function CheckoutContent({
             "A cobrança está sendo localizada sem gerar duplicidade.",
         );
         if (billingType === "CREDIT_CARD") {
-          setCardNumber("");
-          setCardExpiryMonth("");
-          setCardExpiryYear("");
-          setCardCcv("");
+          clearCardCredentials();
           setAwaitingCardConfirmation(cardUpdateMode !== "saved_only");
           if (result.settled) {
             setPaid(true);
@@ -1646,10 +1642,7 @@ function CheckoutContent({
         if (!result.hosted) {
           if (result.saved_only && result.recurrence_saved === true) {
             void forgetCardUpdateJob();
-            setCardNumber("");
-            setCardExpiryMonth("");
-            setCardExpiryYear("");
-            setCardCcv("");
+            clearCardCredentials();
             toast.success(
               result.message || "Cartão salvo para as próximas cobranças.",
             );
@@ -1668,10 +1661,7 @@ function CheckoutContent({
                 subscriptionId: result.subscription_id || null,
               });
             }
-            setCardNumber("");
-            setCardExpiryMonth("");
-            setCardExpiryYear("");
-            setCardCcv("");
+            clearCardCredentials();
             setProcessingMethod(null);
             setRecoveryState("processing");
             setRecoveryMessage(
@@ -1695,10 +1685,7 @@ function CheckoutContent({
               );
             }
             setPaid(true);
-            setCardNumber("");
-            setCardExpiryMonth("");
-            setCardExpiryYear("");
-            setCardCcv("");
+            clearCardCredentials();
             setAwaitingCardConfirmation(false);
             setRecoveryPaymentOverride(result.payment_id || null);
             void refreshPaymentReceipt();
@@ -1712,10 +1699,7 @@ function CheckoutContent({
           }
           setDirectCardSubscriptionId(result.subscription_id || null);
           setRecoveryPaymentOverride(result.payment_id || null);
-          setCardNumber("");
-          setCardExpiryMonth("");
-          setCardExpiryYear("");
-          setCardCcv("");
+          clearCardCredentials();
           setAwaitingCardConfirmation(true);
           setRecoveryState("pending");
           toast.success(result.message || "Cartão cadastrado com segurança.");
@@ -1742,12 +1726,16 @@ function CheckoutContent({
             const canonicalInfo = await readCheckoutInfo();
             setInfo(canonicalInfo);
             if (isCheckoutActivated(canonicalInfo)) {
+              if (billingType === "CREDIT_CARD") clearCardCredentials();
               setPaid(true);
               void refreshPaymentReceipt();
               toast.success("Pagamento confirmado! 🎉");
               return;
             }
             if (canonicalInfo.active_checkout) {
+              if (canonicalInfo.active_checkout.billing_method === "CREDIT_CARD") {
+                clearCardCredentials();
+              }
               if (canonicalInfo.checkout_access?.scope === "payment") {
                 setRecoveryIntentOverride(
                   canonicalInfo.active_checkout.intent_id || null,

@@ -249,10 +249,10 @@ export default function ResetPasswordScreen() {
 
           <button
             type="button"
-            onClick={() => void leavePasswordRecovery(ROUTES.LOGIN)}
+            onClick={() => void leavePasswordRecovery(`${ROUTES.LOGIN}?recover=1`)}
             className="auth-primary-action h-12 w-full cursor-pointer rounded-[6px] text-[12px] font-light shadow-none outline-none transition-colors"
           >
-            Voltar para o login
+            Solicitar novo link
           </button>
         </div>
       ) : null}

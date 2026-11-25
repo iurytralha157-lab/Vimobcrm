@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { VimobLoader } from "@/components/shared/loading";
 import { PlanCarousel } from "../PlanCarousel";
 import { labelClass, secondaryActionClass } from "./styles";
@@ -17,7 +18,9 @@ type PlanStepProps = {
   selectedPlan: OnboardingPlanOption | undefined;
   selectedPlanSlug: string;
   submitError: string | null;
+  hasSignupConflict: boolean;
   onBack: () => void;
+  onRestartSignup: () => void;
   onRetryPlans: () => void;
   onSelectPlan: (plan: OnboardingPlanOption) => void | Promise<void>;
 };
@@ -35,7 +38,9 @@ export function PlanStep({
   selectedPlan,
   selectedPlanSlug,
   submitError,
+  hasSignupConflict,
   onBack,
+  onRestartSignup,
   onRetryPlans,
   onSelectPlan,
 }: PlanStepProps) {
@@ -68,7 +73,7 @@ export function PlanStep({
           <PlanCarousel
             plans={planOptions}
             selectedSlug={selectedPlanSlug}
-            disabled={isCheckoutPlanLocked || isUpdatingCheckoutPlan}
+            disabled={isSubmitting || isCheckoutPlanLocked || isUpdatingCheckoutPlan}
             onSelect={onSelectPlan}
           />
         )}
@@ -117,9 +122,20 @@ export function PlanStep({
       </div>
 
       {submitError ? (
-        <p role="alert" className="text-center text-xs font-light leading-5 text-primary">
-          {submitError}
-        </p>
+        <div className="space-y-2 text-center text-xs">
+          <p role="alert" className="font-light leading-5 text-primary">
+            {submitError}
+          </p>
+          {hasSignupConflict ? (
+            <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 text-[var(--app-text-primary)]">
+              <Link href="/login" className="underline">Fazer login</Link>
+              <Link href="/login?recover=1" className="underline">Recuperar senha</Link>
+              <button type="button" onClick={onRestartSignup} className="underline">
+                Iniciar nova tentativa
+              </button>
+            </div>
+          ) : null}
+        </div>
       ) : null}
     </>
   );

@@ -17,7 +17,9 @@ export function PublicDocument({
           className,
         )}
       >
-        <div className="mx-auto max-w-[72ch]">{children}</div>
+        <div className="mx-auto max-w-[72ch] text-[14px] leading-6 text-[var(--public-muted)] sm:text-base sm:leading-7">
+          {children}
+        </div>
       </div>
     </section>
   )
@@ -37,11 +39,11 @@ export function PublicDocumentSection({
           aria-hidden
           className="h-6 w-1 shrink-0 rounded-full bg-[var(--public-accent)]"
         />
-        <h2 className="text-base font-light leading-6 text-[var(--public-foreground)] sm:text-[17px]">
+        <h2 className="text-[17px] font-medium leading-6 text-[var(--public-foreground)] sm:text-lg">
           {title}
         </h2>
       </div>
-      <div className="space-y-3 text-[13px] leading-6 text-[var(--public-muted)] sm:text-sm sm:leading-7">
+      <div className="space-y-3">
         {children}
       </div>
     </section>

@@ -77,20 +77,21 @@ test('rotacao valida o novo UUID antes de alterar a tentativa atual', () => {
   assert.equal(storage.getItem(PUBLIC_SIGNUP_ATTEMPT_STORAGE_KEY), attemptId)
 })
 
-test('retomada apos conflito de documento sobrevive ao reload sem guardar senha', () => {
+test('retomada de envio sobrevive ao reload sem guardar senha ou motivo de conflito', () => {
   const storage = new MemoryStorage()
   const retry = persistPublicSignupRetry(storage, attemptId, ' ADMIN@EXAMPLE.COM ')
 
   assert.deepEqual(retry, {
     attemptId,
     email: 'admin@example.com',
-    reason: 'document_conflict',
   })
   assert.deepEqual(readPublicSignupRetry(storage), retry)
 
   const raw = storage.getItem(PUBLIC_SIGNUP_RETRY_STORAGE_KEY)
   assert.ok(raw)
   assert.equal(raw.includes('password'), false)
+  storage.setItem(PUBLIC_SIGNUP_RETRY_STORAGE_KEY, JSON.stringify({ ...retry, reason: 'document_conflict' }))
+  assert.deepEqual(readPublicSignupRetry(storage), retry)
 
   rotatePublicSignupAttemptId(storage, () => rotatedAttemptId)
   assert.equal(readPublicSignupRetry(storage), null)

@@ -41,15 +41,16 @@ function harness(kind = 'token_hash', unavailableStorage = false, initial = {}) 
   const recovery = load('lib/auth/password-recovery.ts', { './post-login-redirect': { isProtectedAppPath: () => false } });
   if (initial.recordedProof && h.sdkSession) {
     recovery.capturePasswordRecoveryIntent(storage, new URL('https://staging.example.test/reset-password?code=synthetic-code'));
-    recovery.grantPasswordRecoveryProof(storage, h.sdkSession.user.id);
+    recovery.grantPasswordRecoveryProof(storage, recovery.readPasswordRecoverySessionIdentity(h.sdkSession.access_token));
   }
   const supabase = { auth: {
     getUser: () => h.userLookup?.promise || Promise.resolve({ data: { user: h.sdkSession?.user }, error: null }),
     getSession: () => h.lookupSession ? h.lookupSession() : h.getSessionError ? Promise.reject(h.getSessionError)
       : h.fresh?.promise || Promise.resolve({ data: { session: h.sdkSession }, error: null }),
-    exchangeCodeForSession: () => { h.calls.push('pkce'); return h.auth.promise; },
-    verifyOtp: () => { h.calls.push('token_hash'); return h.auth.promise; },
-    setSession: () => { h.calls.push('install'); return h.auth.promise; },
+    setSession: async next => {
+      h.calls.push('install'); h.transition(next, 'SIGNED_IN');
+      return { data: { session: next }, error: null };
+    },
     onAuthStateChange: callback => { h.callback = callback; return { data: { subscription: { unsubscribe: () => {} } } }; },
     signOut: async () => { effects.push(['logout']); h.transition(null, 'SIGNED_OUT'); return { error: null }; },
     admin: { signOut: async () => { effects.push(['global']); return { error: null }; } },
@@ -63,10 +64,15 @@ function harness(kind = 'token_hash', unavailableStorage = false, initial = {}) 
   };
   const hook = load('hooks/auth/use-password-recovery-session.ts', { react,
     '@/config/constants': { ROUTES: { LOGIN: '/login', SIGNUP: '/cadastro', RESET_PASSWORD: '/reset-password' } },
-    '@/lib/supabase/client': { supabase, preparePasswordRecoveryFragment: () => {
-      h.calls.push('implicit');
-      return h.auth.promise.then(result => ({ access_token: result.data.session.access_token, refresh_token: 'verified' }));
-    } }, '@/lib/api/vimob-client': { setVimobAPIAccessToken: () => effects.push(['api-token']) },
+    '@/lib/supabase/client': {
+      supabase,
+      preparePasswordRecoverySession: (evidence, currentUserId) => {
+        h.calls.push(evidence.kind);
+        return h.auth.promise.then(next => !currentUserId || next.user.id === currentUserId ? { session: next } : null);
+      },
+      installPasswordRecoverySession: async (next, isCurrent) => isCurrent()
+        ? (await supabase.auth.setSession(next.session)).data.session : null,
+    }, '@/lib/api/vimob-client': { setVimobAPIAccessToken: () => effects.push(['api-token']) },
     '@/lib/auth/global-sign-out': globalSignOut, '@/lib/auth/password-recovery-exit': exit,
     '@/lib/auth/password-recovery': recovery,
   });
@@ -88,7 +94,7 @@ function harness(kind = 'token_hash', unavailableStorage = false, initial = {}) 
   };
   h.unmount = () => { layoutCleanup.forEach(cleanup => cleanup?.()); effectCleanup.forEach(cleanup => cleanup?.()); };
   h.transition = (next, event = 'PASSWORD_RECOVERY') => { h.sdkSession = next; h.callback(event, next); };
-  h.resolve = next => { h.transition(next); h.auth.resolve({ data: { session: next, redirectType: 'recovery' }, error: null }); };
+  h.resolve = next => h.auth.resolve(next);
   h.attachSubmit = () => {
     const source = ts.createSourceFile('ResetPasswordScreen.tsx', readFileSync(new URL('components/features/auth/screens/ResetPasswordScreen.tsx', repo), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
     let submit;
@@ -135,11 +141,38 @@ for (const kind of ['pkce', 'token_hash', 'implicit']) {
   });
 }
 test('a same-user new recovery session invalidates the original pending visit', async () => {
-  const h = harness(); h.transition(session()); h.transition(session('a', 'new-sid-a'));
+  const h = harness('token_hash', false, { session: session() });
+  await tick();
+  h.transition(session('a', 'new-sid-a'));
   const writes = h.storageWrites.length;
   h.resolve(session()); await tick(); await tick();
   assert.equal(h.states[0], 'invalid'); assert.equal(h.storageWrites.length, writes); assert.deepEqual(h.effects, []);
 });
+test('a fresh SDK lookup preserves a replacement session even if its auth event has not arrived', async () => {
+  const replacement = session('b', 'sid-b', false);
+  const h = harness();
+  try {
+    await tick(); assert.deepEqual(h.calls, ['token_hash']);
+    h.sdkSession = replacement;
+    h.resolve(session()); await tick(); await tick();
+    assert.equal(h.states[0], 'invalid');
+    assert.equal(h.sdkSession, replacement);
+    assert.deepEqual(h.calls, ['token_hash']);
+  } finally { h.unmount(); }
+});
+for (const suffix of ['?error_description=private-detail', '#error_description=private-detail', '?code=first&code=second']) {
+  test(`invalid recovery URL data is removed and replaced with a generic message (${suffix[0]})`, async () => {
+    const h = harness('none', false, { suffix, session: session(), recordedProof: true });
+    try {
+      await tick(); await tick();
+      assert.equal(h.states[0], 'invalid');
+      assert.match(h.states[1], /Solicite um novo link/);
+      assert(!h.states[1].includes('private-detail'));
+      assert.deepEqual(h.effects, [['url', '/reset-password']]);
+      assert.deepEqual(h.calls, []);
+    } finally { h.unmount(); }
+  });
+}
 test('a delayed fresh-session lookup also obeys unmount before proof and URL effects', async () => {
   const h = harness(); h.fresh = deferred(); h.resolve(session()); await tick();
   h.unmount(); const writes = h.storageWrites.length;
@@ -155,13 +188,13 @@ test('the original recovery becomes ready and binds requests to its user and ses
   assert.equal(guard.isCurrent(), false); assert.equal(request.signal.aborted, true); request.finish();
   h.unmount();
 });
-test('an explicit new recovery URL starts a fresh visit instead of inheriting the previous user', async () => {
+test('an explicit new recovery URL for the same user must prove a fresh session', async () => {
   const h = harness(); h.resolve(session()); await tick(); await tick();
   const oldGuard = h.result.captureGuard(), oldRequest = h.result.captureRequest(oldGuard);
   h.startNewLink(); assert.equal(oldGuard.isCurrent(), false); assert.equal(oldRequest.signal.aborted, true);
-  h.resolve(session('b', 'sid-b')); await tick(); await tick();
+  h.resolve(session('a', 'next-sid-a')); await tick(); await tick();
   assert.equal(h.states[0], 'ready');
-  const nextGuard = h.result.captureGuard(); assert.equal(nextGuard.expectedUserId, 'b'); assert.equal(nextGuard.expectedSessionId, 'sid-b');
+  const nextGuard = h.result.captureGuard(); assert.equal(nextGuard.expectedUserId, 'a'); assert.equal(nextGuard.expectedSessionId, 'next-sid-a');
   oldRequest.finish(); h.unmount();
 });
 test('the original guard still permits leaving after the password request revoked its own SDK session', async () => {
@@ -199,7 +232,7 @@ test('cancel query parameters cannot cancel an otherwise valid PKCE recovery vis
   const h = harness('pkce', false, { suffix: '?code=synthetic-code&cancel=1&next=%2Flogin' });
   try {
     h.resolve(session()); await tick(); await tick();
-    assert.equal(h.states[0], 'ready'); assert.deepEqual(h.calls, ['pkce']);
+    assert.equal(h.states[0], 'ready'); assert.deepEqual(h.calls, ['pkce', 'install']);
     assert.deepEqual(h.effects, [['url', '/reset-password']]);
     assert.equal(h.result.captureGuard().expectedSessionId, 'sid-a');
   } finally { h.unmount(); }

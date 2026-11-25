@@ -11,7 +11,7 @@ export function PublicLegalDocument({
   return (
     <PublicDocument>
       <div className="space-y-8">
-        <div className="space-y-3 text-[13px] leading-6 text-[var(--public-muted)] sm:text-sm sm:leading-7">
+        <div className="space-y-3">
           {document.introduction.map((paragraph) => (
             <p key={paragraph}>{paragraph}</p>
           ))}
@@ -40,7 +40,7 @@ export function PublicLegalDocument({
           </PublicDocumentSection>
         ))}
 
-        <p className="border-t border-[var(--public-border)] pt-5 text-[10px] font-light leading-5 text-[var(--public-tertiary)]">
+        <p className="border-t border-[var(--public-border)] pt-5 text-xs font-light leading-5 text-[var(--public-muted)]">
           Vigente desde {formatLegalEffectiveDate(document.effectiveDate)} · Versão{' '}
           <span className="font-mono">{document.version}</span>
         </p>

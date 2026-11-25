@@ -10,7 +10,7 @@ import {
 } from "@/components/features/public";
 
 export const metadata: Metadata = {
-  title: "Exclusão de dados | Vimob",
+  title: "Exclusão de dados",
   description:
     "Instruções para desconectar a integração do Vimob com a Meta e solicitar a exclusão de dados relacionados ao Facebook e Instagram.",
 };
