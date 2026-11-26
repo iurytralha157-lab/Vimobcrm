@@ -20,7 +20,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { AccountTab } from "@/components/features/settings/AccountTab";
 import { TeamTab } from "@/components/features/settings/TeamTab";
-import { RolesTab } from "@/components/features/settings/RolesTab";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { SubscriptionTab } from "@/components/features/settings/SubscriptionTab";
 import { IntegrationsTab } from "@/components/features/settings/IntegrationsTab";
@@ -76,7 +75,6 @@ export default function Settings() {
     canManageOrganization ||
     hasPermission("users_manage") ||
     hasPermission("permissions_manage");
-  const canManageRoles = canManageOrganization || hasPermission("permissions_manage");
   const canManageIntegrations =
     canManageOrganization || hasPermission("settings_integrations");
   const canManageWhatsApp =
@@ -378,12 +376,7 @@ export default function Settings() {
 
           {accessReady && canAccessUsers && (
             <TabsContent value="team">
-              <div className="space-y-6">
-                <TeamTab search={userSearch} />
-                {canManageRoles && activeOrganizationId && (
-                  <RolesTab key={activeOrganizationId} />
-                )}
-              </div>
+              <TeamTab search={userSearch} />
             </TabsContent>
           )}
 

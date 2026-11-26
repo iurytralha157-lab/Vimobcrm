@@ -1,27 +1,27 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "0d6ebf84b1080bc3aadd4afb817b02abad2115f0f8f4ac39dce3229b5bec4a0d",
-  "surfaceInventoryDigestSha256": "6f4069f94d8f75d010e0eb91b3072e75627e6228e53a2e8ca8182478ced6f291",
+  "sourceDigestSha256": "c28042257f6bc3200dcf4e70576ad863a9874a7c21983fd29720f30b5889be87",
+  "surfaceInventoryDigestSha256": "e8f92e78d2c3cb20c852901aa7d22de294f5d37fd2282bb466793ea8c54d0342",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 682,
+    "filesScanned": 681,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
-    "filesWithFindings": 74,
-    "findings": 165,
-    "protectedReachableFilesWithFindings": 70,
-    "protectedReachableFindings": 161,
+    "filesWithFindings": 73,
+    "findings": 147,
+    "protectedReachableFilesWithFindings": 69,
+    "protectedReachableFindings": 143,
     "bySurfaceScope": {
-      "protected-only": 119,
+      "protected-only": 101,
       "protected-and-public": 42,
       "public-only": 2,
       "infrastructure": 2
     },
     "byPriority": {
-      "P1": 120,
+      "P1": 106,
       "P2": 27,
-      "P3": 18
+      "P3": 14
     },
     "byRule": {
       "heavy-shadow": {
@@ -43,13 +43,13 @@
         "priority": "P1"
       },
       "heavy-font": {
-        "count": 10,
+        "count": 6,
         "guidance": "Texto normal usa 300; títulos usam 400.",
         "label": "Tipografia pesada",
         "priority": "P1"
       },
       "hardcoded-color": {
-        "count": 46,
+        "count": 36,
         "guidance": "Usar tokens --app-* ou cores semânticas do domínio.",
         "label": "Cor hardcoded",
         "priority": "P1"
@@ -67,7 +67,7 @@
         "priority": "P2"
       },
       "uppercase-tracking": {
-        "count": 18,
+        "count": 14,
         "guidance": "Preferir texto natural em 10–12px e peso 300.",
         "label": "Caixa alta/tracking",
         "priority": "P3"
@@ -81,16 +81,6 @@
     }
   },
   "topFiles": [
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "count": 18,
-      "score": 56,
-      "rules": {
-        "hardcoded-color": 10,
-        "heavy-font": 4,
-        "uppercase-tracking": 4
-      }
-    },
     {
       "file": "components/shared/SearchableTagPicker.tsx",
       "count": 11,
@@ -498,19 +488,17 @@
       "rules": {
         "oversized-radius": 1
       }
+    },
+    {
+      "file": "components/features/properties/detail/tabs/KeysTab.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
     }
   ],
   "topProtectedFiles": [
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "count": 18,
-      "score": 56,
-      "rules": {
-        "hardcoded-color": 10,
-        "heavy-font": 4,
-        "uppercase-tracking": 4
-      }
-    },
     {
       "file": "components/shared/SearchableTagPicker.tsx",
       "count": 11,
@@ -913,6 +901,14 @@
     },
     {
       "file": "components/features/properties/detail/tabs/TechnicalTab.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/properties/developments/PropertyDevelopmentsScreen.tsx",
       "count": 1,
       "score": 3,
       "rules": {
@@ -1910,168 +1906,6 @@
       "rule": "heavy-font",
       "surfaceScope": "protected-only",
       "weight": 3
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 88,
-      "match": "#6B7280",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 88,
-      "match": "#EF4444",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 88,
-      "match": "#F59E0B",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 88,
-      "match": "#10B981",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 88,
-      "match": "#3B82F6",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 88,
-      "match": "#8B5CF6",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 88,
-      "match": "#EC4899",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 88,
-      "match": "#14B8A6",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 104,
-      "match": "#6B7280",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 133,
-      "match": "#6B7280",
-      "priority": "P1",
-      "rule": "hardcoded-color",
-      "surfaceScope": "protected-only",
-      "weight": 4
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 256,
-      "match": "font-semibold",
-      "priority": "P1",
-      "rule": "heavy-font",
-      "surfaceScope": "protected-only",
-      "weight": 3
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 323,
-      "match": "font-semibold",
-      "priority": "P1",
-      "rule": "heavy-font",
-      "surfaceScope": "protected-only",
-      "weight": 3
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 387,
-      "match": "font-semibold",
-      "priority": "P1",
-      "rule": "heavy-font",
-      "surfaceScope": "protected-only",
-      "weight": 3
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 387,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 387,
-      "match": "tracking-wide",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 420,
-      "match": "font-semibold",
-      "priority": "P1",
-      "rule": "heavy-font",
-      "surfaceScope": "protected-only",
-      "weight": 3
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 420,
-      "match": "uppercase",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
-    },
-    {
-      "file": "components/features/settings/RolesTab.tsx",
-      "line": 420,
-      "match": "tracking-wide",
-      "priority": "P3",
-      "rule": "uppercase-tracking",
-      "surfaceScope": "protected-only",
-      "weight": 1
     },
     {
       "file": "components/features/settings/UserPermissionsScreen.tsx",

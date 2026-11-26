@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "6f4069f94d8f75d010e0eb91b3072e75627e6228e53a2e8ca8182478ced6f291",
+  "sourceDigestSha256": "e8f92e78d2c3cb20c852901aa7d22de294f5d37fd2282bb466793ea8c54d0342",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -4067,39 +4067,6 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:be153c8c7fa051bd4aa4",
-          "column": 9,
-          "file": "components/features/settings/RolesTab.tsx",
-          "line": 259,
-          "owner": "RolesTab",
-          "routes": [
-            "/settings"
-          ],
-          "kind": "dialog"
-        },
-        {
-          "id": "overlay:44e99d628fe43db2938f",
-          "column": 7,
-          "file": "components/features/settings/RolesTab.tsx",
-          "line": 548,
-          "owner": "RolesTab",
-          "routes": [
-            "/settings"
-          ],
-          "kind": "alertDialog"
-        },
-        {
-          "id": "overlay:3f428dd0f2049f0e32cb",
-          "column": 7,
-          "file": "components/features/settings/RolesTab.tsx",
-          "line": 569,
-          "owner": "RolesTab",
-          "routes": [
-            "/settings"
-          ],
-          "kind": "alertDialog"
-        },
-        {
           "id": "overlay:33532e3626a21d4717ef",
           "column": 5,
           "file": "components/features/settings/subscription/FiscalDetailsDialog.tsx",
@@ -4177,10 +4144,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:82cffc47c9bd462b0e68",
+          "id": "overlay:e620a9a7389d50ea00e4",
           "column": 7,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 922,
+          "line": 917,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -4188,10 +4155,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:20b7388c5f9b90685e06",
+          "id": "overlay:6744a9efb6dce7b88b85",
           "column": 7,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 1057,
+          "line": 1052,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -4199,10 +4166,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:423ee94a55ce2028175f",
+          "id": "overlay:c71809cc38f5de5f4ad1",
           "column": 7,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 1086,
+          "line": 1081,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -4210,10 +4177,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:ac5926ffc4188198e55f",
+          "id": "overlay:da5f3048cb34b536402a",
           "column": 7,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 1112,
+          "line": 1107,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -28930,106 +28897,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:16020e6728c510c4e5b6",
-          "column": 13,
-          "file": "components/features/settings/RolesTab.tsx",
-          "line": 264,
-          "owner": "RolesTab",
-          "routes": [
-            "/settings"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:e86d89a08ac4d97118a2",
-          "column": 25,
-          "file": "components/features/settings/RolesTab.tsx",
-          "line": 292,
-          "owner": "RolesTab",
-          "routes": [
-            "/settings"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:3ef6e87c04917fc38dee",
-          "column": 15,
-          "file": "components/features/settings/RolesTab.tsx",
-          "line": 460,
-          "owner": "RolesTab",
-          "routes": [
-            "/settings"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:8a9674e9131f2d677e19",
-          "column": 15,
-          "file": "components/features/settings/RolesTab.tsx",
-          "line": 463,
-          "owner": "RolesTab",
-          "routes": [
-            "/settings"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:54dde513dfa6ac8ce0fb",
-          "column": 13,
-          "file": "components/features/settings/RolesTab.tsx",
-          "line": 484,
-          "owner": "RolesTab",
-          "routes": [
-            "/settings"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:960b35dd9f3f2e034f91",
-          "column": 29,
-          "file": "components/features/settings/RolesTab.tsx",
-          "line": 510,
-          "owner": "RolesTab",
-          "routes": [
-            "/settings"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:2ce76ba4d1920475cd24",
-          "column": 27,
-          "file": "components/features/settings/RolesTab.tsx",
-          "line": 514,
-          "owner": "RolesTab",
-          "routes": [
-            "/settings"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:724dbcb40b4727061e37",
-          "column": 29,
-          "file": "components/features/settings/RolesTab.tsx",
-          "line": 518,
-          "owner": "RolesTab",
-          "routes": [
-            "/settings"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:52d4720ba88a39036bb3",
+          "id": "cta:b4f2f09c6f9aef893085",
           "column": 23,
           "file": "components/features/settings/SettingsScreen.tsx",
-          "line": 296,
+          "line": 294,
           "owner": "Settings",
           "routes": [
             "/settings"
@@ -29038,10 +28909,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:02d7f5efd730797f459f",
+          "id": "cta:fa5bbd2c30f70180fa8e",
           "column": 21,
           "file": "components/features/settings/SettingsScreen.tsx",
-          "line": 319,
+          "line": 317,
           "owner": "Settings",
           "routes": [
             "/settings"
@@ -29435,10 +29306,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0a1b9aae84b7c582811a",
+          "id": "cta:8ecbea586b0f05b77da1",
           "column": 33,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 694,
+          "line": 689,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -29447,10 +29318,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e7ef8175e83aee0786fc",
+          "id": "cta:cd63315664247b345150",
           "column": 33,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 723,
+          "line": 718,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -29459,10 +29330,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:5883986410b91f1932da",
+          "id": "cta:14eae6c635615611d41c",
           "column": 37,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 851,
+          "line": 846,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -29472,10 +29343,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:96f501bf2accb6d2bb8a",
+          "id": "cta:89220773080fc3b5d88a",
           "column": 35,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 889,
+          "line": 884,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -45382,54 +45253,6 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:a51b18f74fd61e68fff5",
-          "column": 13,
-          "file": "components/features/settings/RolesTab.tsx",
-          "line": 559,
-          "owner": "RolesTab",
-          "routes": [
-            "/settings"
-          ],
-          "kind": "AlertDialogCancel",
-          "tag": "AlertDialogCancel"
-        },
-        {
-          "id": "control:44e24010d88c67570728",
-          "column": 13,
-          "file": "components/features/settings/RolesTab.tsx",
-          "line": 560,
-          "owner": "RolesTab",
-          "routes": [
-            "/settings"
-          ],
-          "kind": "AlertDialogAction",
-          "tag": "AlertDialogAction"
-        },
-        {
-          "id": "control:615e366b6e6f91c644e9",
-          "column": 13,
-          "file": "components/features/settings/RolesTab.tsx",
-          "line": 579,
-          "owner": "RolesTab",
-          "routes": [
-            "/settings"
-          ],
-          "kind": "AlertDialogCancel",
-          "tag": "AlertDialogCancel"
-        },
-        {
-          "id": "control:ca365c0ba33200fb170f",
-          "column": 13,
-          "file": "components/features/settings/RolesTab.tsx",
-          "line": 580,
-          "owner": "RolesTab",
-          "routes": [
-            "/settings"
-          ],
-          "kind": "AlertDialogAction",
-          "tag": "AlertDialogAction"
-        },
-        {
           "id": "control:6857cdc5d40ba310e4ce",
           "column": 11,
           "file": "components/features/settings/subscription/PlanConfirmationDialog.tsx",
@@ -45454,10 +45277,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:1c1bee36aff57d12d1c5",
+          "id": "control:e2fb51d25f00f17d81df",
           "column": 13,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 1041,
+          "line": 1036,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -45466,10 +45289,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:786dd73bc6b3b8e2275b",
+          "id": "control:04bbcc669dcfbdd7f0d9",
           "column": 13,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 1042,
+          "line": 1037,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -45478,10 +45301,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:6d073bd6054f4bc7050e",
+          "id": "control:17d7c7ca40c38c30b2e0",
           "column": 13,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 1070,
+          "line": 1065,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -45490,10 +45313,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:fb8d2363d1bdd7d73b63",
+          "id": "control:f37dc8d408a0badae325",
           "column": 13,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 1071,
+          "line": 1066,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -45502,10 +45325,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:7b99e03926f02368ca6e",
+          "id": "control:1dbf4ec4e76ba20de623",
           "column": 13,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 1097,
+          "line": 1092,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -45514,10 +45337,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:5433d771f7e86546d108",
+          "id": "control:7a3eb82f938e55afce23",
           "column": 13,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 1098,
+          "line": 1093,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -45526,10 +45349,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:685f0e8ee34d27e327ad",
+          "id": "control:9b829031ab5b00a2b564",
           "column": 13,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 1121,
+          "line": 1116,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -45538,10 +45361,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:67304eac904b1606d4fd",
+          "id": "control:2037c41c225d10a5a9d1",
           "column": 13,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 1122,
+          "line": 1117,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -47529,7 +47352,7 @@
         }
       ]
     },
-    "digestSha256": "3d47a88c88c72ac2b5d6d0eb736e57966c0dbdcbb9fad30c0d1aba8fcfd0afd2"
+    "digestSha256": "a2748757eac03c8b4ff4bd4f15fa39f1f770cb3c67323e1d0b95a2999599834f"
   },
   "routes": [
     {
@@ -57421,15 +57244,6 @@
       "access": [
         "protected"
       ],
-      "file": "components/features/settings/RolesTab.tsx",
-      "routes": [
-        "/settings"
-      ]
-    },
-    {
-      "access": [
-        "protected"
-      ],
       "file": "components/features/settings/SettingsScreen.tsx",
       "routes": [
         "/settings"
@@ -62731,11 +62545,11 @@
     "surfaces": {
       "asChildButtonsExcluded": 37,
       "asChildButtonsWithUnrecognizedChild": 0,
-      "asChildPrimitiveControlsExcluded": 89,
+      "asChildPrimitiveControlsExcluded": 88,
       "asChildPrimitiveControlsWithUnrecognizedChild": 2,
-      "ctasAll": 1627,
+      "ctasAll": 1619,
       "ctasByKind": {
-        "actionButton": 1448,
+        "actionButton": 1440,
         "external": 7,
         "internal": 37,
         "internalDynamic": 80,
@@ -62744,27 +62558,27 @@
       "forms": 54,
       "formsRouteReachable": 54,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1565,
-      "internalCtasRouteReachable": 1538,
-      "overlays": 253,
+      "internalCtas": 1557,
+      "internalCtasRouteReachable": 1530,
+      "overlays": 250,
       "overlaysByKind": {
-        "alertDialog": 74,
-        "dialog": 99,
+        "alertDialog": 72,
+        "dialog": 98,
         "dropdownMenu": 32,
         "popover": 34,
         "sheet": 14
       },
-      "overlaysRouteReachable": 250,
-      "supplementalControls": 295,
+      "overlaysRouteReachable": 247,
+      "supplementalControls": 291,
       "supplementalControlsByKind": {
-        "AlertDialogAction": 69,
-        "AlertDialogCancel": 71,
+        "AlertDialogAction": 67,
+        "AlertDialogCancel": 69,
         "DropdownMenuItem": 97,
         "DropdownMenuRadioItem": 1,
         "DropdownMenuSubTrigger": 1,
         "TabsTrigger": 56
       },
-      "supplementalControlsRouteReachable": 292
+      "supplementalControlsRouteReachable": 288
     }
   },
   "qaDenominators": {
@@ -62773,9 +62587,9 @@
     "protectedAccessChecksThreePersonas": 213,
     "renderableRouteViewportChecksDesktopAndMobile": 174,
     "routeReachableFormImplementations": 54,
-    "routeReachableInternalCtaImplementations": 1538,
-    "routeReachableOverlayImplementations": 250,
-    "routeReachableSupplementalOverlayAndTabControls": 292
+    "routeReachableInternalCtaImplementations": 1530,
+    "routeReachableOverlayImplementations": 247,
+    "routeReachableSupplementalOverlayAndTabControls": 288
   },
   "diagnostics": {
     "formsWithoutLocalSubmitContract": [],

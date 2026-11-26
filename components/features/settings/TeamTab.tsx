@@ -97,8 +97,7 @@ export function TeamTab({ search = '' }: { search?: string }) {
   const {
     data: invitations = [],
     isLoading: invitationsLoading,
-    isFetching: invitationsRefreshing,
-    dataUpdatedAt: invitationsUpdatedAt,
+    isFetching: invitationsFetching,
     isError: invitationsFailed,
     refetch: refetchInvitations,
   } = useInvitations({ enabled: canManageUsers });
@@ -129,6 +128,7 @@ export function TeamTab({ search = '' }: { search?: string }) {
   const {
     data: users = [],
     isLoading: usersLoading,
+    isFetching: usersFetching,
     isError: usersFailed,
     refetch: refetchUsers,
   } = useOrganizationUsers({
@@ -157,20 +157,18 @@ export function TeamTab({ search = '' }: { search?: string }) {
     (!requiresLeadTransfer || !!transferLeadsToUserId) &&
     (!requiresPropertyTransfer || !!transferPropertiesToUserId);
   const normalizedSearch = normalizeSearchText(search);
-  const recentAcceptedCutoff = invitationsUpdatedAt - 30 * 24 * 60 * 60 * 1000;
-  const visibleInvitations = canManageUsers
-    ? invitations.filter((invitation) => {
-        if (invitation.used_at && Date.parse(invitation.used_at) < recentAcceptedCutoff) return false;
-        if (!normalizedSearch) return true;
-        const state = invitation.used_at ? 'aceito' : invitation.is_expired ? 'expirado' : 'pendente';
-        return normalizeSearchText([
-          invitation.email ?? '',
-          roleLabel(invitation.role),
-          state,
-          getInvitationEmailLabel(invitation),
-        ].join(' ')).includes(normalizedSearch);
-      })
+  const manageableInvitations = canManageUsers
+    ? invitations.filter((invitation) => !invitation.used_at)
     : [];
+  const visibleInvitations = manageableInvitations.filter((invitation) => {
+    if (!normalizedSearch) return true;
+    return normalizeSearchText([
+      invitation.email ?? '',
+      roleLabel(invitation.role),
+      invitation.is_expired ? 'expirado' : 'pendente',
+      getInvitationEmailLabel(invitation),
+    ].join(' ')).includes(normalizedSearch);
+  });
   const visibleUsers = users.filter((user) => {
     if (user.role === 'super_admin') return false;
     if (!normalizedSearch) return true;
@@ -183,9 +181,11 @@ export function TeamTab({ search = '' }: { search?: string }) {
   });
   const hasManagedUsersOrInvitations =
     users.some((user) => user.role !== 'super_admin') ||
-    (canManageUsers && invitations.some((invitation) =>
-      !invitation.used_at || Date.parse(invitation.used_at) >= recentAcceptedCutoff
-    ));
+    manageableInvitations.length > 0;
+  const isTeamRefreshing = invitationsFetching || usersFetching;
+  const refreshTeam = () => canManageUsers
+    ? Promise.all([refetchUsers(), refetchInvitations()])
+    : refetchUsers();
 
   useEffect(() => {
     if (!canManageUsers) return;
@@ -384,12 +384,12 @@ export function TeamTab({ search = '' }: { search?: string }) {
                 variant="ghost"
                 size="sm"
                 className="ml-auto h-9 rounded-[6px] text-xs"
-                onClick={() => void refetchInvitations()}
-                disabled={invitationsRefreshing}
-                aria-label="Atualizar convites"
+                onClick={() => void refreshTeam()}
+                disabled={isTeamRefreshing}
+                aria-label="Atualizar usuários e convites"
               >
-                <RefreshCw className={`mr-1.5 h-4 w-4 ${invitationsRefreshing ? 'animate-spin' : ''}`} />
-                Atualizar convites
+                <RefreshCw className={`mr-1.5 h-4 w-4 ${isTeamRefreshing ? 'animate-spin' : ''}`} />
+                Atualizar
               </Button>
             )}
             {canManageUsers && (
@@ -578,11 +578,7 @@ export function TeamTab({ search = '' }: { search?: string }) {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => void (
-                    canManageUsers
-                      ? Promise.all([refetchUsers(), refetchInvitations()])
-                      : refetchUsers()
-                  )}
+                  onClick={() => void refreshTeam()}
                 >
                   Tentar novamente
                 </Button>
@@ -602,8 +598,7 @@ export function TeamTab({ search = '' }: { search?: string }) {
                   ) : (
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                        {visibleInvitations.map((invitation) => {
-                         const isAccepted = Boolean(invitation.used_at);
-                         const isExpired = !isAccepted && invitation.is_expired === true;
+                         const isExpired = invitation.is_expired === true;
                          const emailState = getInvitationEmailState(invitation);
                         const isResending =
                           resendInvitation.isPending &&
@@ -631,9 +626,9 @@ export function TeamTab({ search = '' }: { search?: string }) {
                                   {invitation.email || 'Convite sem e-mail'}
                                 </p>
                                 <p className="mt-1 truncate text-xs text-muted-foreground">
-                                   {isAccepted ? 'Aceito em ' : isExpired ? 'Expirou em ' : 'Válido até '}
+                                   {isExpired ? 'Expirou em ' : 'Válido até '}
                                    {new Intl.DateTimeFormat('pt-BR').format(
-                                     new Date(isAccepted ? invitation.used_at! : invitation.expires_at),
+                                     new Date(invitation.expires_at),
                                    )}
                                  </p>
                                  <p
@@ -644,14 +639,14 @@ export function TeamTab({ search = '' }: { search?: string }) {
                               </div>
                               <Badge
                                 variant="secondary"
-                                 className={`shrink-0 rounded-[6px] border-0 text-[10px] ${isAccepted ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-200' : isExpired ? 'bg-slate-500/10 text-slate-700 dark:text-slate-200' : 'bg-amber-500/10 text-amber-700 dark:text-amber-200'}`}
+                                 className={`shrink-0 rounded-[6px] border-0 text-[10px] ${isExpired ? 'bg-slate-500/10 text-slate-700 dark:text-slate-200' : 'bg-amber-500/10 text-amber-700 dark:text-amber-200'}`}
                                >
-                                 {isAccepted ? 'Aceito' : isExpired ? 'Expirado' : 'Pendente'}
+                                 {isExpired ? 'Expirado' : 'Pendente'}
                               </Badge>
                             </div>
 
                             <div className="mt-4">
-                               {canManageAdminRole && !isAccepted && !isExpired ? (
+                               {canManageAdminRole && !isExpired ? (
                                 <Select
                                   value={invitation.role}
                                   onValueChange={(value) => updateInvitation.mutate({
@@ -689,7 +684,7 @@ export function TeamTab({ search = '' }: { search?: string }) {
                               )}
                             </div>
 
-                             {canManageInvitation && !isAccepted && (
+                             {canManageInvitation && (
                               <div className="mt-auto flex items-center gap-2 pt-4">
                                 <Button
                                   variant="ghost"

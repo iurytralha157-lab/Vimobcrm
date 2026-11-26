@@ -54,7 +54,7 @@ test('cartoes e acoes de usuario preservam a hierarquia visual solicitada', () =
   assert.match(teamSource, /variant="destructive"[\s\S]*aria-label=\{`Excluir/)
 })
 
-test('convites pendentes, expirados e aceitos recentes usam o mesmo card com acoes por estado', () => {
+test('somente convites pendentes e expirados aparecem na gestão de usuários', () => {
   const teamSource = readSource('components/features/settings/TeamTab.tsx')
   const invitationHookSource = readSource('hooks/use-invitations.ts')
   const invitationCards = teamSource.match(
@@ -66,9 +66,10 @@ test('convites pendentes, expirados e aceitos recentes usam o mesmo card com aco
 
   assert.match(
     teamSource,
-    /const visibleInvitations = canManageUsers[\s\S]*invitations\.filter\(\(invitation\) => \{[\s\S]*invitation\.used_at && Date\.parse\(invitation\.used_at\) < recentAcceptedCutoff/,
+    /const manageableInvitations = canManageUsers\s*\?\s*invitations\.filter\(\(invitation\) => !invitation\.used_at\b/,
   )
-  assert.match(teamSource, /const recentAcceptedCutoff = invitationsUpdatedAt - 30 \* 24 \* 60 \* 60 \* 1000/)
+  assert.match(teamSource, /const visibleInvitations = manageableInvitations\.filter\(/)
+  assert.doesNotMatch(teamSource, /recentAcceptedCutoff|Aceito em /)
   assert.match(teamSource, /useInvitations\(\{ enabled: canManageUsers \}\)/)
   assert.match(
     invitationHookSource,
@@ -79,12 +80,11 @@ test('convites pendentes, expirados e aceitos recentes usam o mesmo card com aco
   assert.match(invitationCardClass, /bg-\[var\(--app-surface-soft\)\]/)
   assert.doesNotMatch(invitationCardClass, /\bborder(?:-|\b)/)
   assert.ok(invitationCards)
-  assert.match(invitationCards, /const isAccepted = Boolean\(invitation\.used_at\)/)
-  assert.match(invitationCards, /const isExpired = !isAccepted && invitation\.is_expired === true/)
-  assert.match(invitationCards, /isAccepted \? 'Aceito' : isExpired \? 'Expirado' : 'Pendente'/)
+  assert.match(invitationCards, /const isExpired = invitation\.is_expired === true/)
+  assert.match(invitationCards, /isExpired \? 'Expirado' : 'Pendente'/)
   assert.match(invitationCards, /isExpired \? 'Prazo expirado' : 'Aguardando aceite'/)
-  assert.match(invitationCards, /canManageAdminRole && !isAccepted && !isExpired/)
-  assert.match(invitationCards, /canManageInvitation && !isAccepted/)
+  assert.match(invitationCards, /canManageAdminRole && !isExpired/)
+  assert.match(invitationCards, /\{canManageInvitation && \(/)
   assert.match(invitationCards, /isExpired \? 'Renovar' : 'Reenviar'/)
   assert.match(invitationCards, /Cancelar convite para/)
   assert.doesNotMatch(invitationCards, /<Switch/)
@@ -104,13 +104,13 @@ test('controles administrativos sao condicionados e a rota de permissoes tem gat
     assert.doesNotMatch(source, /userOrganizations/)
   }
   assert.match(settingsSource, /const canAccessUsers =\s*canManageOrganization \|\|\s*hasPermission\("users_manage"\) \|\|\s*hasPermission\("permissions_manage"\)/)
-  assert.match(settingsSource, /\{canManageRoles && activeOrganizationId && \(\s*<RolesTab/)
+  assert.doesNotMatch(settingsSource, /\bRolesTab\b|Nova Função/)
   assert.match(teamSource, /const canManageUsers = isAdmin \|\| hasPermission\('users_manage'\)/)
   assert.match(teamSource, /const canManagePermissions = isAdmin \|\| hasPermission\('permissions_manage'\)/)
   assert.match(teamSource, /const canManageAdminRole = isAdmin && canManagePermissions/)
   assert.match(teamSource, /useInvitations\(\{ enabled: canManageUsers \}\)/)
   assert.match(teamSource, /scope: canManageUsers \? 'management' : 'active'/)
-  assert.match(teamSource, /canManageInvitation && !isAccepted/)
+  assert.match(teamSource, /\{canManageInvitation && \(/)
   assert.match(teamSource, /const canManageUserAccess =\s*canManageUsers &&/)
   assert.match(teamSource, /\{canManagePermissions && \(\s*<Button/)
   assert.match(permissionsPageSource, /<PermissionBoundary title="Permissoes do usuario" permission="permissions_manage">/)
@@ -137,9 +137,12 @@ test('mudancas de usuarios e aceite de convite atualizam a gestao em outros clie
   const realtimeSource = readSource('contexts/BackendRealtimeBus.tsx')
   const backendTypesSource = readSource('apps/api/internal/realtime/types.go')
   const usersHandlerSource = readSource('apps/api/internal/users/handler.go')
+  const invitationHandlerSource = readSource('apps/api/internal/admin/handler.go')
 
   assert.match(backendTypesSource, /EventOrganizationUsersChanged\s*=\s*"organization\.users\.changed"/)
   assert.match(usersHandlerSource, /realtime\.EventOrganizationUsersChanged/)
+  assert.equal((invitationHandlerSource.match(/handler\.publishInvitationAccepted\(result\)/g) ?? []).length, 2)
+  assert.match(invitationHandlerSource, /realtime\.EventOrganizationUsersChanged,[\s\S]*?"changeKind":\s*"invitation_accepted"/)
   assert.match(realtimeSource, /event\.type === "organization\.users\.changed"/)
   assert.match(
     realtimeSource,

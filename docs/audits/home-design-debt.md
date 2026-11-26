@@ -6,15 +6,15 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 
 ## Resumo
 
-- Arquivos analisados: 682
-- Arquivos com achados: 74
-- Achados: 165
-- Arquivos protegidos/mistos com achados: 70
-- Achados alcançáveis pelo CRM protegido: 161
-- Distribuição por superfície: protected-only 119, protected-and-public 42, public-only 2, infraestrutura 2
-- P1: 120
+- Arquivos analisados: 681
+- Arquivos com achados: 73
+- Achados: 147
+- Arquivos protegidos/mistos com achados: 69
+- Achados alcançáveis pelo CRM protegido: 143
+- Distribuição por superfície: protected-only 101, protected-and-public 42, public-only 2, infraestrutura 2
+- P1: 106
 - P2: 27
-- P3: 18
+- P3: 14
 
 ## Regras
 
@@ -23,11 +23,11 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | P1 | Sombra forte | 10 | Usar shadow-none ou a sombra sutil dos pop-ups globais. |
 | P2 | Sombra fora do padrão | 8 | Blocos Home não usam sombra; validar se a elevação é realmente necessária. |
 | P1 | Raio acima de 8px | 54 | Blocos usam 8px; controles 6px; microelementos 4px. |
-| P1 | Tipografia pesada | 10 | Texto normal usa 300; títulos usam 400. |
-| P1 | Cor hardcoded | 46 | Usar tokens --app-* ou cores semânticas do domínio. |
+| P1 | Tipografia pesada | 6 | Texto normal usa 300; títulos usam 400. |
+| P1 | Cor hardcoded | 36 | Usar tokens --app-* ou cores semânticas do domínio. |
 | P2 | Superfície branca/preta fixa | 18 | Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover. |
 | P2 | Movimento agressivo | 0 | Remover scale/translate decorativo de cards e ações operacionais. |
-| P3 | Caixa alta/tracking | 18 | Preferir texto natural em 10–12px e peso 300. |
+| P3 | Caixa alta/tracking | 14 | Preferir texto natural em 10–12px e peso 300. |
 | P2 | Blur no painel | 1 | O overlay pode escurecer; o painel deve usar superfície sólida. |
 
 ## Arquivos prioritários
@@ -36,7 +36,6 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 
 | Arquivo | Score | Achados | Distribuição |
 | --- | ---: | ---: | --- |
-| `components/features/settings/RolesTab.tsx` | 56 | 18 | hardcoded-color: 10, heavy-font: 4, uppercase-tracking: 4 |
 | `components/shared/SearchableTagPicker.tsx` | 40 | 11 | hardcoded-color: 9, hardcoded-surface: 2 |
 | `components/features/auth/screens/NoOrganizationEmptyState.tsx` | 36 | 11 | hardcoded-color: 7, hardcoded-surface: 3, panel-blur: 1 |
 | `components/features/marketing/MarketingScopeFilters.tsx` | 30 | 8 | oversized-radius: 2, hardcoded-color: 6 |
@@ -86,12 +85,12 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/properties/detail/PropertyWorkspaceSummary.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/properties/detail/tabs/KeysTab.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/properties/detail/tabs/TechnicalTab.tsx` | 3 | 1 | oversized-radius: 1 |
+| `components/features/properties/developments/PropertyDevelopmentsScreen.tsx` | 3 | 1 | oversized-radius: 1 |
 
 ### Todas as superfícies
 
 | Arquivo | Score | Achados | Distribuição |
 | --- | ---: | ---: | --- |
-| `components/features/settings/RolesTab.tsx` | 56 | 18 | hardcoded-color: 10, heavy-font: 4, uppercase-tracking: 4 |
 | `components/shared/SearchableTagPicker.tsx` | 40 | 11 | hardcoded-color: 9, hardcoded-surface: 2 |
 | `components/features/auth/screens/NoOrganizationEmptyState.tsx` | 36 | 11 | hardcoded-color: 7, hardcoded-surface: 3, panel-blur: 1 |
 | `components/features/marketing/MarketingScopeFilters.tsx` | 30 | 8 | oversized-radius: 2, hardcoded-color: 6 |
@@ -141,3 +140,4 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/presence/OnlineUsersPanel.tsx` | 3 | 1 | heavy-font: 1 |
 | `components/features/properties/detail/PropertyWorkspaceOverview.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/properties/detail/PropertyWorkspaceSummary.tsx` | 3 | 1 | oversized-radius: 1 |
+| `components/features/properties/detail/tabs/KeysTab.tsx` | 3 | 1 | oversized-radius: 1 |
