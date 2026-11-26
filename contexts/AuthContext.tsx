@@ -232,6 +232,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return true;
   }, [markAccessValidationStale]);
 
+  const revokeInactiveAccountAccess = async (userId: string) => {
+    const guard = captureGlobalSignOutGuard(sessionRef.current, userId, logoutLifecycleRef.current);
+    if (!guard.isCurrent()) return;
+    authDebugWarn('User is deactivated, signing out');
+    failOrganizationValidation('Seu acesso está desativado. Entre em contato com os administradores.');
+    await signOutWithGlobalRevocation({
+      getSession: () => supabase.auth.getSession(),
+      revokeGlobal: token => supabase.auth.admin.signOut(token, 'global'),
+      clearLocal: () => supabase.auth.signOut({ scope: 'local' }),
+    }, guard);
+  };
+
   const fetchProfile = async (
     userId: string,
     requestedOrganizationId?: string | null,
@@ -253,14 +265,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return false;
           }
           if (accountEntry === 'globally_suspended') {
-            const guard = captureGlobalSignOutGuard(sessionRef.current, userId, logoutLifecycleRef.current);
-            if (!guard.isCurrent()) return false;
-            failOrganizationValidation('Seu acesso está desativado. Entre em contato com os administradores.');
-            await signOutWithGlobalRevocation({
-              getSession: () => supabase.auth.getSession(),
-              revokeGlobal: token => supabase.auth.admin.signOut(token, 'global'),
-              clearLocal: () => supabase.auth.signOut({ scope: 'local' }),
-            }, guard);
+            await revokeInactiveAccountAccess(userId);
             return false;
           }
           if (accountEntry === 'no_organization') {
@@ -295,15 +300,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         setIsSuperAdmin(superAdmin);
         if (!profileData.is_active && !superAdmin) {
-          const guard = captureGlobalSignOutGuard(sessionRef.current, userId, logoutLifecycleRef.current);
-          if (!guard.isCurrent()) return false;
-          authDebugWarn('User is deactivated, signing out');
-          failOrganizationValidation('Seu acesso está desativado. Entre em contato com os administradores.');
-          await signOutWithGlobalRevocation({
-            getSession: () => supabase.auth.getSession(),
-            revokeGlobal: token => supabase.auth.admin.signOut(token, 'global'),
-            clearLocal: () => supabase.auth.signOut({ scope: 'local' }),
-          }, guard);
+          await revokeInactiveAccountAccess(userId);
           return false;
         }
 

@@ -12,13 +12,12 @@ import {
   isInvitationPostLoginPath,
 } from "@/lib/auth/post-login-redirect";
 import {
-  EMAIL_CONFIRMATION_RESEND_WAIT_MS,
   LOGIN_OPERATION_WAIT_MS,
   POST_LOGIN_ROUTING_WAIT_MS,
   runAuthOperationWithTimeout,
   shouldWaitForPostLoginRouting,
 } from "@/lib/auth/frontend-auth-reliability";
-import { authAPI } from "@/lib/api/auth";
+import { useEmailConfirmationResend } from "@/hooks/auth/use-email-confirmation-resend";
 import { usePasswordRecoveryRequest } from "@/hooks/auth/use-password-recovery-request";
 import { resolvePostLoginDestination } from "@/lib/auth/post-login-destination";
 import { classifyLoginFailure } from "@/lib/auth/login-failure";
@@ -155,9 +154,7 @@ export function LoginForm() {
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
   const [isSubmittingLogin, setIsSubmittingLogin] = useState(false);
   const [emailConfirmationPending, setEmailConfirmationPending] = useState(false);
-  const [isResendingConfirmation, setIsResendingConfirmation] = useState(false);
-  const [confirmationResendMessage, setConfirmationResendMessage] = useState<string | null>(null);
-  const [confirmationResendError, setConfirmationResendError] = useState<string | null>(null);
+  const confirmationResend = useEmailConfirmationResend();
   const [pendingPostLoginPath, setPendingPostLoginPath] = useState<string | null>(null);
   const [routeAfterEmailConfirmation, setRouteAfterEmailConfirmation] = useState(false);
   const loginTitleRef = useRef<HTMLHeadingElement>(null);
@@ -404,8 +401,7 @@ export function LoginForm() {
     recoveryRequest.invalidate();
     setLoginError(null);
     setRecoveryMessage(null);
-    setConfirmationResendMessage(null);
-    setConfirmationResendError(null);
+    confirmationResend.clearFeedback();
     setFormMode("recover");
   }
 
@@ -466,8 +462,7 @@ export function LoginForm() {
 
         // Keep account confirmation and invalid credentials indistinguishable.
         setEmailConfirmationPending(true);
-        setConfirmationResendMessage(null);
-        setConfirmationResendError(null);
+        confirmationResend.clearFeedback();
         setLoginError("Não foi possível entrar. Confira seus dados ou a confirmação do e-mail e tente novamente.");
         return;
       }
@@ -492,48 +487,6 @@ export function LoginForm() {
         loginSubmissionInFlightRef.current = false;
         setIsSubmittingLogin(false);
       }
-    }
-  }
-
-  async function handleResendEmailConfirmation() {
-    const normalizedEmail = email.trim().toLowerCase();
-    setConfirmationResendMessage(null);
-    setConfirmationResendError(null);
-
-    if (!normalizedEmail) {
-      setConfirmationResendError("Informe o e-mail do cadastro para receber um novo link.");
-      return;
-    }
-
-    setIsResendingConfirmation(true);
-    try {
-      const resendResult = await runAuthOperationWithTimeout(
-        () => authAPI.resendSignupEmailConfirmation(normalizedEmail),
-        EMAIL_CONFIRMATION_RESEND_WAIT_MS,
-      );
-
-      if (resendResult.status === "timed_out") {
-        setConfirmationResendError(
-          "O reenvio demorou mais que o esperado. Verifique sua conexão e tente novamente.",
-        );
-        return;
-      }
-      if (resendResult.status === "failed") {
-        throw resendResult.error;
-      }
-
-      const result = resendResult.value;
-
-      if (result.status < 200 || result.status >= 300 || !result.ok) {
-        setConfirmationResendError(result.message);
-        return;
-      }
-
-      setConfirmationResendMessage(result.message);
-    } catch {
-      setConfirmationResendError("Não foi possível solicitar outro e-mail agora.");
-    } finally {
-      setIsResendingConfirmation(false);
     }
   }
 
@@ -710,8 +663,7 @@ export function LoginForm() {
                   onChange={(event) => {
                     recoveryRequest.invalidate();
                     setEmail(event.target.value);
-                    setConfirmationResendMessage(null);
-                    setConfirmationResendError(null);
+                    confirmationResend.clearFeedback();
                   }}
                   aria-invalid={Boolean(loginError)}
                   aria-describedby={loginError ? "login-error" : undefined}
@@ -804,20 +756,20 @@ export function LoginForm() {
               <div className="space-y-2 text-center">
                 <button
                   type="button"
-                  onClick={() => void handleResendEmailConfirmation()}
-                  disabled={isResendingConfirmation || !email.trim()}
+                  onClick={() => void confirmationResend.resend(email)}
+                  disabled={confirmationResend.isResending || !email.trim()}
                   className="cursor-pointer text-[12px] font-light text-primary outline-none transition-opacity hover:opacity-75 focus-visible:opacity-75 disabled:cursor-not-allowed disabled:opacity-45"
                 >
-                  {isResendingConfirmation ? "Enviando novo link..." : "Reenviar e-mail de confirmação"}
+                  {confirmationResend.isResending ? "Enviando novo link..." : "Reenviar e-mail de confirmação"}
                 </button>
-                {confirmationResendMessage ? (
+                {confirmationResend.message ? (
                   <p className={`text-[12px] font-light leading-5 ${successTextClass}`} aria-live="polite">
-                    {confirmationResendMessage}
+                    {confirmationResend.message}
                   </p>
                 ) : null}
-                {confirmationResendError ? (
+                {confirmationResend.error ? (
                   <p className="text-[12px] font-light leading-5 text-primary" role="alert">
-                    {confirmationResendError}
+                    {confirmationResend.error}
                   </p>
                 ) : null}
               </div>

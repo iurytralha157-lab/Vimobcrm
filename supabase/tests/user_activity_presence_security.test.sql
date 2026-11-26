@@ -1,7 +1,8 @@
 begin;
 
+set local search_path = public, extensions;
 create extension if not exists pgtap with schema extensions;
-select plan(32);
+select plan(46);
 
 select results_eq(
   $$
@@ -149,6 +150,30 @@ select ok(
 );
 
 select ok(
+  exists (
+    select 1
+    from pg_catalog.pg_policies
+    where schemaname = 'public'
+      and tablename = 'user_activity_sessions'
+      and policyname = 'user_activity_requires_active_auth_session'
+      and permissive = 'RESTRICTIVE'
+      and cmd = 'ALL'
+      and roles = array['authenticated']::name[]
+      and qual like '%has_active_user_activity_auth_session%'
+      and with_check like '%has_active_user_activity_auth_session%'
+  ),
+  'active Auth session is an additional condition on browser reads and writes'
+);
+
+select ok(
+  has_function_privilege('authenticated', 'private.has_active_user_activity_auth_session()', 'execute')
+  and not has_function_privilege('anon', 'private.has_active_user_activity_auth_session()', 'execute')
+  and not has_function_privilege('service_role', 'private.has_active_user_activity_auth_session()', 'execute')
+  and not has_table_privilege('authenticated', 'auth.sessions', 'select'),
+  'browser role can use only the narrow session check, without direct access to Auth sessions'
+);
+
+select ok(
   to_regprocedure(
     'private.prune_user_activity_sessions(uuid,interval,integer,timestamp with time zone)'
   ) is not null,
@@ -209,6 +234,13 @@ from (
     ('e9200000-0000-4000-8000-000000000003'::uuid, 'presence-other-org@example.test'),
     ('e9200000-0000-4000-8000-000000000004'::uuid, 'presence-retention@example.test')
 ) as fixture(id, email);
+
+insert into auth.sessions (id, user_id, created_at, updated_at, not_after)
+values
+  ('e9700000-0000-4000-8000-000000000001', 'e9200000-0000-4000-8000-000000000001', now(), now(), null),
+  ('e9700000-0000-4000-8000-000000000002', 'e9200000-0000-4000-8000-000000000002', now(), now(), now() + interval '1 hour'),
+  ('e9700000-0000-4000-8000-000000000003', 'e9200000-0000-4000-8000-000000000002', now(), now(), null),
+  ('e9700000-0000-4000-8000-000000000004', 'e9200000-0000-4000-8000-000000000002', now(), now(), now() - interval '1 hour');
 
 insert into public.organizations (id, name, slug, is_active)
 values
@@ -439,6 +471,12 @@ values
 set local role service_role;
 
 select is(
+  (select count(*) from public.user_activity_sessions where id = 'e9600000-0000-4000-8000-000000000001'),
+  1::bigint,
+  'backend presence reads remain available without a browser token'
+);
+
+select is(
   private.prune_user_activity_sessions(
     'e9100000-0000-4000-8000-000000000001',
     interval '30 days',
@@ -475,6 +513,11 @@ select set_config(
   true
 );
 select set_config('request.jwt.claim.role', 'authenticated', true);
+select set_config(
+  'request.jwt.claims',
+  '{"session_id":"e9700000-0000-4000-8000-000000000001","exp":4102444800,"amr":[{"method":"password"}]}',
+  true
+);
 
 select ok(
   private.has_permission(
@@ -523,6 +566,16 @@ select lives_ok(
     )
   $$,
   'active member can insert their own activity session'
+);
+
+select lives_ok(
+  $$
+    insert into public.user_activity_sessions (organization_id, user_id, session_id, status)
+    values ('e9100000-0000-4000-8000-000000000001', 'e9200000-0000-4000-8000-000000000001',
+      'presence-own-0002', 'online')
+    on conflict (organization_id, user_id, session_id) do update set status = excluded.status
+  $$,
+  'active member can still send an upsert heartbeat for their browser visit'
 );
 
 select results_eq(
@@ -686,6 +739,11 @@ select set_config(
   'e9200000-0000-4000-8000-000000000002',
   true
 );
+select set_config(
+  'request.jwt.claims',
+  '{"session_id":"e9700000-0000-4000-8000-000000000002","exp":4102444800,"amr":[{"method":"password"}]}',
+  true
+);
 
 select results_eq(
   $$select count(*)::bigint from public.user_activity_sessions$$,
@@ -709,6 +767,11 @@ select set_config(
   true
 );
 select set_config('request.jwt.claim.role', 'authenticated', true);
+select set_config(
+  'request.jwt.claims',
+  '{"session_id":"e9700000-0000-4000-8000-000000000001","exp":4102444800,"amr":[{"method":"password"}]}',
+  true
+);
 
 select results_eq(
   $$select count(*)::bigint from public.user_activity_sessions$$,
@@ -747,7 +810,113 @@ select results_eq(
   'inactive member cannot update an activity session'
 );
 
+select set_config('request.jwt.claim.sub', 'e9200000-0000-4000-8000-000000000002', true);
+select set_config(
+  'request.jwt.claims',
+  '{"session_id":"e9700000-0000-4000-8000-000000000002","exp":1,"amr":[{"method":"password"}]}',
+  true
+);
+select is(
+  (select count(*) from public.user_activity_sessions), 0::bigint,
+  'an expired JWT cannot read presence even while its Auth session still exists'
+);
+
+select set_config(
+  'request.jwt.claims',
+  '{"session_id":"e9700000-0000-4000-8000-000000000004","exp":4102444800,"amr":[{"method":"password"}]}',
+  true
+);
+select is(
+  (select count(*) from public.user_activity_sessions), 0::bigint,
+  'a JWT within its lifetime cannot read presence after the Auth session deadline'
+);
+
+select set_config(
+  'request.jwt.claims',
+  '{"session_id":"e9700000-0000-4000-8000-000000000001","exp":4102444800,"amr":[{"method":"password"}]}',
+  true
+);
+select is(
+  (select count(*) from public.user_activity_sessions), 0::bigint,
+  'another user Auth session does not authorize access to own presence'
+);
+
+select set_config(
+  'request.jwt.claims',
+  '{"session_id":"e9700000-0000-4000-8000-000000000002","exp":4102444800,"amr":{}}',
+  true
+);
+select is(
+  (select count(*) from public.user_activity_sessions), 0::bigint,
+  'invalid authentication-method claims fail closed'
+);
+
+select set_config(
+  'request.jwt.claims',
+  '{"session_id":"e9700000-0000-4000-8000-000000000003","exp":4102444800,"amr":[{"method":"recovery"}]}',
+  true
+);
+
+select is(
+  (select count(*) from public.user_activity_sessions), 0::bigint,
+  'a valid recovery session cannot read raw presence rows'
+);
+
+select throws_ok(
+  $$
+    insert into public.user_activity_sessions (organization_id, user_id, session_id)
+    values ('e9100000-0000-4000-8000-000000000001', 'e9200000-0000-4000-8000-000000000002',
+      'presence-recovery-0001')
+  $$, '42501', null,
+  'a valid recovery session cannot start a presence visit'
+);
+
 reset role;
+delete from auth.sessions where id = 'e9700000-0000-4000-8000-000000000002';
+set local role authenticated;
+select set_config(
+  'request.jwt.claims',
+  '{"session_id":"e9700000-0000-4000-8000-000000000002","exp":4102444800,"amr":[{"method":"password"}]}',
+  true
+);
+
+select is(
+  (select count(*) from public.user_activity_sessions), 0::bigint,
+  'a revoked admin session loses raw presence reads while membership is active'
+);
+
+select results_eq(
+  $$
+    update public.user_activity_sessions
+    set status = 'offline'
+    where id = 'e9600000-0000-4000-8000-000000000002'
+    returning status
+  $$,
+  array[]::text[],
+  'a revoked session cannot refresh or close its old browser visit'
+);
+
+select throws_ok(
+  $$
+    insert into public.user_activity_sessions (organization_id, user_id, session_id, status)
+    values ('e9100000-0000-4000-8000-000000000001', 'e9200000-0000-4000-8000-000000000002',
+      'presence-admin-0001', 'online')
+    on conflict (organization_id, user_id, session_id) do update set status = excluded.status
+  $$, '42501', null,
+  'a revoked session cannot continue publishing browser heartbeats'
+);
+
+reset role;
+
+select is(
+  (
+    select last_seen_at
+    from public.user_activity_sessions
+    where id = 'e9600000-0000-4000-8000-000000000002'
+  ),
+  '2026-01-01 11:58:00+00'::timestamptz,
+  'blocked writes leave presence freshness based on the last valid heartbeat'
+);
 
 select * from finish();
 rollback;

@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "c8a4b0a691ef5cc9ebe95b45d3d2978a2ded9c3c56608cf75a4bc1a0157bdda5",
+  "sourceDigestSha256": "b4b762193dd73780a298cea804737cdcc3b6dcdbdafd2917c1bb02ed65232af3",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -6279,10 +6279,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:0d3504e2697ff429770a",
+          "id": "form:79163aa21a58912b0efd",
           "column": 9,
           "file": "components/features/auth/login-form.tsx",
-          "line": 600,
+          "line": 553,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -6291,10 +6291,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:99926a6fdfb9a915faad",
+          "id": "form:207351a939219c087555",
           "column": 11,
           "file": "components/features/auth/login-form.tsx",
-          "line": 679,
+          "line": 632,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10672,10 +10672,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:5f8d3375e6be634cc951",
+          "id": "cta:e3c8fbe34ae7e6511180",
           "column": 13,
           "file": "components/features/auth/login-form.tsx",
-          "line": 550,
+          "line": 503,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10685,10 +10685,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:fcd8857e5b21f87ab213",
+          "id": "cta:f158259269704307d08a",
           "column": 13,
           "file": "components/features/auth/login-form.tsx",
-          "line": 558,
+          "line": 511,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10697,10 +10697,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:6dfc051241cd412729c4",
+          "id": "cta:469a6c06af458086b6c9",
           "column": 11,
           "file": "components/features/auth/login-form.tsx",
-          "line": 649,
+          "line": 602,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10709,10 +10709,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:4a362ee611dcb0d02fe4",
+          "id": "cta:a887987c3e6980409530",
           "column": 17,
           "file": "components/features/auth/login-form.tsx",
-          "line": 745,
+          "line": 697,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10721,10 +10721,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:a5dd34576f47e35e35df",
+          "id": "cta:beeba824a24662e5b70b",
           "column": 13,
           "file": "components/features/auth/login-form.tsx",
-          "line": 785,
+          "line": 737,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10733,10 +10733,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:eb754bbb1cc71a11d09c",
+          "id": "cta:f0b91cf78c327ee59195",
           "column": 17,
           "file": "components/features/auth/login-form.tsx",
-          "line": 805,
+          "line": 757,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10745,10 +10745,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:ad0af4baf2c5ee289059",
+          "id": "cta:554cae5fcc320f232119",
           "column": 13,
           "file": "components/features/auth/login-form.tsx",
-          "line": 834,
+          "line": 786,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -10757,10 +10757,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:ff4cf32d4cce8000af6f",
+          "id": "cta:86601177965a26e9e4c4",
           "column": 13,
           "file": "components/features/auth/login-form.tsx",
-          "line": 844,
+          "line": 796,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -47352,7 +47352,7 @@
         }
       ]
     },
-    "digestSha256": "7ac7d2971d331bb9e509c2479bda7721af30032efb69595b27bfc0504fa0bc87"
+    "digestSha256": "bc7376a81ed366bd36c61d7f63bdb7d36751b90be24a11901a33efde44856769"
   },
   "routes": [
     {

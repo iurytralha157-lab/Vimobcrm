@@ -9,7 +9,7 @@ if (
 
 // Credentials and platform administration must never render inside another site.
 // Public sites and previews stay out of this list because they may be embedded.
-const AUTHENTICATION_SURFACES = [
+const AUTH_ENTRY_SURFACES = [
   "/login",
   "/cadastro",
   "/onboarding",
@@ -17,6 +17,10 @@ const AUTHENTICATION_SURFACES = [
   "/confirmar-email",
   "/convite/:path*",
   "/checkout/:path*",
+];
+
+const AUTHENTICATION_SURFACES = [
+  ...AUTH_ENTRY_SURFACES,
   "/admin",
   "/admin/:path*",
 ];
@@ -51,14 +55,26 @@ const nextConfig: NextConfig = {
   ],
   async headers() {
     return [
-      ...AUTHENTICATION_SURFACES.map((source) => ({
-        source,
-        headers: [
-          { key: "X-Frame-Options", value: "DENY" },
-          { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
-          { key: "X-Content-Type-Options", value: "nosniff" },
-        ],
-      })),
+      ...AUTHENTICATION_SURFACES.map((source) => {
+        const isAuthEntry = AUTH_ENTRY_SURFACES.includes(source);
+        const policy = isAuthEntry
+          ? "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; script-src-attr 'none'"
+          : "frame-ancestors 'none'";
+
+        return {
+          source,
+          headers: [
+            { key: "X-Frame-Options", value: "DENY" },
+            { key: "Content-Security-Policy", value: policy },
+            { key: "X-Content-Type-Options", value: "nosniff" },
+            // Check script readiness without blocking Next hydration or the inline theme bootstrap.
+            ...(isAuthEntry ? [{
+              key: "Content-Security-Policy-Report-Only",
+              value: "script-src 'self'",
+            }] : []),
+          ],
+        };
+      }),
       {
         source: "/sw.js",
         headers: [

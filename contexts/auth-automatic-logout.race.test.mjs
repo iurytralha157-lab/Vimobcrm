@@ -61,7 +61,11 @@ function harness(pathname='/crm') {
         if(options.scope==='global'){await h.revokeGate?.promise;h.revokes.push(h.sdkSession?.user.id);}
         h.locals++;h.transition(null);return {error:null};
       }}}};
+  const inactiveAccountAccess = process.env.VIMOB_AUTO_LOGOUT_BEFORE
+    ? ''
+    : `const revokeInactiveAccountAccess=${initializer('revokeInactiveAccountAccess')};`;
   vm.runInNewContext(compile(`const setSession=${initializer('setSession')};const clearAllStates=${initializer('clearAllStates')};
+    ${inactiveAccountAccess}
     globalThis.setSessionForTest=setSession;
     globalThis.signedOutEvent=()=>{const authEvent='SIGNED_OUT';${branch("authEvent === 'SIGNED_OUT'")}};
     globalThis.expiredSession=async()=>{const userId=h.user.id,failure='session';${branch("failure === 'session'")}};

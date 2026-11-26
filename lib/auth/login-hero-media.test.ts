@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
+import {
+  EMAIL_CONFIRMATION_RESEND_WAIT_MS,
+  runAuthOperationWithTimeout,
+} from "./frontend-auth-reliability";
 
 const heroSource = readFileSync(
   "components/features/auth/LoginHeroMedia.tsx",
@@ -21,6 +27,7 @@ const loginFormSource = readFileSync(
 const authContextSource = readFileSync("contexts/AuthContext.tsx", "utf8");
 const authAPISource = readFileSync("lib/api/auth.ts", "utf8");
 const globalStylesSource = readFileSync("app/globals.css", "utf8");
+const resendHookSource = readFileSync("hooks/auth/use-email-confirmation-resend.ts", "utf8");
 
 test("public auth surfaces inherit the canonical Vimob orange", () => {
   const authStylesStart = globalStylesSource.indexOf(".auth-login-page {");
@@ -142,9 +149,94 @@ test("login requests and post-login routing always reach a terminal UI state", (
   assert.match(loginFormSource, /setPendingPostLoginPath\(null\)/);
   assert.match(loginFormSource, /loginSubmissionInFlightRef\.current = false/);
   assert.match(loginFormSource, /setIsSubmittingLogin\(false\)/);
-  assert.match(loginFormSource, /EMAIL_CONFIRMATION_RESEND_WAIT_MS/);
-  assert.match(
-    loginFormSource,
-    /runAuthOperationWithTimeout\(\s*\(\) => authAPI\.resendSignupEmailConfirmation/,
-  );
+});
+
+test("login renders the confirmation resend operation's pending, success, and error states", () => {
+  assert.match(loginFormSource, /const confirmationResend = useEmailConfirmationResend\(\)/);
+  assert.match(loginFormSource, /onClick=\{\(\) => void confirmationResend\.resend\(email\)\}/);
+  assert.match(loginFormSource, /disabled=\{confirmationResend\.isResending \|\| !email\.trim\(\)\}/);
+  assert.match(loginFormSource, /confirmationResend\.message\s*\?[\s\S]*?aria-live="polite"[\s\S]*?\{confirmationResend\.message\}/);
+  assert.match(loginFormSource, /confirmationResend\.error\s*\?[\s\S]*?role="alert"[\s\S]*?\{confirmationResend\.error\}/);
+});
+
+type ResendResult = { status: number; ok: boolean; message: string };
+type RenderedResendHook = {
+  isResending: boolean;
+  message: string | null;
+  error: string | null;
+  resend: (email: string) => Promise<void>;
+};
+
+const resendHookScript = ts.transpileModule(resendHookSource, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+}).outputText;
+
+function renderResendHook(provider: (email: string) => Promise<ResendResult>) {
+  const state: unknown[] = [];
+  let stateIndex = 0;
+  const dependencies: Record<string, unknown> = {
+    react: {
+      useState<T>(initial: T) {
+        const index = stateIndex++;
+        if (!(index in state)) state[index] = initial;
+        return [state[index], (value: T) => { state[index] = value; }];
+      },
+    },
+    "@/lib/api/auth": { authAPI: { resendSignupEmailConfirmation: provider } },
+    "@/lib/auth/frontend-auth-reliability": { EMAIL_CONFIRMATION_RESEND_WAIT_MS, runAuthOperationWithTimeout },
+  };
+  const exports: { useEmailConfirmationResend?: () => RenderedResendHook } = {};
+  runInNewContext(resendHookScript, {
+    exports,
+    require(name: string) {
+      assert(Object.hasOwn(dependencies, name), name);
+      return dependencies[name];
+    },
+  });
+  const hook = exports.useEmailConfirmationResend;
+  assert(hook);
+  return () => {
+    stateIndex = 0;
+    return hook();
+  };
+}
+
+test("the actual confirmation resend hook times out and restores the button state", async ({ mock }) => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  const receivedEmails: string[] = [];
+  const render = renderResendHook((email) => {
+    receivedEmails.push(email);
+    return new Promise(() => {});
+  });
+
+  const attempt = render().resend(" Test@Example.Invalid ");
+  assert.equal(render().isResending, true);
+  await Promise.resolve();
+  assert.deepEqual(receivedEmails, ["test@example.invalid"]);
+  mock.timers.tick(EMAIL_CONFIRMATION_RESEND_WAIT_MS - 1);
+  assert.equal(render().error, null);
+  mock.timers.tick(1);
+  await attempt;
+  assert.equal(render().isResending, false);
+  assert.equal(render().message, null);
+  assert.match(render().error ?? "", /O reenvio demorou mais que o esperado/);
+});
+
+test("the actual confirmation resend hook reports completed and rejected responses", async () => {
+  const acceptedMessage = "Se existir um cadastro pendente, enviaremos um novo link.";
+  const rejectedMessage = "Muitas tentativas. Aguarde para reenviar.";
+  let response = { status: 202, ok: true, message: acceptedMessage };
+  const render = renderResendHook(async () => response);
+
+  await render().resend("test@example.invalid");
+  assert.equal(render().message, acceptedMessage);
+  assert.equal(render().error, null);
+  assert.equal(render().isResending, false);
+
+  response = { status: 429, ok: false, message: rejectedMessage };
+  const retry = render().resend("test@example.invalid");
+  assert.equal(render().message, null);
+  await retry;
+  assert.equal(render().error, rejectedMessage);
+  assert.equal(render().isResending, false);
 });

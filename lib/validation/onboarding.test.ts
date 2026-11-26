@@ -325,7 +325,12 @@ test('reenvio de confirmacao normaliza o e-mail e exige resposta publica generic
 
   const login = readFileSync('components/features/auth/login-form.tsx', 'utf8')
   assert.match(login, /Reenviar e-mail de confirma(?:ç|c)(?:ã|a)o/)
-  assert.match(login, /authAPI\.resendSignupEmailConfirmation/)
+  assert.match(login, /const confirmationResend = useEmailConfirmationResend\(\)/)
+  assert.match(login, /confirmationResend\.resend\(email\)/)
+
+  const resendHook = readFileSync('hooks/auth/use-email-confirmation-resend.ts', 'utf8')
+  assert.match(resendHook, /const normalizedEmail = email\.trim\(\)\.toLowerCase\(\)/)
+  assert.match(resendHook, /authAPI\.resendSignupEmailConfirmation\(normalizedEmail\)/)
 
   const authAPI = readFileSync('lib/api/auth.ts', 'utf8')
   assert.match(authAPI, /\/api\/onboarding\/email-confirmation\/resend/)
