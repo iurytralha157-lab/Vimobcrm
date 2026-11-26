@@ -21,7 +21,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Check, ChevronsUpDown, Globe, FileText, Home, Plus, RefreshCw, Route, Tag } from "lucide-react";
 import { useProperties } from "@/hooks/use-properties";
-import { MetaForm, MetaFormConfig, useSaveFormConfig } from "@/hooks/use-meta-forms";
+import { MetaForm, MetaFormConfig, type MetaFormQuestion, useSaveFormConfig } from "@/hooks/use-meta-forms";
 import { useRoundRobins } from "@/hooks/use-round-robins";
 import { SearchableTagPicker } from "@/components/shared/SearchableTagPicker";
 import { PropertyPickerDialog } from "@/components/features/properties/PropertyPickerDialog";
@@ -50,9 +50,14 @@ interface MetaFormConfigDialogProps {
   onOpenChange: (open: boolean) => void;
   form: MetaForm | null;
   config?: MetaFormConfig;
+  questionLookup?: MetaFormQuestionLookup;
   integrationId: string;
   pageName?: string | null;
 }
+
+export type MetaFormQuestionLookup =
+  | { status: "loading" | "unavailable" }
+  | { status: "loaded"; questions: MetaFormQuestion[] };
 
 const LEAD_FIELDS = [
   { key: "name", label: "Nome" },
@@ -73,6 +78,15 @@ const FALLBACK_META_FIELDS = [
   { key: "message", label: "Mensagem", type: "text" },
 ];
 
+function getEditorQuestions(questions: MetaFormQuestion[] | undefined, config?: MetaFormConfig): MetaFormQuestion[] {
+  const byKey = new Map(questions?.filter(({ key }) => key).map((question) => [question.key, question]));
+  for (const key of [...Object.keys(config?.field_mapping ?? {}), ...(config?.custom_fields_config ?? [])]) {
+    if (!key || byKey.has(key)) continue;
+    byKey.set(key, FALLBACK_META_FIELDS.find((field) => field.key === key) ?? { key, label: key, type: "text" });
+  }
+  return byKey.size ? [...byKey.values()] : FALLBACK_META_FIELDS;
+}
+
 const PURPOSE_OPTIONS = ["Venda", "Aluguel", "Temporada", "Permuta"];
 
 const guessLeadField = (question: { key: string; label: string }) => {
@@ -91,6 +105,7 @@ export function MetaFormConfigDialog({
   onOpenChange,
   form,
   config,
+  questionLookup,
   integrationId,
   pageName,
 }: MetaFormConfigDialogProps) {
@@ -183,9 +198,12 @@ export function MetaFormConfigDialog({
 
   if (!open || !form) return null;
 
-  const formQuestions = form.questions?.length ? form.questions : FALLBACK_META_FIELDS;
-  const mappedCount = Object.values(fieldMapping).filter(
-    (value) => Boolean(value) && value !== "_ignore"
+  const formQuestions = getEditorQuestions(
+    questionLookup?.status === "loaded" ? questionLookup.questions : form.questions,
+    config,
+  );
+  const mappedCount = formQuestions.filter(
+    ({ key }) => Boolean(fieldMapping[key]) && fieldMapping[key] !== "_ignore"
   ).length;
 
   const updateFieldMapping = (metaField: string, crmField: string) => {
@@ -287,6 +305,13 @@ export function MetaFormConfigDialog({
                 </div>
                 <Badge variant="outline">{mappedCount}/{formQuestions.length}</Badge>
               </div>
+
+              {questionLookup?.status === "loading" && (
+                <p role="status" className="text-xs text-muted-foreground">Carregando perguntas da Meta...</p>
+              )}
+              {questionLookup?.status === "unavailable" && (
+                <p role="status" className="text-xs text-muted-foreground">Perguntas da Meta indisponíveis. Os campos salvos estão abaixo.</p>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {formQuestions.map((question) => (

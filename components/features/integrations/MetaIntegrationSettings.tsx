@@ -86,7 +86,7 @@ import {
   useFetchPageForms,
   useToggleFormConfig,
 } from "@/hooks/use-meta-forms";
-import { MetaFormConfigDialog } from "./MetaFormConfigDialog";
+import { MetaFormConfigDialog, type MetaFormQuestionLookup } from "./MetaFormConfigDialog";
 import { MetaConversionFeedbackPanel } from "./MetaConversionFeedbackPanel";
 
 interface OAuthPayload {
@@ -296,9 +296,12 @@ export function MetaIntegrationSettings({
   const [formsLoading, setFormsLoading] = useState(false);
   const [formsLoadError, setFormsLoadError] = useState<string | null>(null);
   const [pageConfirmationInProgress, setPageConfirmationInProgress] = useState(false);
-  const [configDialogOpen, setConfigDialogOpen] = useState(false);
-  const [editingForm, setEditingForm] = useState<MetaForm | null>(null);
-  const [editingConfig, setEditingConfig] = useState<MetaFormConfig | undefined>();
+  const [editing, setEditing] = useState<{
+    form: MetaForm;
+    config?: MetaFormConfig;
+    integration: MetaIntegration;
+    questionLookup?: MetaFormQuestionLookup;
+  } | null>(null);
   const [newOAuth, setNewOAuth] = useState<OAuthPayload | null>(null);
   const [oauthFlowExpiresAt, setOAuthFlowExpiresAt] = useState<string | null>(null);
   const [oauthAuthorizationUnavailable, setOAuthAuthorizationUnavailable] = useState(false);
@@ -309,10 +312,13 @@ export function MetaIntegrationSettings({
   const handledOAuthStatusRef = useRef<string | number | null>(null);
   const handledOAuthMessageRef = useRef<string | number | null>(null);
   const formsRequestSequenceRef = useRef(0);
+  const editorRequestSequenceRef = useRef(0);
   const pageConfirmationInProgressRef = useRef(false);
 
   const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
+  if (editing && editing.integration.organization_id !== organizationId) setEditing(null);
+  useEffect(() => () => { editorRequestSequenceRef.current += 1; }, [organizationId]);
   const {
     data: integrations = [],
     isLoading: integrationsLoading,
@@ -848,23 +854,38 @@ export function MetaIntegrationSettings({
   };
 
   const openConfig = (form: MetaForm, config?: MetaFormConfig, integration?: MetaIntegration | null) => {
-    const ownerIntegration = integration || selectedIntegration || (config ? integrationById.get(config.integration_id) : null) || null;
-    if (!ownerIntegration?.id) {
+    const ownerIntegration = config ? integrationById.get(config.integration_id) : integration || selectedIntegration;
+    if (!organizationId || ownerIntegration?.organization_id !== organizationId ||
+        (config && (config.organization_id !== organizationId || config.form_id !== form.id))) {
       toast.error("Selecione uma página antes de configurar o formulário.");
       return;
     }
-    setSelectedIntegration(ownerIntegration);
-    setEditingForm(form);
-    setEditingConfig(config);
-    setConfigDialogOpen(true);
+    const requestSequence = ++editorRequestSequenceRef.current;
+    const pageId = config && !form.questions?.length && ownerIntegration.is_connected !== false
+      ? ownerIntegration.page_id
+      : null;
+    setEditing({ form, config, integration: ownerIntegration, questionLookup: pageId ? { status: "loading" } : undefined });
+    if (!pageId) return;
+
+    const updateLookup = (questionLookup: MetaFormQuestionLookup) => {
+      if (editorRequestSequenceRef.current !== requestSequence) return;
+      setEditing((current) => current && current.form === form && current.integration.id === ownerIntegration.id
+        ? { ...current, questionLookup }
+        : current);
+    };
+    void fetchForms.mutateAsync({ pageId }).then(({ forms }) => {
+      const questions = forms.find((candidate) => candidate.id === form.id)?.questions;
+      updateLookup(questions?.length
+        ? { status: "loaded", questions }
+        : { status: "unavailable" });
+    }).catch(() => updateLookup({ status: "unavailable" }));
   };
 
   const closeConfigDialog = (open: boolean) => {
-    setConfigDialogOpen(open);
     if (!open) {
+      editorRequestSequenceRef.current += 1;
       refetchConfigs();
-      setEditingConfig(undefined);
-      setEditingForm(null);
+      setEditing(null);
     }
   };
 
@@ -1723,12 +1744,13 @@ export function MetaIntegrationSettings({
       </Dialog>
 
       <MetaFormConfigDialog
-        open={configDialogOpen}
+        open={!!editing && editing.integration.organization_id === organizationId}
         onOpenChange={closeConfigDialog}
-        form={editingForm}
-        config={editingConfig}
-        integrationId={selectedIntegration?.id || editingConfig?.integration_id || ""}
-        pageName={selectedIntegration?.page_name || integrationById.get(editingConfig?.integration_id || "")?.page_name}
+        form={editing?.form ?? null}
+        config={editing?.config}
+        questionLookup={editing?.questionLookup}
+        integrationId={editing?.integration.id ?? ""}
+        pageName={editing?.integration.page_name}
       />
     </div>
   );
