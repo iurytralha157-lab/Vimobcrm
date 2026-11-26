@@ -1174,6 +1174,10 @@
     {
       "file": "20261125140615_allow_meta_unassigned_admin_push.sql",
       "sha256": "f5181d9d205775c7e4a44817f75b591e86a7b3a589e71c656f60cd2f2caf77fb"
+    },
+    {
+      "file": "20261126174524_require_active_session_for_user_activity.sql",
+      "sha256": "150d6e86de89e9f44f9503ba5159b1370d9e72b0b480c791736004aae8beabc6"
     }
   ]
 }

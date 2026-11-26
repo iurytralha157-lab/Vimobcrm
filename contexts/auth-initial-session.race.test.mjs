@@ -90,6 +90,7 @@ function harness() {
     if (sandbox.userRef.current?.id === userId) sandbox.setOrganizationsLoaded(true);
   } };
   vm.runInNewContext(compile(`const setSession=${initializer('setSession')};
+    const revokeInactiveAccountAccess=${initializer('revokeInactiveAccountAccess')};
     const fetchProfile=${initializer('fetchProfile')};
     globalThis.fetchProfileRef={current:fetchProfile};
     globalThis.cleanup=(${effect})();`), sandbox);
