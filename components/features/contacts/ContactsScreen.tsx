@@ -54,6 +54,7 @@ export default function Contacts() {
   const organizationId = activeOrganization.organizationId ?? null;
   const canDeleteLeads = isSuperAdmin || hasPermission("lead_delete");
   const canOperateLeads = isSuperAdmin || hasPermission("lead_operate");
+  const canRedistributeLeads = canOperateLeads && hasPermission("distribution_manage");
   const canSelectLeads = canDeleteLeads || canOperateLeads;
   const canCreateLeads = isSuperAdmin || hasPermission("lead_create");
   const canImportLeads = isSuperAdmin || hasPermission("lead_import");
@@ -307,6 +308,7 @@ export default function Contacts() {
   const { leadActionRequest, requestLeadAction, closeLeadAction, handleLeadAction } = useContactLeadActionSelection({
     contacts,
     canOperateLeads,
+    canRedistributeLeads,
     isContactsTransitioning,
     isSearchSettling,
     periodError,
@@ -641,6 +643,7 @@ export default function Contacts() {
 
         <ContactsBulkSelectionBar
           canDeleteLeads={canDeleteLeads}
+          canRedistributeLeads={canRedistributeLeads}
           selectedCount={selectedIds.size}
           onRequestDelete={() => setBulkDeleteDialogOpen(true)}
           onRequestLeadAction={canOperateLeads ? (kind) => void requestLeadAction(kind, [...selectedIds]) : undefined}

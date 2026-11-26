@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "c28042257f6bc3200dcf4e70576ad863a9874a7c21983fd29720f30b5889be87",
-  "surfaceInventoryDigestSha256": "e8f92e78d2c3cb20c852901aa7d22de294f5d37fd2282bb466793ea8c54d0342",
+  "sourceDigestSha256": "979c0cac67b65f6f9725e1f7df37b69210067332fb79729f766b4c0df08b157b",
+  "surfaceInventoryDigestSha256": "a15cb3ff596009d03558699253a62414277507e6590943b8bad3ca5fc9f92814",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 681,
@@ -1126,7 +1126,7 @@
     },
     {
       "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
-      "line": 90,
+      "line": 92,
       "match": "shadow-sm",
       "priority": "P2",
       "rule": "medium-shadow",

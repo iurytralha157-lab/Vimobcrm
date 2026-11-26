@@ -503,7 +503,7 @@ export function buildLeadHistory(
 
   const assignmentMapped: UnifiedHistoryEvent[] = assignmentLogs
     .filter((log) => {
-      if (log.reason === 'manual_transfer') return true;
+      if (log.reason === 'manual_transfer' || log.reason === 'manual_queue_redistribution') return true;
       if (initialRepresentations.initialAssignmentLogIds.has(log.id)) return !initialRepresentations.representedAssignmentLogIds.has(log.id);
       return ![...timelineMapped.filter((event) => event.type === 'lead_assigned' && event.isAutomation), ...distributionMapped].some((event) => {
         const meta = asMetadata(event.metadata);
@@ -517,6 +517,7 @@ export function buildLeadHistory(
       const oldUser = log.old_user || (log.old_user_id ? userMap.get(log.old_user_id) : null);
       const newUser = log.new_user || (log.new_user_id ? userMap.get(log.new_user_id) : null);
       const actor = log.actor || (log.created_by ? userMap.get(log.created_by) : null);
+      const isManual = log.reason === 'manual_transfer' || log.reason === 'manual_queue_redistribution';
       const metadata: HistoryMetadata = {
         from_user_id: log.old_user_id,
         from_user_name: oldUser?.name || null,
@@ -525,11 +526,10 @@ export function buildLeadHistory(
         transferred_by_id: actor?.id || log.created_by || null,
         transferred_by_name: actor?.name || null,
         reason: log.reason,
-        is_automation: log.reason !== 'manual_transfer',
+        is_automation: !isManual,
       };
       const normalizedReason = metadataString(log.reason)?.toLowerCase();
-      const content = normalizedReason && ![
-        'manual_transfer',
+      const content = normalizedReason && !isManual && ![
         'round_robin',
         'round_robin_auto',
         'canonical_round_robin',
@@ -547,7 +547,7 @@ export function buildLeadHistory(
         source: 'timeline' as const,
         metadata,
         channel: null,
-        isAutomation: log.reason !== 'manual_transfer',
+        isAutomation: !isManual,
       };
     });
 

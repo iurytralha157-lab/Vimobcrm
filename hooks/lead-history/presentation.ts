@@ -185,6 +185,10 @@ export function buildLabel(type: string, metadata: HistoryMetadata): string {
     case 'contact_updated':
       return 'Contato atualizado';
     case 'assignee_changed': {
+      if (metadata?.reason === 'manual_queue_redistribution') {
+        const actor = metadataString(metadata.transferred_by_name);
+        return actor ? `Lead redistribuído manualmente por ${actor}` : 'Lead redistribuído manualmente';
+      }
       const queueName = metadataString(metadata?.distribution_queue_name);
       const targetName = metadataString(metadata?.to_user_name);
       if (queueName && targetName) {

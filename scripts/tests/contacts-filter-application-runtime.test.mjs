@@ -38,6 +38,7 @@ export const useTags=()=>({data:[],refetch:noop,isError:false,isFetching:false,i
 export const useTeams=()=>({data:[],refetch:noop,isError:false,isFetching:false,isLoading:false,isSuccess:true});
 export const useOrganizationUsers=()=>({data:[]});
 export const usePipelines=()=>({data:[{id:'${pipelineA}',name:'A',is_default:true},{id:'${pipelineB}',name:'B'}]});
+export const useRoundRobins=()=>({data:[]});
 export const useStages=id=>({data:id==='${pipelineA}'?[{id:'${stageA}',name:'A1'}]:[]});
 window.fixtureQueries=[];
 // These filter cases exercise reads and selection wiring without action transport.
@@ -54,6 +55,7 @@ export const useRouter=()=>({push:noop,replace:noop});
 export const getGlobalSignOutSessionId=()=> 'synthetic-session';
 export const getLeadMetaFilters=async()=>({sources:[],pages:[],campaigns:[],adsets:[],ads:[]});
 export const getErrorMessageOrFallback=(_err,fallback)=>fallback;
+export { VimobAPIError } from '@/lib/api/vimob-error.ts';
 export const AppLayout=({children})=><>{children}</>;
 export const ContactsToolbar=props=>{window.fixtureToolbar=props;return <><button onClick={()=>props.filters.onStageChange('${stageA}')}>Select A1</button><button onClick={()=>props.filters.onSourceChange('manual')}>Select source</button></>;};
 export const ContactsList=props=><><button onClick={()=>props.footer?.props.onPageChange(4)}>Page4</button>{props.footer}</>;
@@ -82,7 +84,7 @@ before(async () => {
     writeFile(stub, synthetic), writeFile(entry, fixture),
     writeFile(loader, `const ts=require(${JSON.stringify(require.resolve('typescript'))});module.exports=s=>ts.transpileModule(s,{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2020}}).outputText;`),
   ]);
-  const names = ['contexts/AuthContext', 'contexts/FloatingChatContext', 'hooks/use-user-permissions', 'hooks/use-mobile', 'hooks/use-toast', 'hooks/use-tags', 'hooks/use-teams', 'hooks/use-users', 'hooks/use-stages', 'hooks/use-contacts-list', 'hooks/use-leads', 'hooks/contacts/use-contact-lead-actions', 'hooks/use-stage-automations', 'lib/api/pipeline-board', 'lib/api/vimob-error', 'lib/auth/global-sign-out', 'components/shared/layout/AppLayout', 'components/features/contacts/contacts-screen'];
+  const names = ['contexts/AuthContext', 'contexts/FloatingChatContext', 'hooks/use-user-permissions', 'hooks/use-mobile', 'hooks/use-toast', 'hooks/use-tags', 'hooks/use-teams', 'hooks/use-users', 'hooks/use-stages', 'hooks/use-contacts-list', 'hooks/use-leads', 'hooks/contacts/use-contact-lead-actions', 'hooks/use-stage-automations', 'hooks/use-round-robins', 'lib/api/pipeline-board', 'lib/api/vimob-error', 'lib/auth/global-sign-out', 'components/shared/layout/AppLayout', 'components/features/contacts/contacts-screen'];
   const aliases = Object.fromEntries(names.map(name => [`@/${name}$`, stub]));
   const { webpack } = require('next/dist/compiled/webpack/webpack.js');
   await new Promise((resolve, reject) => {
@@ -191,6 +193,15 @@ test('real previous and next page controls work before and after a full filter a
   await page.waitForFunction(() => window.fixtureQuery.page === 2);
   await page.getByRole('button', { name: 'Ir para a página anterior', exact: true }).click();
   await page.waitForFunction(() => window.fixtureQuery.page === 1);
+
+  await page.getByRole('button', { name: 'Ir para a próxima página', exact: true }).click();
+  await page.waitForFunction(() => window.fixtureQuery.page === 2);
+  const pageSize = page.getByRole('combobox', { name: 'Contatos por página', exact: true });
+  for (const size of [100, 200, 300]) {
+    await pageSize.click();
+    await page.getByRole('option', { name: size + ' por página', exact: true }).click();
+    await page.waitForFunction(value => window.fixtureQuery.limit === value && window.fixtureQuery.page === 1, size);
+  }
 });
 
 test('export refuses to open while the newly applied search is still settling', async () => {

@@ -1,4 +1,4 @@
-import { ArrowRightLeft, CircleDot, UserRound } from 'lucide-react';
+import { ArrowRightLeft, CircleDot, ListOrdered, UserRound } from 'lucide-react';
 
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 
@@ -6,17 +6,21 @@ const leadActionMenuItems = {
   'move-stage': { label: 'Mover para funil/etapa', icon: ArrowRightLeft },
   assign: { label: 'Alterar responsável', icon: UserRound },
   'deal-status': { label: 'Alterar status', icon: CircleDot },
+  redistribute: { label: 'Enviar para fila de distribuição', icon: ListOrdered },
 };
 
 export type ContactLeadActionKind = keyof typeof leadActionMenuItems;
 
 export function ContactLeadActionMenuItems({
   onSelect,
+  canRedistribute = false,
 }: {
   onSelect: (kind: ContactLeadActionKind) => void;
+  canRedistribute?: boolean;
 }) {
   const kinds = Object.keys(leadActionMenuItems) as ContactLeadActionKind[];
   return kinds.map((kind) => {
+    if (kind === 'redistribute' && !canRedistribute) return null;
     const { label, icon: Icon } = leadActionMenuItems[kind];
     return (
       <DropdownMenuItem

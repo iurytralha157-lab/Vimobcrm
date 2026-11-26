@@ -3027,6 +3027,69 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ContactListResponse"
+  /v1/contacts/redistribute:
+    post:
+      summary: Redistribute selected contacts in queue order
+      description: >
+        Requires lead_operate and distribution_manage in the active organization.
+        Each lead keeps its current pipeline, stage, team, and commercial status.
+        The operation returns one outcome per target in input order. Reuse the operation ID
+        and the original ordered targets to retry unconfirmed work. Committed targets
+        recover their actor-scoped receipt without moving the lead again.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [targets, roundRobinId, operationId]
+              properties:
+                roundRobinId: { type: string, format: uuid }
+                operationId: { type: string, format: uuid }
+                targets:
+                  type: array
+                  minItems: 1
+                  maxItems: 300
+                  description: Lead IDs must be unique, and their revisions must match the contact list.
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [leadId, expectedUpdatedAt]
+                    properties:
+                      leadId: { type: string, format: uuid }
+                      expectedUpdatedAt: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Outcome for every selected contact. A successful target may already have the selected owner.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          required: [leadId, success, reason]
+                          properties:
+                            leadId: { type: string, format: uuid }
+                            success: { type: boolean }
+                            reason:
+                              type: string
+                              enum: [redistributed, same_assignee, lead_unavailable, lead_ineligible, lead_changed, queue_unavailable, operation_conflict, retry_required]
+                            assignedUserId: { type: string, format: uuid }
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
   /v1/leads:
     get:
       summary: List leads visible to the current user

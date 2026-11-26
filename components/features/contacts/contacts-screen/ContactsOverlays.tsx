@@ -72,6 +72,7 @@ type ContactsBulkSelectionBarProps = {
   selectedCount: number;
   onRequestDelete: () => void;
   onRequestLeadAction?: (kind: ContactLeadActionKind) => void;
+  canRedistributeLeads?: boolean;
   actionsDisabled: boolean;
   onClear: () => void;
 };
@@ -81,6 +82,7 @@ export function ContactsBulkSelectionBar({
   selectedCount,
   onRequestDelete,
   onRequestLeadAction,
+  canRedistributeLeads,
   actionsDisabled,
   onClear,
 }: ContactsBulkSelectionBarProps) {
@@ -104,8 +106,8 @@ export function ContactsBulkSelectionBar({
               <MoreHorizontal className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" sideOffset={8} className="app-header-popover w-52 p-2">
-            <ContactLeadActionMenuItems onSelect={onRequestLeadAction} />
+          <DropdownMenuContent align="end" sideOffset={8} className="app-header-popover min-w-52 p-2">
+            <ContactLeadActionMenuItems onSelect={onRequestLeadAction} canRedistribute={canRedistributeLeads} />
           </DropdownMenuContent>
         </DropdownMenu>
       )}

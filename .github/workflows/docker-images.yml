@@ -261,6 +261,12 @@ jobs:
           go test -count=1 -v ./apps/api/internal/leads
           -run '^(TestManualMoveStageCommitsWithRealtimeEvent|TestMoveStageOutcomeLocalPostgres)$'
 
+      - name: Test Contacts redistribution against disposable PostgreSQL
+        env:
+          VIMOB_RUN_AUTOMATION_STAGE_DB_TESTS: LOCAL_WRITE_TEST
+          AUTOMATION_STAGE_TEST_DATABASE_URL: postgresql://postgres:membership_test@127.0.0.1:5432/postgres?sslmode=disable
+        run: go test -count=1 -v ./apps/api/internal/leads -run '^TestContactRedistributionLocalPostgres$'
+
       - name: Test durable Meta intake leases on disposable PostgreSQL
         env:
           META_INTAKE_TEST_DATABASE_URL: postgresql://postgres:membership_test@127.0.0.1:5432/vimob_meta_intake_test?sslmode=disable

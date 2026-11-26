@@ -66,6 +66,24 @@ export const apiContactPageResponseSchema = z.object({
   exportVersion: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).passthrough()
 
+export const contactRedistributionInputSchema = z.object({
+  targets: z.array(z.object({
+    leadId: uuidSchema,
+    expectedUpdatedAt: z.string().datetime({ offset: true }),
+  }).strict()).min(1).max(300).refine((targets) => new Set(targets.map((target) => target.leadId)).size === targets.length),
+  roundRobinId: uuidSchema,
+  operationId: uuidSchema,
+}).strict()
+export type ContactRedistributionInput = z.infer<typeof contactRedistributionInputSchema>
+export const apiContactRedistributionResponseSchema = apiEnvelopeSchema(z.object({
+  items: z.array(z.object({
+    leadId: uuidSchema,
+    success: z.boolean(),
+    reason: z.string().min(1),
+    assignedUserId: uuidSchema.optional(),
+  })).max(300),
+}))
+
 export const tagHexColorSchema = z.string().trim().regex(/^#[\da-f]{6}$/i, 'Use uma cor hexadecimal #RRGGBB')
 const tagMutationShape = {
   name: z.string().trim().min(1).max(80),

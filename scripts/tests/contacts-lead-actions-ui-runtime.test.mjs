@@ -25,12 +25,14 @@ harness = harness
   .replace('export const useIsMobile=()=>false;', "export const useIsMobile=()=>matchMedia('(max-width:767px)').matches;")
   .replace('export const useToast=()=>({toast:noop});', 'export const useToast=()=>({toast:(notice)=>window.fixtureNotices.push(notice)});')
   .replace('export const useOrganizationUsers=()=>({data:[]});', "export const useOrganizationUsers=()=>({data:[{id:'owner-1',name:'Responsável Sintético',is_active:true},{id:'owner-2',name:'Responsável Inativo',is_active:false}]});")
+  .replace('export const useRoundRobins=()=>({data:[]});', "export const useRoundRobins=({enabled})=>({data:enabled?[{id:'50000000-0000-4000-8000-000000000001',name:'Fila sintética',is_active:true},{id:'50000000-0000-4000-8000-000000000002',name:'Fila inativa',is_active:false}]:[]});")
   .replace("name:'A1'}]:[]", "name:'A1',pipeline_id:id},{id:'loss-stage',name:'Sem interesse',pipeline_id:id,is_lost:true}]:[]")
   .replace("export const MAX_CONTACT_LEAD_ACTION_TARGETS=100;", '')
   .replace("export const useContactLeadActions=()=>({prepare:()=>{throw Error('No lead review in the filter fixture');},run:()=>{throw Error('No lead writes in the filter fixture');}});", '')
   .replace('window.fixtureQueries=[];', [
     'window.fixtureQueries=[];window.fixtureActions=[];window.fixtureReviews=[];window.fixtureNotices=[];window.fixtureExcluded=[];',
-    "const contacts=['Ana Sintética','Beto Sintético','Caio Sintético'].map((name,index)=>({id:String(index+1),name,phone:'+5511999999999',email:'contact@example.invalid',created_at:'2026-10-01T10:00:00Z',stage_name:'Atendimento',pipeline_name:'Pipeline sintética',source:'manual',deal_status:index===2?'won':'open',reentry_count:0,assignee_name:'Responsável atual',tags:[]}));",
+    "const contacts=['Ana Sintética','Beto Sintético','Caio Sintético'].map((name,index)=>({id:String(index+1),name,phone:'+5511999999999',email:'contact@example.invalid',created_at:'2026-10-01T10:00:00Z',updated_at:'2026-10-01T10:00:00.12345'+index+'Z',stage_name:'Atendimento',pipeline_name:'Pipeline sintética',source:'manual',deal_status:index===2?'won':'open',reentry_count:0,assignee_name:'Responsável atual',tags:[]}));",
+    'window.fixtureContacts=contacts;window.fixtureRedistributions=[];',
     'export const MAX_CONTACT_LEAD_ACTION_TARGETS=100;',
     'export const useContactLeadActions=()=>({',
     '  async prepare(ids,isCurrent){',
@@ -44,10 +46,18 @@ harness = harness
     '    const ids=review.targets.map(c=>c.id);window.fixtureActions.push({ids,action});onProgress?.(1,ids.length);',
     '    if(window.fixtureHoldRun)await new Promise(resolve=>{window.fixtureReleaseRun=resolve;});',
     '    return {succeededIds:ids,unchangedIds:[],failures:[],unconfirmedIds:[],unstartedIds:[],financialReviewIds:[]};',
+    '  },',
+    '  async redistribute(input,isCurrent){',
+    '    if(!isCurrent())throw Error("expired redistribution");',
+    '    window.fixtureRedistributions.push(input);',
+    '    const first=window.fixtureRedistributions.length===1;',
+    '    if(first&&window.fixtureRedistributionOutcome==="unconfirmed")throw Error("synthetic network response lost");',
+    '    return input.targets.map(({leadId},index)=>first&&index===1&&window.fixtureRedistributionOutcome==="retry_required"',
+    '      ?{leadId,success:false,reason:"retry_required"}:{leadId,success:true,reason:"redistributed"});',
     '  }',
     '});',
   ].join('\n'))
-  .replace('return {data:[],total:200', 'return {data:contacts,total:contacts.length')
+  .replace('return {data:[],total:200', 'return {data:window.fixtureContacts,total:window.fixtureContacts.length')
   .replace('export const AppLayout=({children})=><>{children}</>;', "export const AppLayout=({children})=><main className='app-shell' style={{height:'100dvh',padding:12}}>{children}</main>;")
   .replace('export const ContactsList=props=><><button onClick={()=>props.footer?.props.onPageChange(4)}>Page4</button>{props.footer}</>;', "export {ContactsList} from '@/components/features/contacts/contacts-screen/ContactsList';")
   .replace('export const ContactsOverlays=props=>{window.fixtureOverlays=props;return null;};\nexport const ContactsBulkSelectionBar=()=>null;', [
@@ -187,6 +197,63 @@ test('bulk move dispatches the chosen pipeline and stage only after confirmation
     action: { kind: 'move-stage', pipelineId: '30000000-0000-4000-8000-000000000001', stageId: '40000000-0000-4000-8000-000000000001' },
   });
 });
+
+test('queue distribution requires permission and remains exclusive to the bulk menu', async () => {
+  await selectTwo();
+  await bulk().click();
+  await expect(menuItem('Enviar para fila de distribuição')).toHaveCount(0);
+  await page().keyboard.press('Escape');
+  await page().evaluate(() => {
+    window.fixturePermissions.push('distribution_manage');
+    window.fixtureRerender();
+  });
+  await row('Caio Sintético').click();
+  await expect(menuItem('Enviar para fila de distribuição')).toHaveCount(0);
+  await page().keyboard.press('Escape');
+  await bulk().click();
+  await expect(menuItem('Enviar para fila de distribuição')).toBeVisible();
+});
+
+for (const outcome of ['unconfirmed', 'retry_required']) {
+  test('redistribution repeats the exact ordered operation after ' + outcome, async () => {
+    await page().evaluate(value => {
+      window.fixturePermissions.push('distribution_manage');
+      window.fixtureRedistributionOutcome = value;
+      window.fixtureRerender();
+    }, outcome);
+    await checkbox('Beto Sintético').check();
+    await checkbox('Ana Sintética').check();
+    await openAction(bulk(), 'Enviar para fila de distribuição');
+    const queue = dialog().getByRole('combobox', { name: 'Fila de distribuição' });
+    await queue.click();
+    await expect(page().getByRole('option', { name: 'Fila inativa' })).toHaveCount(0);
+    await page().getByRole('option', { name: 'Fila sintética' }).click();
+    await dialog().getByRole('button', { name: 'Redistribuir', exact: true }).click();
+    await expect(dialog().getByRole('alert')).toContainText(/mesmo (lote|envio)/);
+    await expect(queue).toBeDisabled();
+    const submissions = () => page().evaluate(() => window.fixtureRedistributions);
+    const [firstSubmission] = await submissions();
+    assert.match(firstSubmission.operationId, /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/);
+    assert.deepEqual(firstSubmission.targets, [
+      { leadId: '1', expectedUpdatedAt: '2026-10-01T10:00:00.123450Z' },
+      { leadId: '2', expectedUpdatedAt: '2026-10-01T10:00:00.123451Z' },
+    ]);
+    assert.equal(firstSubmission.roundRobinId, '50000000-0000-4000-8000-000000000001');
+    assert.deepEqual(await page().evaluate(() => window.fixtureReviews), []);
+
+    // Give the list an independent fresh response while the previous submission is uncertain.
+    await page().evaluate(() => {
+      window.fixtureContacts = window.fixtureContacts.slice(1).reverse().map(contact => ({
+        ...contact, updated_at: '2026-10-01T11:00:00Z',
+      }));
+      window.fixtureRerender();
+    });
+    await dialog().getByRole('button', { name: 'Tentar novamente' }).click();
+    await expect(dialog()).toHaveCount(0);
+    assert.deepEqual(await submissions(), [firstSubmission, firstSubmission]);
+    await expect(checkbox('Beto Sintético')).not.toBeChecked();
+  });
+}
 
 test('reopening a won contact keeps commissions warning and requires a deliberate action', async () => {
   await openAction(row('Caio Sintético'), 'Alterar status');

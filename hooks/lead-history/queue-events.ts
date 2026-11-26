@@ -118,6 +118,8 @@ export function mergeQueueHistory(raw: LeadHistoryRaw, existing: UnifiedHistoryE
     let index = key ? output.findIndex(item => item.type === 'lead_assigned' && eventKey(item) === key) : -1;
     const assignmentLogId = text(asMetadata(event.metadata).assignment_log_id);
     const assignmentIndex = assignmentLogId ? output.findIndex(item => item.id === `assignment-${assignmentLogId}`) : -1;
+    if (event.event_type === 'manual_transfer' && assignmentIndex >= 0 &&
+      output[assignmentIndex].metadata?.reason === 'manual_queue_redistribution') continue;
     if (index < 0 && assignmentIndex >= 0) index = assignmentIndex;
     if (index >= 0) output[index] = { ...mapped, id: output[index].id };
     else output.push(mapped);

@@ -670,6 +670,7 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	mux.Handle("GET /v1/lead-meta-filters", withActiveOrganization(http.HandlerFunc(leadsHandler.ListLeadMetaFilters)))
 	mux.Handle("GET /v1/lead-visibility", withActiveOrganization(http.HandlerFunc(leadsHandler.ShowLeadVisibility)))
 	mux.Handle("GET /v1/contacts", withActiveOrganization(http.HandlerFunc(leadsHandler.ListContacts)))
+	mux.Handle("POST /v1/contacts/redistribute", withActivePermission(permissions.LeadOperate, tenant.RequirePermission(permissions.DistributionManage, http.HandlerFunc(leadsHandler.RedistributeContacts))))
 	mux.Handle("GET /v1/tags", withActiveOrganization(http.HandlerFunc(leadsHandler.ListTags)))
 	mux.Handle("GET /v1/tags/{id}/usage", withPermission(permissions.TagManage, http.HandlerFunc(leadsHandler.TagUsage)))
 	mux.Handle("POST /v1/tags", withActivePermission(permissions.TagManage, http.HandlerFunc(leadsHandler.CreateTag)))

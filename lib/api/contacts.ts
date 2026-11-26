@@ -1,7 +1,10 @@
 import { vimobAPIRequest, type VimobAPIRequestIntent } from './vimob-client'
 import { readContactPageResponse } from '@/lib/api/contact-page-response'
 import type { Contact, ContactListFilters } from '@/hooks/use-contacts-list'
-import { apiContactListResponseSchema, contactListQuerySchema, parseDomainInput, validateDomainResponse } from '@/lib/validation'
+import {
+  apiContactListResponseSchema, apiContactRedistributionResponseSchema, contactListQuerySchema,
+  contactRedistributionInputSchema, parseDomainInput, validateDomainResponse, type ContactRedistributionInput,
+} from '@/lib/validation'
 
 type Envelope<T> = {
   data: T
@@ -19,6 +22,17 @@ export type ContactPage = {
 }
 
 export const contactsAPI = {
+  async redistribute(input: ContactRedistributionInput, organizationId: string, options: VimobAPIRequestIntent) {
+    const body = parseDomainInput(contactRedistributionInputSchema, input, 'contacts.redistribute')
+    const response = await vimobAPIRequest('/v1/contacts/redistribute', {
+      ...options, organizationId, method: 'POST', body, retry: false, timeoutMs: 60_000,
+    })
+    const { data: { items } } = validateDomainResponse(apiContactRedistributionResponseSchema, response, 'contacts.redistribute')
+    if (items.length !== body.targets.length || items.some((item, index) => item.leadId !== body.targets[index].leadId)) {
+      throw new Error('A resposta da redistribuição não confirma os contatos selecionados.')
+    }
+    return items
+  },
   async listPage(
     filters: ContactListFilters & { expectedExportVersion?: string },
     organizationId?: string | null,

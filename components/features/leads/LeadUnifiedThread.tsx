@@ -480,11 +480,13 @@ function getAutomaticAssignment(event: UnifiedHistoryEvent) {
 }
 
 function getManualTransfer(event: UnifiedHistoryEvent) {
-  if (event.type !== 'assignee_changed' || metadataText(event.metadata?.reason) !== 'manual_transfer') return null;
+  const reason = metadataText(event.metadata?.reason);
+  const isRedistribution = reason === 'manual_queue_redistribution';
+  if (event.type !== 'assignee_changed' || (reason !== 'manual_transfer' && !isRedistribution)) return null;
   const recipient = metadataText(event.metadata?.to_user_name);
-  if (!recipient) return null;
+  if (!recipient && !isRedistribution) return null;
   const actor = metadataText(event.metadata?.transferred_by_name) || event.actor?.name || null;
-  return { recipient, actor };
+  return { recipient, actor, isRedistribution };
 }
 
 function EventBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; plainHistory: boolean }) {
@@ -537,7 +539,10 @@ function EventBubble({ event, plainHistory }: { event: UnifiedHistoryEvent; plai
       <div className="flex justify-end px-2">
         <div className="flex min-w-0 max-w-[88%] items-end gap-1.5">
           <div className="min-w-0 rounded-[6px] bg-violet-600 px-2.5 py-1.5 text-right text-[11px] font-light leading-4 text-primary-foreground [overflow-wrap:anywhere]">
-            <div className="[overflow-wrap:anywhere]">Lead transferido para <span>{manualTransfer.recipient}</span></div>
+            <div className="[overflow-wrap:anywhere]">
+              {manualTransfer.isRedistribution ? 'Lead redistribuído manualmente' : 'Lead transferido'}
+              {manualTransfer.recipient && <> para <span>{manualTransfer.recipient}</span></>}
+            </div>
             <div className="mt-1 text-[10px] leading-none text-primary-foreground/80">
               {manualTransfer.actor && <span>Por {manualTransfer.actor} · </span>}
               <span>{formatEventTime(event.timestamp)}</span>

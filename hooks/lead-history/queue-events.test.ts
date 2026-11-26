@@ -118,6 +118,20 @@ test('transferência manual usa destino da ocorrência e UUID do log, independen
   assert.doesNotMatch(JSON.stringify(rows), /Responsável posterior/);
 });
 
+test('redistribuição manual mantém uma ocorrência com o autor quando a fila também registra a transferência', () => {
+  const rows = buildLeadHistory({
+    assignmentLogs: [{
+      id: 'a1', reason: 'manual_queue_redistribution', new_user_id: 'u2', created_by: 'admin',
+      created_at: at, actor: { id: 'admin', name: 'Gestor' }, new_user: { id: 'u2', name: 'Bruno' },
+    }],
+    queueRuntimeEvents: [event('manual_transfer', { assignment_log_id: 'a1' })],
+  }, 'lead', formatters);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].label, 'Lead redistribuído manualmente por Gestor');
+  assert.equal(rows[0].metadata?.to_user_name, 'Bruno');
+  assert.equal(rows[0].isAutomation, false);
+});
+
 test('eventos canônicos de erro e quarentena mostram tentativas sem expor SQL interno', () => {
   const rows = mergeQueueHistory({ queueRuntimeEvents: [{ ...event('runtime_error', { retry_count: 1, sqlstate: 'sensitive' }), id: 'error' },
     { ...event('runtime_quarantined', { retry_count: 5, sqlstate: 'sensitive' }), id: 'quarantine' }] }, []);

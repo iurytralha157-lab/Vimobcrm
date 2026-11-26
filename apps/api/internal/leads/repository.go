@@ -1203,7 +1203,12 @@ func shouldInsertTransferNotification(reason string) bool {
 	// The redistribution worker emits richer received/away notifications after
 	// the assignment succeeds. Emitting the generic transfer notice here would
 	// duplicate WhatsApp and push deliveries for the new assignee.
-	return !strings.EqualFold(strings.TrimSpace(reason), "auto_redistribution")
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "auto_redistribution", manualQueueRedistribution:
+		return false
+	default:
+		return true
+	}
 }
 
 func (repo Repository) assignmentLogUsesCanonicalSchema(ctx context.Context, tx pgx.Tx) (bool, error) {

@@ -79,12 +79,20 @@ func (repo Repository) transferLeadAssignee(ctx context.Context, tx pgx.Tx, tena
 		return err
 	}
 
+	if err := repo.insertLeadAssignmentLog(ctx, tx, tenantContext, current, assignedUserID, reason); err != nil {
+		return err
+	}
+	return repo.insertTransferNotification(ctx, tx, tenantContext, current, assignedUserID, reason)
+}
+
+func (repo Repository) insertLeadAssignmentLog(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, assignedUserID *string, reason string) error {
 	usesCanonicalLog, err := repo.assignmentLogUsesCanonicalSchema(ctx, tx)
 	if err != nil {
 		return err
 	}
 	if usesCanonicalLog {
-		_, err = tx.Exec(ctx, `
+		var assignmentID string
+		err = tx.QueryRow(ctx, `
 			insert into public.assignments_log (
 				organization_id,
 				lead_id,
@@ -101,11 +109,18 @@ func (repo Repository) transferLeadAssignee(ctx context.Context, tx pgx.Tx, tena
 				$5,
 				$6::uuid
 			)
-		`, tenantContext.OrganizationID, current.ID, nullableString(current.AssignedUserID), nullable(assignedUserID), reason, nullableString(tenantContext.UserID))
-		if err != nil {
-			return err
+			returning id::text
+		`, tenantContext.OrganizationID, current.ID, nullableString(current.AssignedUserID), nullable(assignedUserID), reason, nullableString(tenantContext.UserID)).Scan(&assignmentID)
+		if err == nil && reason == manualQueueRedistribution {
+			// Managed leads also write a runtime transfer. Link the exact event
+			// from this transaction so the history can show one named action.
+			_, err = tx.Exec(ctx, `update private.queue_runtime_events
+				set metadata = metadata || jsonb_build_object('assignment_log_id', $3::text)
+				where organization_id = $1::uuid and lead_id = $2::uuid and event_type = 'manual_transfer'
+				  and metadata->>'history_transaction_id' = pg_catalog.txid_current()::text
+				  and not (metadata ? 'assignment_log_id')`, tenantContext.OrganizationID, current.ID, assignmentID)
 		}
-		return repo.insertTransferNotification(ctx, tx, tenantContext, current, assignedUserID, reason)
+		return err
 	}
 
 	_, err = tx.Exec(ctx, `
@@ -126,8 +141,5 @@ func (repo Repository) transferLeadAssignee(ctx context.Context, tx pgx.Tx, tena
 			now()
 		)
 	`, tenantContext.OrganizationID, current.ID, nullable(assignedUserID), nullableString(tenantContext.UserID), reason)
-	if err != nil {
-		return err
-	}
-	return repo.insertTransferNotification(ctx, tx, tenantContext, current, assignedUserID, reason)
+	return err
 }

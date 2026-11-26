@@ -1,17 +1,19 @@
 'use client';
 
 import { useLayoutEffect, useRef } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { CONTACT_PAGE_SIZE_OPTIONS } from '@/config/contacts';
 import { notifyLeadRealtimeChange } from '@/contexts/LeadRealtimeBus';
 import { useLeadRequestScope, type LeadRequestOperation } from '@/hooks/leads/use-lead-request-scope';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { getLeadMoveStageContract, isLeadMoveStageContractCurrent } from '@/lib/api/lead-move-contract';
 import { leadsAPI } from '@/lib/api/leads';
+import { contactsAPI } from '@/lib/api/contacts';
 import { getNonBlankErrorMessageOrFallback, VimobAPIError } from '@/lib/api/vimob-error';
 import { getLeadStatusFinancialReviewMessage } from '@/lib/lead-financial-review';
 import { uuidSchema } from '@/lib/validation/common';
 import { lostReasonSchema } from '@/lib/validation/schemas';
+import type { ContactRedistributionInput } from '@/lib/validation';
 
 export const MAX_CONTACT_LEAD_ACTION_TARGETS = Math.max(...CONTACT_PAGE_SIZE_OPTIONS);
 const REQUEST_CONCURRENCY = 3;
@@ -30,7 +32,10 @@ type IsCurrent = () => boolean;
 export type ContactLeadAction =
   | { kind: 'move-stage'; pipelineId: string; stageId: string; lostReason?: string }
   | { kind: 'assign'; assignedUserId: string }
-  | { kind: 'deal-status'; status: DealStatus; lostReason?: string };
+  | { kind: 'deal-status'; status: DealStatus; lostReason?: string }
+  | { kind: 'redistribute'; roundRobinId: string };
+
+type IndividualContactLeadAction = Exclude<ContactLeadAction, { kind: 'redistribute' }>;
 
 export type ContactLeadActionTarget = Readonly<{
   id: string;
@@ -83,7 +88,7 @@ async function runBounded<T>(
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
 }
 
-function isUnchanged(target: ContactLeadActionTarget, action: ContactLeadAction) {
+function isUnchanged(target: ContactLeadActionTarget, action: IndividualContactLeadAction) {
   switch (action.kind) {
     case 'move-stage': return target.expectedStageId === action.stageId && target.pipelineId === action.pipelineId;
     case 'assign': return target.assignedUserId === action.assignedUserId;
@@ -91,7 +96,7 @@ function isUnchanged(target: ContactLeadActionTarget, action: ContactLeadAction)
   }
 }
 
-function validateAction(action: ContactLeadAction) {
+function validateAction(action: IndividualContactLeadAction) {
   if (action.kind === 'assign') uuidSchema.parse(action.assignedUserId);
   if (action.kind === 'move-stage') {
     uuidSchema.parse(action.pipelineId);
@@ -109,18 +114,35 @@ function definiteRejection(error: unknown) {
   return error instanceof VimobAPIError && error.status >= 400 && error.status < 500 && error.status !== 408;
 }
 
+function invalidateContactLeadQueries(queryClient: QueryClient, organizationId: string, leadIds: readonly string[]) {
+  for (const key of ['contacts-list', 'leads', 'stages-with-leads', 'financial-dashboard']) {
+    void queryClient.invalidateQueries({ queryKey: [key, organizationId] });
+  }
+  for (const id of leadIds) {
+    void queryClient.invalidateQueries({ queryKey: ['lead', organizationId, id] });
+    void queryClient.invalidateQueries({ queryKey: ['lead-history-v2', id] });
+    void queryClient.invalidateQueries({ queryKey: ['activities', id] });
+    void queryClient.invalidateQueries({ queryKey: ['lead-cadence-state', organizationId, id] });
+  }
+}
+
 export function useContactLeadActions() {
   const queryClient = useQueryClient();
   const requestScope = useLeadRequestScope();
   const { hasPermission } = useUserPermissions();
   const canOperate = hasPermission('lead_operate');
+  const canRedistribute = canOperate && hasPermission('distribution_manage');
   const currentPermission = useRef<object | null>(null);
+  const redistributionPermission = useRef<object | null>(null);
   // The existing scope hook also fences token, organization and actor changes.
   const reviews = useRef(new WeakMap<ContactLeadActionReview, { operation: LeadRequestOperation; permission: object }>());
   const running = useRef<LeadRequestOperation | null>(null);
   useLayoutEffect(() => {
     currentPermission.current = canOperate ? {} : null;
   }, [canOperate]);
+  useLayoutEffect(() => {
+    redistributionPermission.current = canRedistribute ? {} : null;
+  }, [canRedistribute]);
 
   const prepare = async (ids: readonly string[], selectionIsCurrent: IsCurrent = () => true): Promise<ContactLeadActionReview> => {
     const operation = requestScope.capture();
@@ -168,7 +190,7 @@ export function useContactLeadActions() {
   };
 
   const run = async ({ review, action, isCurrent = () => true, onProgress }: {
-    review: ContactLeadActionReview; action: ContactLeadAction; isCurrent?: IsCurrent;
+    review: ContactLeadActionReview; action: IndividualContactLeadAction; isCurrent?: IsCurrent;
     onProgress?: (completed: number, total: number) => void;
   }): Promise<ContactLeadActionResult> => {
     const prepared = reviews.current.get(review);
@@ -261,15 +283,7 @@ export function useContactLeadActions() {
     const affected = [...result.succeededIds, ...result.unconfirmedIds, ...result.failures.map(({ id }) => id)];
     if (currentPermission.current === permission && operation.canReconcileCapturedAccess() && affected.length > 0) {
       const { organizationId } = operation;
-      for (const key of ['contacts-list', 'leads', 'stages-with-leads', 'financial-dashboard']) {
-        void queryClient.invalidateQueries({ queryKey: [key, organizationId] });
-      }
-      for (const id of affected) {
-        void queryClient.invalidateQueries({ queryKey: ['lead', organizationId, id] });
-        void queryClient.invalidateQueries({ queryKey: ['lead-history-v2', id] });
-        void queryClient.invalidateQueries({ queryKey: ['activities', id] });
-        void queryClient.invalidateQueries({ queryKey: ['lead-cadence-state', organizationId, id] });
-      }
+      invalidateContactLeadQueries(queryClient, organizationId, affected);
       if (reconcileCommercial) {
         for (const key of commercialQueryFamilies) {
           void queryClient.invalidateQueries({ queryKey: [key, organizationId] });
@@ -286,5 +300,23 @@ export function useContactLeadActions() {
     return result;
   };
 
-  return { prepare, run };
+  const redistribute = async (input: ContactRedistributionInput, isCurrent: IsCurrent) => {
+    const operation = requestScope.capture();
+    const permission = redistributionPermission.current;
+    const current = () => permission && redistributionPermission.current === permission &&
+      operation.isCurrent() && isCurrent();
+    if (!current()) throw new Error(scopeChanged);
+    const items = await contactsAPI.redistribute(input, operation.organizationId, {
+      ...operation.intent,
+      signal: undefined,
+      onRequestStart: () => { if (!current()) throw new Error(scopeChanged); },
+    });
+    const affected = items.filter(({ success }) => success).map(({ leadId }) => leadId);
+    if (affected.length && redistributionPermission.current === permission && operation.canReconcileCapturedAccess()) {
+      invalidateContactLeadQueries(queryClient, operation.organizationId, affected);
+    }
+    return items;
+  };
+
+  return { prepare, run, redistribute };
 }

@@ -20,16 +20,18 @@ const lead = (id, extra = {}) => ({
 const error = (status, code) => new VimobAPIError(code, { status, code });
 const source = readFileSync(new URL('./use-contact-lead-actions.ts', import.meta.url), 'utf8').replace(/^import .*;$/gm, '');
 
-function harness(t, { read = id => lead(id), write = id => lead(id) } = {}) {
+function harness(t, { read = id => lead(id), write = id => lead(id), canDistribute = false } = {}) {
   const request = leadHookRuntime();
   t.after(request.close);
   let permission = true;
   let cursor = 0;
-  let layout = { deps: [], cleanup: null };
+  let effectCursor = 0;
+  const layouts = [];
   const slots = [];
   const reads = [];
   const writes = [];
   const events = [];
+  const redistributions = [];
   const capabilities = [];
   const invoke = kind => async (id, body, organizationId, intent, expectedUpdatedAt) => {
     intent.onRequestStart();
@@ -39,18 +41,27 @@ function harness(t, { read = id => lead(id), write = id => lead(id) } = {}) {
   const renderActions = evaluateProduction(source, {
     useRef: value => slots[cursor++] ??= { current: value },
     useLayoutEffect: (setup, deps) => {
+      const index = effectCursor++;
+      const layout = layouts[index] ?? { deps: [], cleanup: null };
       if (!layout.deps.length || deps[0] !== layout.deps[0]) {
         layout.cleanup?.();
-        layout = { deps, cleanup: setup() };
+        layouts[index] = { deps, cleanup: setup() };
       }
     },
     useLeadRequestScope: request.scope,
     useQueryClient: request.client,
-    useUserPermissions: () => ({ hasPermission: key => permission && key === 'lead_operate' }),
+    useUserPermissions: () => ({ hasPermission: key => permission && (key === 'lead_operate' || (key === 'distribution_manage' && canDistribute)) }),
     CONTACT_PAGE_SIZE_OPTIONS, getNonBlankErrorMessageOrFallback, VimobAPIError, getLeadStatusFinancialReviewMessage, uuidSchema, lostReasonSchema,
     notifyLeadRealtimeChange: event => events.push(event),
     getLeadMoveStageContract: async (_org, intent) => { intent.onRequestStart(); capabilities.push({}); return capabilities.at(-1); },
     isLeadMoveStageContractCurrent: contract => !!contract && capabilities.includes(contract),
+    contactsAPI: {
+      redistribute: async (body, organizationId, intent) => {
+        intent.onRequestStart();
+        redistributions.push({ body, organizationId, intent });
+        return body.targets.map(({ leadId }) => ({ leadId, success: true, reason: 'redistributed' }));
+      },
+    },
     leadsAPI: {
       getLead: async (id, organizationId, signal, intent) => {
         intent.onRequestStart();
@@ -62,10 +73,35 @@ function harness(t, { read = id => lead(id), write = id => lead(id) } = {}) {
       updateLead: invoke('deal-status'),
     },
   }, 'useContactLeadActions');
-  const render = () => { cursor = 0; return renderActions(); };
-  return { render, request, reads, writes, events, capabilities, setPermission: value => { permission = value; } };
+  const render = () => { cursor = 0; effectCursor = 0; return renderActions(); };
+  return { render, request, reads, writes, events, capabilities, redistributions, setPermission: value => { permission = value; } };
 }
 
+test('redistribution submits all 300 selected revisions in order using one scoped request and no reads', async t => {
+  const fixture = harness(t, { canDistribute: true });
+  const input = {
+    targets: Array.from({ length: 300 }, (_, i) => ({ leadId: uuid(i + 1), expectedUpdatedAt: revision })),
+    roundRobinId: uuid(400),
+    operationId: uuid(401),
+  };
+  const result = await fixture.render().redistribute(input, () => true);
+  assert.equal(result.length, 300);
+  assert.deepEqual(result.map(({ leadId }) => leadId), input.targets.map(({ leadId }) => leadId));
+  assert.equal(fixture.redistributions.length, 1);
+  assert.deepEqual(fixture.redistributions[0].body, input);
+  assert.equal(fixture.redistributions[0].organizationId, 'org-a');
+  assert.equal(fixture.redistributions[0].intent.expectedSessionId, 'sid-a');
+  assert.equal(fixture.reads.length, 0);
+});
+
+test('redistribution requires queue management and a current selection before any request', async t => {
+  const input = { targets: [{ leadId: first, expectedUpdatedAt: revision }], roundRobinId: uuid(400), operationId: uuid(401) };
+  for (const canDistribute of [false, true]) {
+    const fixture = harness(t, { canDistribute });
+    await assert.rejects(() => fixture.render().redistribute(input, () => !canDistribute), /Abra a ação novamente/);
+    assert.equal(fixture.redistributions.length, 0);
+  }
+});
 test('review pins canonical microseconds and tenant, writes only approved targets and skips no-op assignment', async t => {
   const fixture = harness(t, { read: id => lead(id, id === second ? { organization_id: 'org-b' } :
     id === third ? { assigned_user_id: assignee } : id === fourth ? { can_operate: false } : {}) });
@@ -133,11 +169,12 @@ test('stage uses versioned command with exact source and paces requests, returni
 test('one whole Contacts page fits the action limit and an oversized batch stops before reading', async t => {
   const fixture = harness(t);
   const actions = fixture.render();
-  const ids = Array.from({ length: 101 }, (_, index) => uuid(100 + index));
-  await assert.rejects(() => actions.prepare(ids), /1 a 100 contatos/);
+  const limit = Math.max(...CONTACT_PAGE_SIZE_OPTIONS);
+  const ids = Array.from({ length: limit + 1 }, (_, index) => uuid(100 + index));
+  await assert.rejects(() => actions.prepare(ids), new RegExp(`1 a ${limit} contatos`));
   assert.equal(fixture.reads.length, 0);
-  const review = await actions.prepare(ids.slice(0, 100));
-  assert.equal(review.targets.length, 100);
+  const review = await actions.prepare(ids.slice(0, limit));
+  assert.equal(review.targets.length, limit);
 });
 
 test('bulk status requires a loss reason and reports an uncertain write without retrying it', async t => {

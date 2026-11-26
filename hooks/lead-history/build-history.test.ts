@@ -303,6 +303,25 @@ test('transferência manual preserva o autor e o destinatário distintos', () =>
   assert.equal(history[0]?.isAutomation, false);
 });
 
+test('redistribuição manual identifica quem enviou o lead para a fila', () => {
+  const history = buildLeadHistory({
+    assignmentLogs: [{
+      id: 'manual-redistribution',
+      reason: 'manual_queue_redistribution',
+      created_at: '2026-09-27T12:00:00.000Z',
+      created_by: 'manager',
+      new_user_id: 'recipient',
+      actor: { id: 'manager', name: 'Gestora Maria' },
+      new_user: { id: 'recipient', name: 'Ana Corretora' },
+    }],
+  }, 'lead-1', formatters);
+
+  assert.equal(history.length, 1);
+  assert.equal(history[0].label, 'Lead redistribuído manualmente por Gestora Maria');
+  assert.equal(history[0].metadata?.to_user_name, 'Ana Corretora');
+  assert.equal(history[0].isAutomation, false);
+});
+
 test('ordena pela ocorrência e mostra primeira resposta persistida sem duplicar evento', () => {
   const raw: LeadHistoryRaw = {
     lead: {

@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import type { ContactLeadActionRequest } from '@/hooks/contacts/use-contact-lead-action-selection';
 import type { ContactLeadAction } from '@/hooks/contacts/use-contact-lead-actions';
 import { useStageAutomations } from '@/hooks/use-stage-automations';
+import { useRoundRobins } from '@/hooks/use-round-robins';
 import { usePipelines, useStages } from '@/hooks/use-stages';
 import { useOrganizationUsers } from '@/hooks/use-users';
 import { getPipelineStageOutcome } from '@/lib/pipeline-stage-outcome';
@@ -20,6 +21,7 @@ const titles: Record<ContactLeadActionKind, string> = {
   'move-stage': 'Mover para funil/etapa',
   assign: 'Alterar responsável',
   'deal-status': 'Alterar status',
+  redistribute: 'Enviar para fila de distribuição',
 };
 
 const dealStatuses = [
@@ -28,7 +30,7 @@ const dealStatuses = [
   { id: 'lost', name: 'Perdido' },
 ];
 
-type LossAction = Exclude<ContactLeadAction, { kind: 'assign' }>;
+type LossAction = Extract<ContactLeadAction, { kind: 'move-stage' | 'deal-status' }>;
 
 function ActionSelect({
   label,
@@ -68,11 +70,12 @@ export function ContactsLeadActionDialog({
   onClose: () => void;
   onConfirm: (action: ContactLeadAction) => Promise<void>;
 }) {
-  const { kind, contacts, review, error } = request;
+  const { kind, contacts, review, error, redistribution } = request;
   const [pipelineId, setPipelineId] = useState('');
   const [stageId, setStageId] = useState('');
   const [assigneeId, setAssigneeId] = useState('');
   const [status, setStatus] = useState('');
+  const [roundRobinId, setRoundRobinId] = useState('');
   const [lossAction, setLossAction] = useState<LossAction | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submission = useRef(false);
@@ -80,14 +83,18 @@ export function ContactsLeadActionDialog({
   const stagesQuery = useStages(kind === 'move-stage' && pipelineId ? pipelineId : undefined);
   const automationsQuery = useStageAutomations(stageId || undefined);
   const usersQuery = useOrganizationUsers({ enabled: kind === 'assign' });
+  const queuesQuery = useRoundRobins({ enabled: kind === 'redistribute' });
   const pipelines = (pipelinesQuery.data ?? []).filter((pipeline) => pipeline.is_active !== false);
   const stages = (stagesQuery.data ?? []).filter((stage) => stage.is_active !== false && stage.pipeline_id === pipelineId);
   const users = (usersQuery.data ?? []).filter((user) => user.is_active);
+  const queues = (queuesQuery.data ?? []).filter((queue) => queue.is_active === true);
   const stage = stages.find((item) => item.id === stageId);
-  const ready = review && review.targets.length > 0 && !submitting;
+  const targets = kind === 'redistribute' ? contacts : review?.targets;
+  const ready = Boolean(targets?.length) && !submitting;
   const fetchError = kind === 'move-stage' && (pipelinesQuery.isError || stagesQuery.isError)
     ? 'Não foi possível carregar os funis ou etapas.'
-    : kind === 'assign' && usersQuery.isError ? 'Não foi possível carregar os responsáveis.' : null;
+    : kind === 'assign' && usersQuery.isError ? 'Não foi possível carregar os responsáveis.'
+      : kind === 'redistribute' && !redistribution && queuesQuery.isError ? 'Não foi possível carregar as filas.' : null;
 
   let action: ContactLeadAction | null = null;
   if (kind === 'move-stage' && stage && pipelines.some((pipeline) => pipeline.id === pipelineId)) {
@@ -96,6 +103,8 @@ export function ContactsLeadActionDialog({
     action = { kind, assignedUserId: assigneeId };
   } else if (kind === 'deal-status' && (status === 'open' || status === 'won' || status === 'lost')) {
     action = { kind, status };
+  } else if (kind === 'redistribute' && (redistribution || queues.some((queue) => queue.id === roundRobinId))) {
+    action = { kind, roundRobinId: redistribution?.roundRobinId ?? roundRobinId };
   }
   const stageIsLost = getPipelineStageOutcome(stage, automationsQuery.data) === 'lost';
   const isLostStatus = action?.kind === 'deal-status' && action.status === 'lost';
@@ -117,7 +126,7 @@ export function ContactsLeadActionDialog({
 
   const confirm = () => {
     if (!action || !ready || fetchError) return;
-    if (action.kind !== 'assign' && (isLostStatus || stageIsLost)) {
+    if ((action.kind === 'move-stage' || action.kind === 'deal-status') && (isLostStatus || stageIsLost)) {
       setLossAction(action);
       return;
     }
@@ -145,34 +154,36 @@ export function ContactsLeadActionDialog({
         <DialogHeader>
           <DialogTitle className="text-base font-normal">{titles[kind]}</DialogTitle>
           <DialogDescription>
-            Confira {contacts.length === 1 ? 'o contato' : `os ${contacts.length} contatos`} antes de confirmar a alteração.
+            {kind === 'redistribute'
+              ? `Escolha a fila para redistribuir ${contacts.length === 1 ? 'o contato selecionado' : `os ${contacts.length} contatos selecionados`}.`
+              : <>Confira {contacts.length === 1 ? 'o contato' : `os ${contacts.length} contatos`} antes de confirmar a alteração.</>}
           </DialogDescription>
         </DialogHeader>
-        {!review && !error && (
+        {!targets && !error && (
           <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
             Revisando contatos...
           </p>
         )}
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
-        {review && (
+        {targets && (
           <>
-            {review.targets.length > 0 && (
+            {targets.length > 0 && (
               <ul aria-label="Contatos para alteração" className="max-h-28 space-y-1 overflow-y-auto rounded-[6px] border border-border/40 px-3 py-2 text-xs">
-                {review.targets.map((target) => <li key={target.id}>{target.name || 'Contato sem nome'}</li>)}
+                {targets.map((target) => <li key={target.id}>{target.name || 'Contato sem nome'}</li>)}
               </ul>
             )}
             {excludedCount > 0 && (
               <div role="status" className="space-y-1 text-xs text-muted-foreground">
                 <p>{excludedCount} contato(s) fora da ação. Somente os contatos revisados podem ser alterados.</p>
                 <ul className="max-h-20 space-y-1 overflow-y-auto">
-                  {review.failures.map(({ id, message }) => (
+                  {review?.failures.map(({ id, message }) => (
                     <li key={id}>{contacts.find((contact) => contact.id === id)?.name || 'Contato'} — {message}</li>
                   ))}
                 </ul>
               </div>
             )}
-            {review.targets.length > 0 && (
+            {targets.length > 0 && (
               <div className="space-y-3">
                 {kind === 'move-stage' && (
                   <>
@@ -187,6 +198,16 @@ export function ContactsLeadActionDialog({
                 )}
                 {kind === 'assign' && <ActionSelect label="Responsável" options={users} value={assigneeId} onChange={setAssigneeId} disabled={submitting} />}
                 {kind === 'deal-status' && <ActionSelect label="Status" options={dealStatuses} value={status} onChange={setStatus} disabled={submitting} />}
+                {kind === 'redistribute' && (
+                  <>
+                    {!redistribution && queuesQuery.isLoading && <p role="status" className="text-xs text-muted-foreground">Carregando filas...</p>}
+                    {!redistribution && !queuesQuery.isLoading && !fetchError && queues.length === 0 && (
+                      <p role="status" className="text-xs text-muted-foreground">Nenhuma fila de distribuição ativa.</p>
+                    )}
+                    <ActionSelect label="Fila de distribuição" options={queues} value={redistribution?.roundRobinId ?? roundRobinId} onChange={setRoundRobinId} disabled={Boolean(redistribution) || submitting} />
+                    <p className="text-xs text-muted-foreground">Os responsáveis são definidos pela ordem e pela disponibilidade da fila. O histórico registra quem iniciou a redistribuição.</p>
+                  </>
+                )}
                 {reopening && (
                   <p className="rounded-[6px] bg-[var(--app-surface-soft)] p-2 text-xs text-muted-foreground">
                     Ao confirmar, os contatos ganhos ou perdidos voltam para Aberto e podem entrar novamente no fluxo comercial.
@@ -204,7 +225,9 @@ export function ContactsLeadActionDialog({
         <DialogFooter className="gap-2">
           <Button type="button" variant="ghost" size="sm" className="h-8 rounded-[6px]" onClick={onClose} disabled={submitting}>Cancelar</Button>
           <Button type="button" size="sm" className="h-8 rounded-[6px]" onClick={confirm} disabled={!ready || !action || Boolean(fetchError)}>
-            {submitting ? 'Aplicando...' : reopening ? 'Reabrir' : 'Confirmar'}
+            {submitting ? kind === 'redistribute' ? 'Redistribuindo...' : 'Aplicando...'
+              : kind === 'redistribute' ? redistribution ? 'Tentar novamente' : 'Redistribuir'
+                : reopening ? 'Reabrir' : 'Confirmar'}
           </Button>
         </DialogFooter>
       </DialogContent>

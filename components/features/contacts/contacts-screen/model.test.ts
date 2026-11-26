@@ -6,6 +6,7 @@ import test from "node:test";
 import { FILTER_UI } from "@/config/filter-ui";
 
 import {
+  CONTACT_PAGE_SIZE_OPTIONS,
   buildContactExportFilters,
   buildContactListFilters,
   getContactDealStatus,
@@ -39,7 +40,7 @@ test("derives query and export filters without leaking pagination controls", () 
     sortBy: "created_at",
     sortDir: "desc",
     page: 3,
-    pageSize: 50,
+    pageSize: 300,
   });
 
   assert.deepEqual(filters, {
@@ -61,7 +62,7 @@ test("derives query and export filters without leaking pagination controls", () 
     sortBy: "created_at",
     sortDir: "desc",
     page: 3,
-    limit: 50,
+    limit: 300,
     mode: "compact",
   });
   assert.deepEqual(buildContactExportFilters(filters), {
@@ -161,10 +162,20 @@ test('selection reflects page membership rather than the number of selected IDs'
   assert.equal(getCurrentPageSelection(new Set(), []), false);
 });
 
+test('larger contact pages select only the visible IDs', () => {
+  assert.deepEqual(CONTACT_PAGE_SIZE_OPTIONS.slice(-3), [100, 200, 300]);
+
+  const pageIds = Array.from({ length: 300 }, (_, index) => `lead-${index}`);
+  const selected = toggleCurrentPageSelection(new Set(['previous-page-lead']), pageIds);
+  assert.deepEqual([...selected], pageIds);
+  assert.equal(getCurrentPageSelection(selected, pageIds), true);
+});
+
 test('selection scope changes immediately with search, page, filters and ordering', () => {
   const filters = { page: 1, limit: 50, source: 'meta', sortDir: 'desc' as const };
   const initial = contactSelectionScope(filters, '');
   assert.notEqual(initial, contactSelectionScope({ ...filters, page: 2 }, ''));
+  assert.notEqual(initial, contactSelectionScope({ ...filters, limit: 300 }, ''));
   assert.notEqual(initial, contactSelectionScope({ ...filters, source: 'site' }, ''));
   assert.notEqual(initial, contactSelectionScope(filters, 'Nova busca'));
   assert.notEqual(initial, contactSelectionScope({ ...filters, sortDir: 'asc' }, ''));
