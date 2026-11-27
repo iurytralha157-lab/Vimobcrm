@@ -142,8 +142,9 @@ type UpdateStageRequest struct {
 type updateStageInput UpdateStageRequest
 
 type ReorderStagesRequest struct {
-	Stages            []StageOrderItem `json:"stages"`
-	PreserveStageKeys bool             `json:"preserveStageKeys,omitempty"`
+	Stages              []StageOrderItem `json:"stages"`
+	PreserveStageKeys   bool             `json:"preserveStageKeys,omitempty"`
+	PreserveStageColors bool             `json:"preserveStageColors,omitempty"`
 }
 
 type StageOrderItem struct {
@@ -320,14 +321,14 @@ func (request ReorderStagesRequest) Validate() (reorderStagesInput, error) {
 			return reorderStagesInput{}, fmt.Errorf("%w: stage name must have at least 2 characters", ErrInvalidInput)
 		}
 		color := strings.TrimSpace(item.Color)
-		if color == "" {
-			color = "#6b7280"
-		} else {
+		if color != "" {
 			var err error
 			color, err = validateStageColor(color)
 			if err != nil {
 				return reorderStagesInput{}, err
 			}
+		} else if item.IsNew || !request.PreserveStageColors {
+			color = "#6b7280"
 		}
 		stageKey := strings.TrimSpace(item.StageKey)
 		if len([]rune(stageKey)) > maxStageKeyLength {

@@ -94,6 +94,7 @@ export const stageOrderItemInputSchema = z.object({
 
 export const stagesReorderInputSchema = z.object({
   preserveStageKeys: z.literal(true).optional(),
+  preserveStageColors: z.literal(true).optional(),
   stages: z.array(stageOrderItemInputSchema).min(1).max(100),
 }).strict().superRefine((input, ctx) => {
   const ids = new Set<string>()
