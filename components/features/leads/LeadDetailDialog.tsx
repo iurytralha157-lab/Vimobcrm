@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useIsMobile } from '@/hooks/use-mobile';
 import {
-  ArrowLeftRight, Calendar, ChevronLeft, Clock, Crosshair, FileEdit, FileText, Home, Mail, MessageCircle, Phone, Plus, UserRound, X,
+  ArrowLeftRight, Calendar, ChevronLeft, ChevronRight, Clock, Crosshair, FileEdit, FileText, Home, Mail, MessageCircle, Phone, Plus, RotateCw, UserRound, X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getTagColorStyleWithWhiteText } from '@/lib/tag-color';
@@ -73,7 +73,7 @@ import { DesktopLeadLayout, MobileLeadLayout, type LeadDetailLayoutProps } from 
 import type { LeadDetailTab, LeadDetailTabId } from '@/components/features/leads/lead-detail/LeadDetailTabBar';
 import { LeadOriginPanel } from '@/components/features/leads/lead-detail/LeadOriginPanel';
 import { LeadProfileDetails } from '@/components/features/leads/lead-detail/LeadProfileDetails';
-import { daysSince, formatElapsedShort, isContactStale } from '@/components/features/leads/lead-detail/lead-detail-metrics';
+import { daysSince, describeRecentReentry, formatElapsedShort, isContactStale } from '@/components/features/leads/lead-detail/lead-detail-metrics';
 import { formatDateSafely } from '@/components/features/leads/lead-detail/utils';
 import { useCadenceOverdueCount } from '@/hooks/leads/use-cadence-overdue-count';
 import { LeadDetailReadNotice } from '@/components/features/leads/lead-detail/LeadDetailReadNotice';
@@ -116,7 +116,7 @@ import {
   type SelectableLeadProperty,
 } from './lead-detail';
 
-export type { LeadDetailLead } from './lead-detail';
+export type { LeadDetailLead, LeadDetailNavigation } from './lead-detail';
 
 type LeadStageMoveIntent = {
   stageId: string;
@@ -155,6 +155,7 @@ function useIsLeadDetailTablet(maxWidth: number) {
 
 export function LeadDetailDialog({
   lead: leadProp,
+  navigation,
   stages,
   onClose,
   onEdit,
@@ -185,6 +186,12 @@ export function LeadDetailDialog({
   const [editingScheduleEvent, setEditingScheduleEvent] = useState<ScheduleEvent | null>(null);
   const [readOnlyScheduleEvent, setReadOnlyScheduleEvent] = useState<ScheduleEvent | null>(null);
   const [scheduleDefaultType, setScheduleDefaultType] = useState<EventType>('call');
+  const [scheduleInitialOutcome, setScheduleInitialOutcome] = useState<'pick' | 'rescheduled' | undefined>(undefined);
+  const [scheduleDefaults, setScheduleDefaults] = useState<{ date: Date; time: string; title: string } | null>(null);
+  // "Agendar próximo contato": days from today, or null when not requested.
+  const [nextContactDays, setNextContactDays] = useState<number | null>(null);
+  // The "entrou de novo" notice can be closed for the re-entry it describes.
+  const [dismissedReentryAt, setDismissedReentryAt] = useState<string | null>(null);
   const [detailTabState, setDetailTabState] = useState<{ leadId: string | null; tab: LeadDetailTabId }>({ leadId: null, tab: 'atividades' });
   const [selectedTask, setSelectedTask] = useState<LeadCadenceTaskState | null>(null);
   const [taskInspectOnly, setTaskInspectOnly] = useState(false);
@@ -269,6 +276,18 @@ export function LeadDetailDialog({
       if (!operation.isCurrent()) return;
       acknowledgeSavedDraft(submittedDraft, command.commandId);
       if (operation.isCurrent()) toast.success('Feedback registrado com sucesso!');
+      if (operation.isCurrent() && nextContactDays !== null && canManageLeadSchedule) {
+        // The agenda form opens prefilled; nothing is scheduled until the user confirms it there.
+        const date = new Date();
+        date.setHours(0, 0, 0, 0);
+        date.setDate(date.getDate() + nextContactDays);
+        setNextContactDays(null);
+        setScheduleInitialOutcome(undefined);
+        setEditingScheduleEvent(null);
+        setScheduleDefaultType('call');
+        setScheduleDefaults({ date, time: '09:00', title: `Retornar contato com ${normalizeDisplayName(localLead?.name || lead.name, 'o lead')}` });
+        setScheduleFormOpen(true);
+      }
     } catch (error) {
       if (!mutationStarted && operation?.isCurrent()) toast.error(`Não foi possível preparar o feedback: ${getErrorMessage(error)}`);
       // The mutation reports transport errors; keep the same command for retry.
@@ -739,15 +758,19 @@ export function LeadDetailDialog({
       setQuickActionSubmitting(false);
     }
   };
-  const handleEditScheduleEvent = (event: ScheduleEvent) => {
+  const handleEditScheduleEvent = (event: ScheduleEvent, initialOutcome?: 'pick' | 'rescheduled') => {
     if (!canViewLeadSchedule) return;
     if (!canManageLeadSchedule) { setReadOnlyScheduleEvent(event); return; }
+    setScheduleInitialOutcome(initialOutcome);
+    setScheduleDefaults(null);
     setEditingScheduleEvent(event);
     setScheduleFormOpen(true);
   };
   const handleCloseScheduleForm = () => {
     setScheduleFormOpen(false);
     setEditingScheduleEvent(null);
+    setScheduleInitialOutcome(undefined);
+    setScheduleDefaults(null);
   };
   // A transient access failure hides all portals but retains the unsaved form and its original CAS revision.
   if (!leadProp || !localLead || readAccessBlocked) return null;
@@ -1416,6 +1439,8 @@ export function LeadDetailDialog({
         ? 'Indisponível'
         : leadHistoryQuery.historyComplete === false ? 'Histórico parcial' : 'Não registrado';
   const openVisitForm = () => {
+    setScheduleInitialOutcome(undefined);
+    setScheduleDefaults(null);
     setEditingScheduleEvent(null);
     setScheduleDefaultType('visit');
     setScheduleFormOpen(true);
@@ -1468,7 +1493,8 @@ export function LeadDetailDialog({
         hasNextPage: schedulePreview.hasNextPage, fetchingNextPage: schedulePreview.isFetchingNextPage,
         onRefetch: () => void refetchScheduleEvents(),
         onFetchNextPage: () => void schedulePreview.fetchNextPage(),
-        onEditEvent: handleEditScheduleEvent,
+        onEditEvent: (event) => handleEditScheduleEvent(event),
+        onResolveEvent: handleEditScheduleEvent,
         onSchedule: openVisitForm,
       }}
       cadence={{
@@ -1478,7 +1504,7 @@ export function LeadDetailDialog({
         onRetry: () => void refetchLeadCadence(), onTaskClick: handleCadenceTaskClick,
         onTaskInspect: (task) => { setTaskInspectOnly(true); setSelectedTask(task); setRoteiroDialogOpen(true); },
       }}
-      feedback={{ value: feedback, canProgress: canProgressLead, pending: updateLead.isPending, onChange: setFeedback, onSave: handleSaveFeedback }}
+      feedback={{ value: feedback, canProgress: canProgressLead, pending: updateLead.isPending, onChange: setFeedback, onSave: handleSaveFeedback, nextContact: canManageLeadSchedule ? { days: nextContactDays, onChange: setNextContactDays } : undefined }}
     />
   );
 
@@ -1663,7 +1689,32 @@ export function LeadDetailDialog({
       ),
     };
 
+    const reentryLabel = dismissedReentryAt === (lead.last_entry_at ?? null) ? null
+      : describeRecentReentry(lead.reentry_count, lead.last_entry_at, detailOpenedAt);
+    const reentryNotice = reentryLabel ? (
+      <div role="status" className="flex items-center gap-3 rounded-[8px] bg-primary/10 px-3 py-2">
+        <RotateCw strokeWidth={1.5} className="h-4 w-4 shrink-0 text-primary" />
+        <p className="min-w-0 flex-1 text-xs font-light">
+          <span className="font-normal">{firstName}</span> entrou de novo {reentryLabel}. O lead não foi duplicado.
+        </p>
+        <button type="button" onClick={() => setDetailTab('origem')} className={cn('shrink-0 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 text-xs font-light hover:text-primary', mobile ? 'h-10' : 'h-7')}>Ver origem</button>
+        <button type="button" aria-label="Fechar aviso de reentrada" onClick={() => setDismissedReentryAt(lead.last_entry_at ?? null)} className={cn('flex shrink-0 items-center justify-center rounded-[6px] hover:bg-[var(--app-surface-hover)]', mobile ? 'h-10 w-10' : 'h-7 w-7')}>
+          <X strokeWidth={1.5} className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    ) : null;
+    const navButton = 'flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] transition-colors hover:bg-[var(--app-surface-hover)] disabled:opacity-40 disabled:hover:bg-[var(--app-surface-soft)]';
+    const leadNavigation = !mobile && navigation ? (
+      <div className="flex shrink-0 items-center gap-1.5">
+        <button type="button" aria-label="Lead anterior" disabled={!navigation.onPrevious} onClick={navigation.onPrevious} className={navButton}><ChevronLeft strokeWidth={1.5} className="h-4 w-4" /></button>
+        <span className="whitespace-nowrap text-xs font-light text-[var(--app-text-tertiary)]">{navigation.position} de {navigation.total} em {navigation.stageName}</span>
+        <button type="button" aria-label="Próximo lead" disabled={!navigation.onNext} onClick={navigation.onNext} className={navButton}><ChevronRight strokeWidth={1.5} className="h-4 w-4" /></button>
+      </div>
+    ) : undefined;
+
     const layoutProps: LeadDetailLayoutProps = {
+      leadNavigation,
+      notice: reentryNotice,
       readNotice: <LeadDetailReadNotice state={detailReadState} onRetry={retryLeadRead} />,
       stageNav: (
         <LeadDetailStageNav
@@ -1796,6 +1847,8 @@ export function LeadDetailDialog({
       onCloseScheduleForm={handleCloseScheduleForm}
       editingScheduleEvent={editingScheduleEvent}
       scheduleDefaultType={scheduleDefaultType}
+      scheduleInitialOutcome={scheduleInitialOutcome}
+      scheduleDefaults={scheduleDefaults}
     />
   </>);
 

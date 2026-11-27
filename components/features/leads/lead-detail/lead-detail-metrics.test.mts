@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 const source = './lead-detail-metrics.ts';
-const { daysSince, formatElapsedShort, isContactStale } = await import(source) as typeof import('./lead-detail-metrics');
+const { daysSince, describeRecentReentry, formatElapsedShort, isContactStale } = await import(source) as typeof import('./lead-detail-metrics');
 
 const now = Date.parse('2026-11-27T12:00:00.000Z');
 const ago = (days: number) => new Date(now - days * 24 * 60 * 60 * 1000).toISOString();
@@ -31,4 +31,15 @@ test('a future timestamp (clock skew) counts as today, never negative', () => {
 test('contact becomes stale only after the threshold', () => {
   assert.equal(isContactStale(ago(7), now), false);
   assert.equal(isContactStale(ago(8), now), true);
+});
+
+test('re-entry notice only for recent re-entries, with day words in local time', () => {
+  const local = (y: number, m: number, d: number, h: number, min: number) => new Date(y, m - 1, d, h, min).toISOString();
+  const nowLocal = new Date(2026, 10, 27, 20, 0).getTime();
+  assert.equal(describeRecentReentry(0, local(2026, 11, 27, 15, 12), nowLocal), null);
+  assert.equal(describeRecentReentry(2, null, nowLocal), null);
+  assert.equal(describeRecentReentry(1, local(2026, 11, 27, 15, 12), nowLocal), 'hoje, às 15:12');
+  assert.equal(describeRecentReentry(1, local(2026, 11, 26, 9, 5), nowLocal), 'ontem, às 09:05');
+  assert.equal(describeRecentReentry(3, local(2026, 11, 24, 18, 40), nowLocal), 'em 24/11, às 18:40');
+  assert.equal(describeRecentReentry(1, local(2026, 11, 19, 18, 40), nowLocal), null);
 });

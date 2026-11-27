@@ -84,6 +84,10 @@ type LeadDetailOverlaysProps = {
   onCloseScheduleForm: () => void;
   editingScheduleEvent: ScheduleEvent | null;
   scheduleDefaultType: EventType;
+  /** Open the sheet on the result step (lead card "Concluir"/"Remarcar"). */
+  scheduleInitialOutcome?: 'pick' | 'rescheduled';
+  /** Prefill for "Agendar próximo contato" after a feedback. */
+  scheduleDefaults?: { date: Date; time: string; title: string } | null;
 };
 
 export function LeadDetailOverlays({
@@ -133,6 +137,8 @@ export function LeadDetailOverlays({
   onCloseScheduleForm,
   editingScheduleEvent,
   scheduleDefaultType,
+  scheduleInitialOutcome,
+  scheduleDefaults,
 }: LeadDetailOverlaysProps) {
   const currentAssigneeConfirmation =
     assigneeScheduleConfirmation?.leadId === lead.id
@@ -359,6 +365,10 @@ export function LeadDetailOverlays({
           event={editingScheduleEvent}
           defaultUserId={lead.assigned_user_id ?? undefined}
           defaultType={scheduleDefaultType}
+          defaultDate={scheduleDefaults?.date}
+          defaultTime={scheduleDefaults?.time}
+          defaultTitle={scheduleDefaults?.title}
+          initialOutcome={scheduleInitialOutcome}
         />
       )}
     </>

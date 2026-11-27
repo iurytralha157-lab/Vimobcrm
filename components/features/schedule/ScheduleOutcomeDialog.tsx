@@ -157,6 +157,7 @@ export function ScheduleOutcomeDialog({
   onRetryTimeZone,
   timeZone = DEFAULT_SCHEDULE_TIME_ZONE,
   isLoading,
+  defaultOutcome,
   onConfirm,
 }: {
   open: boolean;
@@ -173,9 +174,13 @@ export function ScheduleOutcomeDialog({
   onRetryTimeZone?: () => void;
   timeZone?: string;
   isLoading: boolean;
+  /** Preselected result (e.g. "rescheduled" when opened from "Remarcar"); the user still confirms. */
+  defaultOutcome?: ScheduleOutcome;
   onConfirm: (input: ScheduleOutcomeConfirmation) => void | Promise<void>;
 }) {
-  const [outcome, setOutcome] = useState<ScheduleOutcome | "">("");
+  const [outcome, setOutcome] = useState<ScheduleOutcome | "">(() =>
+    defaultOutcome && getOutcomeOptions(eventType).some((option) => option.value === defaultOutcome)
+      && !(disableReschedule && defaultOutcome === "rescheduled") ? defaultOutcome : "");
   const [notes, setNotes] = useState("");
   const [performedBy, setPerformedBy] = useState(defaultPerformerId || "");
   const [rescheduleDate, setRescheduleDate] = useState("");

@@ -32,3 +32,22 @@ export function isContactStale(lastContactAt: string | null | undefined, now: nu
   const days = daysSince(lastContactAt, now);
   return days !== null && days > STALE_CONTACT_DAYS;
 }
+
+/** The "entrou de novo" notice is shown for this long after the last re-entry. */
+export const REENTRY_NOTICE_DAYS = 7;
+
+const pad = (value: number) => String(value).padStart(2, '0');
+
+/** "hoje, às 15:12" / "ontem, às 09:05" / "em 24/11, às 18:40" (local time), or null when it is not recent. */
+export function describeRecentReentry(count: number | null | undefined, lastEntryAt: string | null | undefined, now: number): string | null {
+  if (!count || count <= 0) return null;
+  const time = parseTime(lastEntryAt);
+  if (time === null || now - time > REENTRY_NOTICE_DAYS * DAY_MS) return null;
+  const entry = new Date(time), today = new Date(now);
+  const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayDiff = Math.round((startOfDay(today) - startOfDay(entry)) / DAY_MS);
+  const clock = `${pad(entry.getHours())}:${pad(entry.getMinutes())}`;
+  if (dayDiff <= 0) return `hoje, às ${clock}`;
+  if (dayDiff === 1) return `ontem, às ${clock}`;
+  return `em ${pad(entry.getDate())}/${pad(entry.getMonth() + 1)}, às ${clock}`;
+}

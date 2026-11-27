@@ -84,8 +84,12 @@ interface EventSheetProps {
   defaultDate?: Date;
   defaultTime?: string;
   defaultType?: EventType;
+  /** Title suggested for a new activity (e.g. "Retornar contato com Ana"); the user can edit it. */
+  defaultTitle?: string;
   leadId?: string;
   leadName?: string;
+  /** Open straight on the result step of an existing visit/meeting ("Concluir" or "Remarcar" from the lead card). */
+  initialOutcome?: "pick" | "rescheduled";
 }
 
 interface ScheduleDraftStart {
@@ -188,8 +192,10 @@ export function EventSheet({
   defaultDate,
   defaultTime,
   defaultType,
+  defaultTitle,
   leadId,
   leadName,
+  initialOutcome,
 }: EventSheetProps) {
   const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
@@ -263,6 +269,16 @@ export function EventSheet({
   const rescheduleEvent = useRescheduleScheduleEvent();
   const deleteEvent = useDeleteScheduleEvent();
   const [outcomeDialogOpen, setOutcomeDialogOpen] = useState(false);
+  // A request to open on the result step is honored once per opening, only when
+  // the same rules as the sheet's own "Concluir" button allow it.
+  const outcomeRequest = open && event && initialOutcome ? `${event.id}:${initialOutcome}` : null;
+  const [handledOutcomeRequest, setHandledOutcomeRequest] = useState<string | null>(null);
+  if (outcomeRequest !== handledOutcomeRequest) {
+    setHandledOutcomeRequest(outcomeRequest);
+    if (outcomeRequest && canManageSchedule && !isMasked && !isCompleted && requiresAttendanceOutcome) {
+      setOutcomeDialogOpen(true);
+    }
+  }
 
   const locked =
     !canManageSchedule || isMasked || isCompleted || (isExisting && !isEditing);
@@ -483,7 +499,7 @@ export function EventSheet({
     } else {
       setIsEditing(true);
       setSelectedType(defaultType || "task");
-      setTitle("");
+      setTitle(defaultTitle || "");
       setDescription("");
       setLocation("");
       setPrimaryUserId(defaultUserId || "");
@@ -522,6 +538,7 @@ export function EventSheet({
     setPropertyPickerOpen(false);
   }, [
     defaultDate,
+    defaultTitle,
     defaultTime,
     defaultType,
     defaultUserId,
@@ -1197,6 +1214,7 @@ export function EventSheet({
           rescheduleTimeZoneReady={scheduleTimeZoneReady}
           onRetryTimeZone={() => void scheduleCapabilitiesQuery.refetch()}
           isLoading={completeEvent.isPending || rescheduleEvent.isPending}
+          defaultOutcome={initialOutcome === "rescheduled" ? "rescheduled" : undefined}
           onConfirm={handleOutcomeConfirm}
         />
       )}

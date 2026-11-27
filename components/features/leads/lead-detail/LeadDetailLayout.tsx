@@ -10,6 +10,10 @@ export type LeadDetailTile = { value: string; label: string; alert?: boolean };
 export type LeadDetailLayoutProps = {
   readNotice: ReactNode;
   stageNav: ReactNode;
+  /** Desktop: "‹ 3 de 15 em Contactados ›" between the stages and the assignee. */
+  leadNavigation?: ReactNode;
+  /** A dismissible notice above the tabs (e.g. "entrou de novo"). */
+  notice?: ReactNode;
   assignee: ReactNode;
   /** Close/back button built by the dialog (it owns the close side effects). */
   closeButton: ReactNode;
@@ -127,6 +131,7 @@ export function DesktopLeadLayout(props: LeadDetailLayoutProps) {
       {props.readNotice}
       <header className="flex shrink-0 items-center gap-3 px-4 pb-3 pt-4">
         <div className="min-w-0 flex-1">{props.stageNav}</div>
+        {props.leadNavigation}
         {/* A grid cell stretches the picker button so a long name truncates instead of overflowing. */}
         <div className="grid w-[220px] shrink-0">{props.assignee}</div>
         {props.closeButton}
@@ -144,6 +149,7 @@ export function DesktopLeadLayout(props: LeadDetailLayoutProps) {
           <ContactBlock contact={props.contact} />
         </aside>
         <main className="flex min-h-0 min-w-0 flex-col gap-3">
+          {props.notice}
           <LeadDetailTabBar idPrefix={props.tabIdPrefix} tabs={props.tabs} active={props.activeTab} mobile={false} onChange={props.onTabChange} actions={props.tabActions} />
           <Panel props={props} />
         </main>
@@ -170,6 +176,7 @@ export function MobileLeadLayout(props: LeadDetailLayoutProps) {
           <Tiles tiles={props.tiles} mobile />
           <div data-tour="lead-detail-tags">{props.tags}</div>
           {props.quickActions}
+          {props.notice}
         </header>
         <div className="sticky top-0 z-10">
           <LeadDetailTabBar idPrefix={props.tabIdPrefix} tabs={props.tabs} active={props.activeTab} mobile onChange={props.onTabChange} />

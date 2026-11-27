@@ -19,6 +19,7 @@ export {
 export type {
   LeadDetailDialogProps,
   LeadDetailLead,
+  LeadDetailNavigation,
   PipelineCacheStage,
   ReopenStatusConfirmation,
   AssigneeScheduleConfirmation,

@@ -834,6 +834,27 @@ export default function Pipelines() {
     setSelectedLead(lead as PipelineLead);
   }, []);
 
+  // Previous/next lead in the open lead's column, in board order. Opening one reuses
+  // handleOpenLead, so it goes through the same access read as clicking its card.
+  const selectedLeadId = selectedLead?.id ?? null;
+  const findSelectedLeadNavigation = () => {
+    if (!selectedLeadId) return undefined;
+    for (const stage of stages) {
+      const index = stage.leads.findIndex((lead) => lead.id === selectedLeadId);
+      if (index < 0) continue;
+      const previous = stage.leads[index - 1], next = stage.leads[index + 1];
+      return {
+        position: index + 1,
+        total: Math.max(stage.total_lead_count ?? 0, stage.leads.length),
+        stageName: stage.name,
+        onPrevious: previous ? () => handleOpenLead(previous) : undefined,
+        onNext: next ? () => handleOpenLead(next) : undefined,
+      };
+    }
+    return undefined;
+  };
+  const selectedLeadNavigation = findSelectedLeadNavigation();
+
   const handleAssignLeadNow = useCallback((leadId: string) => {
     const lead = findPipelineLeadLocation<PipelineLead, StageWithLeads>(stages, leadId)?.lead;
     if (!canOperateLeads || lead?.can_operate !== true) {
@@ -1767,6 +1788,7 @@ export default function Pipelines() {
           selectedLeadLoading={Boolean(selectedLead && !authorizedSelectedLead && !isPipelineLeadAccessDenied(selectedLeadAccessStatus) && !leadVisibilityError && !boardAccessRevoked)}
           verifiedLeadRead={verifiedLeadRead}
           selectedLeadAccessPending={selectedLeadAccess.isFetching}
+          selectedLeadNavigation={selectedLeadNavigation}
           selectedLeadAccessBlocked={selectedLeadAccessBlocked}
           onRetrySelectedLeadAccess={() => { void selectedLeadAccess.refetch(); }}
           editingLead={authorizedSelectedLead || retainedSelectedLead ? editingLead : null}

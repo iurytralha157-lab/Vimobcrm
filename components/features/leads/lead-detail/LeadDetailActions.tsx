@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { LeadCadencePanel } from '@/components/features/leads/LeadCadencePanel';
 import { CompactScheduleEventsList } from '@/components/features/leads/lead-detail/CompactScheduleEventsList';
+import { NextScheduleHighlight } from '@/components/features/leads/lead-detail/NextScheduleHighlight';
 import type { ScheduleEvent } from '@/hooks/use-schedule-events';
 import { cn } from '@/lib/utils';
 
@@ -25,6 +26,8 @@ type LeadDetailActionsProps = {
     onRefetch: () => void;
     onFetchNextPage: () => void;
     onEditEvent: (event: ScheduleEvent) => void;
+    /** Open the existing result step for a visit/meeting ("Concluir" / "Remarcar"). */
+    onResolveEvent: (event: ScheduleEvent, kind: 'pick' | 'rescheduled') => void;
     onSchedule: () => void;
   };
   cadence: ComponentProps<typeof LeadCadencePanel>;
@@ -34,6 +37,8 @@ type LeadDetailActionsProps = {
     pending: boolean;
     onChange: (value: string) => void;
     onSave: () => void;
+    /** Present only for users who can manage the agenda. */
+    nextContact?: { days: number | null; onChange: (days: number | null) => void };
   };
 };
 
@@ -67,6 +72,15 @@ export function LeadDetailActions({ mobile, split = false, schedule, cadence, fe
           </Button>
         </div>
       )}
+      <NextScheduleHighlight
+        events={schedule.events}
+        locale={schedule.locale}
+        manageable={schedule.manageable}
+        mobile={mobile}
+        onView={schedule.onEditEvent}
+        onComplete={(event) => schedule.onResolveEvent(event, 'pick')}
+        onReschedule={(event) => schedule.onResolveEvent(event, 'rescheduled')}
+      />
       {schedule.pending && schedule.events.length === 0 ? (
         <p role="status" className="mt-2 text-[11px] text-[var(--app-text-tertiary)]">Carregando compromissos...</p>
       ) : (schedule.events.length > 0 || !schedule.error) && (
@@ -103,7 +117,10 @@ export function LeadDetailActions({ mobile, split = false, schedule, cadence, fe
           rows={2}
           className="h-16 min-h-16 resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2.5 text-xs font-light leading-4"
         />
-        <div className="mt-2 flex justify-end">
+        <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+          {feedback.nextContact && (
+            <NextContactPicker mobile={mobile} disabled={!feedback.canProgress || feedback.pending} {...feedback.nextContact} />
+          )}
           <Button
             className={cn('lead-detail-primary-action rounded-[6px] px-3', actionHeight)}
             style={primaryActionStyle}
@@ -115,5 +132,55 @@ export function LeadDetailActions({ mobile, split = false, schedule, cadence, fe
         </div>
       </section>
     </>
+  );
+}
+
+const NEXT_CONTACT_OPTIONS = [
+  { days: 1, label: 'Amanhã' },
+  { days: 3, label: 'Em 3 dias' },
+  { days: 7, label: 'Em 1 semana' },
+];
+
+/** "Agendar próximo contato": after the feedback is saved, the agenda form opens on that date for confirmation. */
+function NextContactPicker({ mobile, disabled, days, onChange }: {
+  mobile: boolean; disabled: boolean; days: number | null; onChange: (days: number | null) => void;
+}) {
+  const height = mobile ? 'h-10' : 'h-8';
+  return (
+    <div className="mr-auto flex min-w-0 flex-wrap items-center gap-2">
+      <label className={cn('flex cursor-pointer items-center gap-2 text-xs font-light', disabled && 'cursor-default opacity-60', height)}>
+        <input
+          type="checkbox"
+          checked={days !== null}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.checked ? 1 : null)}
+          className="h-4 w-4 accent-[var(--vimob-accent)]"
+        />
+        Agendar próximo contato
+      </label>
+      {days !== null && (
+        <div role="radiogroup" aria-label="Quando falar de novo?" className="flex flex-wrap gap-1.5">
+          {NEXT_CONTACT_OPTIONS.map((option) => (
+            <button
+              key={option.days}
+              type="button"
+              role="radio"
+              aria-checked={days === option.days}
+              disabled={disabled}
+              onClick={() => onChange(option.days)}
+              className={cn('rounded-[6px] px-2.5 text-xs font-light transition-colors', height,
+                days === option.days ? 'bg-primary text-primary-foreground' : 'bg-[var(--app-surface-solid)] hover:bg-[var(--app-surface-hover)]')}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {days !== null && (
+        <p className="w-full text-[11px] font-light text-[var(--app-text-tertiary)]">
+          Ao registrar, a Agenda abre nessa data para você confirmar o horário. Assim ninguém esquece de voltar.
+        </p>
+      )}
+    </div>
   );
 }

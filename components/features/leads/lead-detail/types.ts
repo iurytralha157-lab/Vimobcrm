@@ -103,8 +103,18 @@ export type LeadAssigneeCatalogState = {
   retry: () => void;
 };
 
+/** Previous/next lead in the same Pipeline column; opening one goes through the board's normal access read. */
+export type LeadDetailNavigation = {
+  position: number;
+  total: number;
+  stageName: string;
+  onPrevious?: () => void;
+  onNext?: () => void;
+};
+
 export type LeadDetailDialogProps = {
   lead: LeadDetailLead | null;
+  navigation?: LeadDetailNavigation;
   stages: LeadDetailStage[];
   onClose: () => void;
   onEdit?: (lead: LeadDetailLead) => void;

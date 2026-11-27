@@ -36,6 +36,7 @@ import { LeadDialogErrorBoundary } from './LeadDialogErrorBoundary';
 import { PipelineLeadLoadingDialog } from './PipelineLeadLoadingDialog';
 import { toStageEditorValues } from './stage-editor-contract';
 import type { StageSettingsTab } from '@/components/features/pipelines/StageSettingsDialog';
+import type { LeadDetailNavigation } from '@/components/features/leads/LeadDetailDialog';
 
 const StageSettingsDialog = dynamic(
   () =>
@@ -92,6 +93,7 @@ type PipelineDialogsProps = {
   selectedLeadLoading: boolean;
   verifiedLeadRead?: VerifiedLeadRead<Lead>;
   selectedLeadAccessPending: boolean;
+  selectedLeadNavigation?: LeadDetailNavigation;
   selectedLeadAccessBlocked?: boolean;
   onRetrySelectedLeadAccess?: () => void;
   editingLead: PipelineLead | null;
@@ -152,6 +154,7 @@ export function PipelineDialogs({
   selectedLeadLoading,
   verifiedLeadRead,
   selectedLeadAccessPending,
+  selectedLeadNavigation,
   selectedLeadAccessBlocked = false,
   onRetrySelectedLeadAccess,
   editingLead,
@@ -219,6 +222,7 @@ export function PipelineDialogs({
             <LeadDetailDialog
               key={selectedLead.id}
               lead={selectedLead}
+              navigation={selectedLeadNavigation}
               stages={stages}
               onClose={onCloseSelectedLead}
               onEdit={onEditSelectedLead}
