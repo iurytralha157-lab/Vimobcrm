@@ -25,12 +25,15 @@ export function toStageEditorValues(stages: Array<Stage | StageWithLeads>): Stag
 
 export function toStageEditorSaveValues(stages: StageEditorValue[], originals: StageEditorValue[]) {
   const originalsById = new Map(originals.map((stage) => [stage.id, stage]));
-  return stages.map((stage) => ({
-    id: stage.id,
-    name: stage.name,
-    color: stage.color,
-    stage_key: stage.stage_key,
-    isNew: !originalsById.has(stage.id),
-    expectedUpdatedAt: originalsById.get(stage.id)?.updated_at || undefined,
-  }));
+  return stages.map((stage) => {
+    const original = originalsById.get(stage.id);
+    return {
+      id: stage.id,
+      name: stage.name,
+      color: original?.color === stage.color ? undefined : stage.color,
+      stage_key: stage.stage_key,
+      isNew: !original,
+      expectedUpdatedAt: original?.updated_at || undefined,
+    };
+  });
 }

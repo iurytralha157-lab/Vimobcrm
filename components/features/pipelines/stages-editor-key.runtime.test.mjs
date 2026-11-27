@@ -42,7 +42,7 @@ before(async () => {
     const ids=${JSON.stringify(ids)},version=${JSON.stringify(version)};
     const h=window.h={ids,version,open:true,requests:[],toasts:[],commits:0,stages:[{id:ids.stage,name:'Existing',color:'#123456',position:0,stage_key:'existing',updated_at:version}],archived:[],api:pipelinesAPI,schema:stagesReorderInputSchema};
     h.request=async(url,options)=>{const body=JSON.parse(JSON.stringify(options.body));h.requests.push({url,body,retry:options.retry,organizationId:options.organizationId,expectedUserId:options.expectedUserId,expectedSessionId:options.expectedSessionId});
-      if(h.oldAPI&&Object.hasOwn(body,'preserveStageKeys'))throw new VimobAPIError('Synthetic strict decoder',{status:400,code:'invalid_request'});
+      if(h.oldAPI&&Object.hasOwn(body,'preserveStageColors'))throw new VimobAPIError('Synthetic strict decoder',{status:400,code:'invalid_request'});
       if(h.failure)throw new VimobAPIError('Synthetic save failed',{status:h.failure,code:h.failure===409?'stage_conflict':'invalid_request'});
       h.commits++;return{data:body.stages.map((stage,position)=>({id:stage.id,organizationId:ids.org,pipelineId:ids.pipeline,name:stage.name,color:stage.color||'#123456',stageKey:stage.stageKey||h.stages.find(item=>item.id===stage.id)?.stage_key||'legacy_name_key',position,isWon:false,isLost:false,isQualified:false,isActive:true,createdAt:version,updatedAt:version}))};};
     const root=createRoot(document.getElementById('root'));h.render=()=>root.render(React.createElement(StagesEditorDialog,{open:h.open,onOpenChange:open=>{h.open=open;h.render()},pipelineId:ids.pipeline,pipelineName:'Synthetic pipeline',stages:h.stages,archivedStages:h.archived}));h.render();`);
@@ -142,8 +142,8 @@ test('accent and emoji fallback draft keys survive production validation and tra
   } finally { await page.close(); }
 });
 
-for (const width of [390, 1280]) test(`existing historical long key is omitted while name and exact revision save at ${width}px`, async () => {
-  const original = { id: ids.stage, name: 'Existing', color: '#123456', position: 0, stage_key: 'historical_'.repeat(12), updated_at: version };
+for (const width of [390, 1280]) test(`historical key and color are omitted while name and exact revision save at ${width}px`, async () => {
+  const original = { id: ids.stage, name: 'Existing', color: '#abc', position: 0, stage_key: 'historical_'.repeat(12), updated_at: version };
   const page = await open({ stages: [original] }, width);
   try {
     await page.getByLabel('Editar coluna Existing', { exact: true }).click();
@@ -151,7 +151,7 @@ for (const width of [390, 1280]) test(`existing historical long key is omitted w
     await page.getByLabel('Confirmar edição da coluna Existing', { exact: true }).click();
     await page.getByRole('button', { name: 'Salvar', exact: true }).click();
     const sent = await request(page);
-    assert.deepEqual(sent.body, { preserveStageKeys: true, stages: [{ id: ids.stage, name: 'Renamed column', color: '#123456', expectedUpdatedAt: version }] });
+    assert.deepEqual(sent.body, { preserveStageKeys: true, preserveStageColors: true, stages: [{ id: ids.stage, name: 'Renamed column', expectedUpdatedAt: version }] });
     await page.waitForFunction(() => !window.h.open);
     assert.equal(await page.evaluate(() => window.h.stages[0].stage_key), original.stage_key);
   } finally { await page.close(); }

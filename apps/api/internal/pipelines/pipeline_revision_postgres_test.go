@@ -38,6 +38,31 @@ func pipelineRevisionGet(t *testing.T, f stageDeletePostgresFixture, id int) Pip
 	return p
 }
 
+func TestReorderStagesPreservesStoredColorsLocalPostgres(t *testing.T) {
+	f := openPipelineRevisionFixture(t)
+	pipelineID := stageArchiveFixtureID(101)
+	legacyID, emptyID, newID := stageArchiveFixtureID(201), stageArchiveFixtureID(202), stageArchiveFixtureID(299)
+	f.exec(`update public.stages set color = '#abc' where id = $1`, legacyID)
+	f.exec(`update public.stages set color = null where id = $1`, emptyID)
+	request := ReorderStagesRequest{PreserveStageKeys: true, PreserveStageColors: true, Stages: []StageOrderItem{
+		{ID: emptyID, Name: "Uncolored", ExpectedUpdatedAt: &f.base},
+		{ID: legacyID, Name: "Renamed", ExpectedUpdatedAt: &f.base},
+		{ID: newID, Name: "New stage", IsNew: true},
+	}}
+	input, err := request.Validate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.repo.ReorderStages(f.ctx, f.actor, pipelineID, input); err != nil {
+		t.Fatal(err)
+	}
+	if f.count(`select count(*) from public.stages where id=$1 and color is null and position=0`, emptyID) != 1 ||
+		f.count(`select count(*) from public.stages where id=$1 and color='#abc' and position=1 and name='Renamed'`, legacyID) != 1 ||
+		f.count(`select count(*) from public.stages where id=$1 and color='#6b7280' and position=2`, newID) != 1 {
+		t.Fatal("reorder changed a stored color or skipped the default for a new stage")
+	}
+}
+
 func TestPipelineAggregateRevisionLocalPostgres(t *testing.T) {
 	f := openPipelineRevisionFixture(t)
 	id := stageArchiveFixtureID(101)

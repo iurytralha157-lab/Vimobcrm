@@ -20,7 +20,7 @@ import {
 import { useDeleteStage, useReorderStages, useUpdateStage } from '@/hooks/use-stages';
 import type { DeleteStageData } from '@/hooks/pipelines/use-stage-delete-intent';
 import { usePipelineEditorVisit, type PipelineEditorOperation } from '@/hooks/pipelines/use-pipeline-editor-visit';
-import { PIPELINE_STAGE_COLOR_FALLBACK } from '@/config/pipeline-stage-colors';
+import { normalizePipelineStageColor, PIPELINE_STAGE_COLOR_FALLBACK } from '@/config/pipeline-stage-colors';
 import { toStageEditorSaveValues, type StageEditorValue } from './pipeline-screen/stage-editor-contract';
 import {
   AlertDialog,
@@ -69,7 +69,7 @@ export function StagesEditorDialog({
   const [savingOperation, setSavingOperation] = useState<PipelineEditorOperation | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
-  const [editingColor, setEditingColor] = useState('');
+  const [editingColor, setEditingColor] = useState<string>();
   const [deleteStage, setDeleteStage] = useState<DeleteStageConfirmation | null>(null);
   const deletion = useRef<DeleteStageConfirmation | null>(null);
   const [deleteConflict, setDeleteConflict] = useState(false);
@@ -154,9 +154,9 @@ export function StagesEditorDialog({
   const pendingNewStageName = isAdding ? newName.trim() : '';
   const hasPendingNewStage = pendingNewStageName.length > 0;
   const canSave = hasChanges || hasPendingNewStage || Boolean(editingId);
-  const readStageFields = (name: string, color: string) => {
-    const parsed = stageCreateInputSchema.safeParse({ name, color });
-    if (parsed.success) return { name: parsed.data.name, color: color.trim() };
+  const readStageFields = (name: string, color?: string) => {
+    const parsed = stageCreateInputSchema.safeParse(color === undefined ? { name } : { name, color });
+    if (parsed.success) return parsed.data;
     toast.error(parsed.error.issues.some(issue => issue.path[0] === 'name')
       ? 'O nome da coluna deve ter entre 2 e 120 caracteres.'
       : 'Use uma cor hexadecimal no formato #RRGGBB.');
@@ -243,7 +243,7 @@ export function StagesEditorDialog({
       setDraftStages(stagesForSave, false);
       setEditingId(null);
       setEditingName('');
-      setEditingColor('');
+      setEditingColor(undefined);
       setIsAdding(false);
       setNewName('');
       onOpenChange(false);
@@ -262,7 +262,7 @@ export function StagesEditorDialog({
     setStageDraft((current) => pinStageEditorDraft(current, pipelineId, initialStagesKey, sortedInitialStages));
     setEditingId(stage.id);
     setEditingName(stage.name);
-    setEditingColor(stage.color);
+    setEditingColor(undefined);
   };
 
   const handleSaveEdit = () => {
@@ -282,7 +282,7 @@ export function StagesEditorDialog({
     setStageDraft((current) => current?.hasChanges ? current : null);
     setEditingId(null);
     setEditingName('');
-    setEditingColor('');
+    setEditingColor(undefined);
   };
 
   const handleDeleteStage = async () => {
@@ -475,7 +475,7 @@ export function StagesEditorDialog({
                               <div className="min-w-0 flex-1 flex items-center gap-1.5 sm:gap-2">
                                 <input
                                   type="color"
-                                  value={editingColor}
+                                  value={editingColor ?? normalizePipelineStageColor(stage.color) ?? PIPELINE_STAGE_COLOR_FALLBACK}
                                   onChange={(e) => setEditingColor(e.target.value)}
                                   aria-label={`Cor da coluna ${stage.name}`}
                                   disabled={isMutating}
