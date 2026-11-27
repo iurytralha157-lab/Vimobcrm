@@ -291,13 +291,18 @@ func TestAssignmentValidatorsUseProvidedQueryer(t *testing.T) {
 func TestTransactionalAssignmentValidationUsesCurrentTransaction(t *testing.T) {
 	update, _ := readRepositoryMethod(t, "lead_update.go", "Update")
 	assign, _ := readRepositoryMethod(t, "lead_assignment.go", "Assign")
+	resolve, _ := readRepositoryMethod(t, "lead_assignment.go", "resolveManualAssignmentTeam")
 	for _, check := range []struct{ source, call string }{
 		{update, "repo.validateAssignedUser(ctx, tx, tenantContext.OrganizationID, input.AssignedUserID.Value)"},
 		{update, "repo.validateLeadTeam(ctx, tx, tenantContext, input.TeamID.Value)"},
-		{assign, "repo.validateAssignedUser(ctx, tx, tenantContext.OrganizationID, input.AssignedUserID)"},
+		{assign, "repo.resolveManualAssignmentTeam(ctx, tx, tenantContext, current, input.AssignedUserID)"},
+		{resolve, "tx.QueryRow(ctx,"},
 	} {
 		if !strings.Contains(check.source, check.call) {
 			t.Fatalf("transactional validation call %q is missing", check.call)
 		}
+	}
+	if strings.Contains(resolve, "repo.db.Pool()") {
+		t.Fatal("manual assignment membership and team must use the locked lead transaction")
 	}
 }

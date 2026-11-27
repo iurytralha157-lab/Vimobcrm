@@ -246,7 +246,7 @@ func (repo Repository) redistributeContact(ctx context.Context, resolver tenant.
 	if current.AssignedUserID == recipient.UserID {
 		item.Reason = "same_assignee"
 	} else {
-		err = repo.transferLeadAssignee(ctx, tx, actor, current, &recipient.UserID, manualQueueRedistribution)
+		err = repo.transferLeadAssignee(ctx, tx, actor, current, &recipient.UserID, current.TeamID, manualQueueRedistribution)
 		if errors.Is(err, tenant.ErrOrganizationAccessDenied) || errors.Is(err, ErrQueuePoolConflict) {
 			return failure("lead_ineligible")
 		}

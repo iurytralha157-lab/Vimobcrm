@@ -53,8 +53,11 @@ notificações.
 `Repository.MoveStage` fica em `move_stage_transaction.go`, junto da
 transação de movimentação usada pela Pipeline e pelas automações.
 `Repository.Assign` e `transferLeadAssignee` ficam em `lead_assignment.go`.
-Os handlers, assinaturas, transações, locks, regras de autorização e efeitos
-continuam os mesmos.
+Na transferência manual, quem é responsável pelo lead ou tem permissão de
+operar todos os leads da imobiliária pode escolher um destinatário ativo da
+mesma organização. A gravação mantém a equipe atual se o destinatário tem um
+vínculo ativo com ela. Caso contrário, usa o vínculo ativo mais antigo ou
+deixa o lead sem equipe se o destinatário não participa de nenhuma.
 
 ## Reservas e vínculos de conversas do WhatsApp
 

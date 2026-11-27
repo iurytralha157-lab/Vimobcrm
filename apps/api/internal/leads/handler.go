@@ -478,6 +478,8 @@ func writeLeadError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusConflict, "lead_whatsapp_send_in_flight", ErrWhatsAppSendInFlight.Error())
 	case errors.Is(err, ErrLeadAssigneeTeamMismatch):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "lead_assignee_team_mismatch", "O responsável precisa ser um membro ativo da equipe vinculada ao lead. Revise a equipe antes de transferir.")
+	case errors.Is(err, errLeadAssigneeBusy):
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_assignee_busy", "O vínculo do novo responsável está sendo atualizado. Aguarde um instante e tente novamente.")
 	case errors.Is(err, distribution.ErrIntakeDestinationUnavailable):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "lead_destination_unavailable", "O funil selecionado precisa ter uma coluna ativa. Revise o destino do lead e tente novamente.")
 	case errors.Is(err, ErrLeadDestinationBusy):

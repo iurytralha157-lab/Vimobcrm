@@ -252,7 +252,7 @@ func (repo Repository) RedistributeRoundRobin(ctx context.Context, tenantContext
 	if err := repo.validateRoundRobinAssigneeTeam(ctx, tx, tenantContext.OrganizationID, current.TeamID, &assignedUserID); err != nil {
 		return RoundRobinResult{}, err
 	}
-	if err := repo.transferLeadAssignee(ctx, tx, tenantContext, current, &assignedUserID, "round_robin"); err != nil {
+	if err := repo.transferLeadAssignee(ctx, tx, tenantContext, current, &assignedUserID, current.TeamID, "round_robin"); err != nil {
 		return RoundRobinResult{}, err
 	}
 

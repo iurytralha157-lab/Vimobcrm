@@ -656,7 +656,7 @@ func (repo Repository) processDueRedistribution(ctx context.Context, tx pgx.Tx, 
 		}
 		return nil
 	}
-	if err := repo.transferLeadAssignee(ctx, tx, systemTenant, current, &selection.UserID, "auto_redistribution"); err != nil {
+	if err := repo.transferLeadAssignee(ctx, tx, systemTenant, current, &selection.UserID, current.TeamID, "auto_redistribution"); err != nil {
 		return err
 	}
 
