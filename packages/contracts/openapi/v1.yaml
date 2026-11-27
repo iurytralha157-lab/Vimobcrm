@@ -18566,6 +18566,13 @@ components:
             An older strict API rejects this unknown property before mutation;
             deploy the API before the new editor. If omitted or false, explicit
             legacy updates remain supported; an omitted existing key is preserved.
+        preserveStageColors:
+          type: boolean
+          description: >-
+            When true, omit a color to retain the stored value for an existing
+            stage. An explicit color must use #RRGGBB. New stages and legacy
+            requests without this option use the default gray for omitted colors.
+            Older APIs reject this option before writing; deploy the API first.
         stages:
           type: array
           minItems: 1

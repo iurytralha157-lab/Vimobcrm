@@ -29,6 +29,19 @@ test('a mixed existing/new batch sends a version only for existing stages', () =
   assert.equal(stagesReorderInputSchema.safeParse(body).success, true);
 });
 
+test('reordering keeps stored legacy and absent colors while sending an explicit color edit', () => {
+  const legacy = { ...stage, color: '#abc' };
+  const withoutColor = { ...stage, id: '22222222-2222-4222-8222-222222222222', color: null };
+  const colored = { ...stage, id: '33333333-3333-4333-8333-333333333333' };
+  const originals = toStageEditorValues([legacy, withoutColor, colored]);
+  const reordered = [originals[1], originals[0], { ...originals[2], color: '#abcdef' }];
+  const body = transportValues(toStageEditorSaveValues(reordered, originals));
+
+  assert.deepEqual(body.stages.map((item) => item.id), [withoutColor.id, legacy.id, colored.id]);
+  assert.deepEqual(body.stages.map((item) => item.color), [undefined, undefined, '#abcdef']);
+  assert.equal(stagesReorderInputSchema.safeParse({ ...body, preserveStageColors: true }).success, true);
+});
+
 test('an existing stage without a version remains rejected instead of weakening concurrency checks', () => {
   const originals = toStageEditorValues([stage]);
   const body = transportValues(toStageEditorSaveValues(originals, originals));

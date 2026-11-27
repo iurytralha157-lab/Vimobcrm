@@ -164,6 +164,7 @@ export const pipelinesAPI = {
   async reorderStages(pipelineId: string, stages: StageOrderItem[], organizationId?: string, intent?: VimobAPIRequestIntent) {
     const body = parseDomainInput(stagesReorderInputSchema, {
       preserveStageKeys: true,
+      preserveStageColors: true,
       stages: stages.map((stage) => ({
         id: stage.id,
         name: stage.name,

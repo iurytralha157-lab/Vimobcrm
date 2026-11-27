@@ -708,7 +708,7 @@ func (repo Repository) ReorderStages(ctx context.Context, tenantContext tenant.C
 			tag, err = tx.Exec(ctx, `
 			update public.stages
 			set name = $4,
-			    color = $5,
+			    color = coalesce(nullif($5::text, ''), color),
 			    position = $6,
 			    stage_key = coalesce(nullif($7::text, ''), stage_key),
 			    updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond')

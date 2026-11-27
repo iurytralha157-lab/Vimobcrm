@@ -134,6 +134,9 @@ func TestStageDeleteRevisionLocalPostgres(t *testing.T) {
 		if err != nil || len(stages) != 3 {
 			t.Fatalf("reorder count=%d err=%v", len(stages), err)
 		}
+		if f.count(`select count(*) from public.stages where id=$1 and color='#123456'`, stageID) != 1 {
+			t.Fatal("reorder did not apply the explicit color")
+		}
 		if f.count(`select count(*) from public.stages where pipeline_id=$1 and updated_at=$2`, stageArchiveFixtureID(101), f.base.Add(time.Microsecond)) != 3 {
 			t.Fatal("reorder did not advance both requested stages and the omitted archived stage")
 		}
