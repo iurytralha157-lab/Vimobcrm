@@ -1,28 +1,8 @@
 .dialog {
-  --pipeline-lead-padding: 14px;
   width: min(1180px, calc(100vw - 48px));
   max-width: calc(100vw - 48px);
   height: min(780px, calc(100dvh - 48px));
   max-height: calc(100dvh - 48px);
-}
-
-/* Fluid tracks keep the work area usable without the old XL side-panel jump. */
-.dialog :global(.lead-detail-v2-grid) {
-  grid-template-columns: minmax(220px, 0.85fr) minmax(280px, 1.15fr) minmax(280px, 1fr);
-}
-
-.columnScroll {
-  padding: var(--pipeline-lead-padding);
-}
-
-.dialog :global(.lead-detail-v2-column) {
-  min-width: 0;
-}
-
-.dialog :global(.lead-stage-step) {
-  min-width: 28px;
-  min-height: 28px;
-  font-size: 12px;
 }
 
 /* The history shares chat components; preserve their own metadata/player scale. */
@@ -97,18 +77,4 @@
   border-radius: 6px;
   background: color-mix(in srgb, var(--app-text-secondary) 35%, transparent);
   background-clip: content-box;
-}
-
-@media (max-height: 760px) {
-  .dialog {
-    --pipeline-lead-padding: 10px;
-  }
-
-  .columnScroll > :global(section) {
-    gap: 8px;
-  }
-
-  .columnScroll > :global(section) > * + * {
-    margin-top: 10px;
-  }
 }

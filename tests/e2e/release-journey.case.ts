@@ -108,6 +108,7 @@ test('candidate revision journey writes real lead, appointment and linked WhatsA
     const detail = page.locator('[data-tour="lead-detail-dialog"]');
     const move = responseTo(page, target.api, 'POST', `/v1/leads/${leadId}/move-stage`);
     await detail.getByRole('button', { name: `Mover para ${stageName}`, exact: true }).click();
+    await detail.getByRole('alertdialog', { name: 'Confirmar mudança de etapa' }).getByRole('button', { name: 'Mover lead', exact: true }).click();
     const moved = await move;
     requireStatus(moved, 200, 'move lead through Pipeline');
     expect(leadMoveStageInputSchema.parse(moved.request().postDataJSON())).toMatchObject({ stageId: nextStage, expectedStageId: firstStage });

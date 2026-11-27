@@ -61,68 +61,6 @@ export function CampaignTrackingHover({
     sourceLabel ||
     (loading ? 'Carregando campanha...' : error ? 'Campanha indisponível' : 'Campanha registrada');
 
-  const mainRows = [
-    ['Campanha', metaText(leadMeta?.campaign_name) || metaText(leadMeta?.utm_campaign)],
-    ['Conjunto', leadMeta?.adset_name],
-    ['Anuncio', leadMeta?.ad_name],
-    ['Formulario', leadMeta?.form_name],
-    ['ID do formulário', leadMeta?.form_id],
-    ['Página', leadMeta?.page_name || leadMeta?.page_id],
-    ['Leadgen', leadMeta?.leadgen_id],
-    ['Plataforma', trackingSourceLabel(leadMeta?.platform) || leadMeta?.platform],
-    ['Origem', trackingSourceLabel(leadMeta?.source_type) || leadMeta?.utm_source],
-    [
-      'Capturado em',
-      leadMeta?.created_at
-        ? formatDateSafely(
-            leadMeta.created_at,
-            "dd/MM/yyyy 'às' HH:mm",
-            ptBR,
-            leadMeta.created_at,
-          )
-        : null,
-    ],
-  ] as const;
-
-  const utmRows = [
-    ['utm_source', leadMeta?.utm_source],
-    ['utm_medium', leadMeta?.utm_medium],
-    ['utm_campaign', leadMeta?.utm_campaign],
-    ['utm_content', leadMeta?.utm_content],
-    ['utm_term', leadMeta?.utm_term],
-  ] as const;
-
-  const safeCreativeLink = getSafeAbsoluteHttpUrl(leadMeta?.creative_link_url)
-    || getSafeAbsoluteHttpUrl(leadMeta?.creative_instagram_url);
-  const seenLinks = new Set<string>();
-  const links = ([
-    ['Link do criativo', safeCreativeLink],
-    ['Imagem', getSafeAbsoluteHttpUrl(leadMeta?.creative_url)],
-    ['Video', getSafeAbsoluteHttpUrl(leadMeta?.creative_video_url)],
-  ] as const).flatMap(([label, value]) => {
-    const href = metaText(value);
-    if (!href || seenLinks.has(href)) return [];
-    seenLinks.add(href);
-    return [[label, href] as const];
-  });
-
-  const DetailRow = ({ label, value }: { label: string; value: unknown }) => {
-    const text = metaText(value);
-    if (!text) return null;
-
-    return (
-      <div className="grid grid-cols-[100px_minmax(0,1fr)] gap-2 text-left text-[11px] leading-snug">
-        <span className="text-[var(--app-text-tertiary)]">{label}</span>
-        <span className="break-words text-left font-normal text-[var(--app-text-primary)]">
-          {text}
-        </span>
-      </div>
-    );
-  };
-
-  const hasUtms = utmRows.some(([, value]) => Boolean(metaText(value)));
-  const hasLinks = links.length > 0;
-
   return (
     <HoverCard
       open={open}
@@ -162,7 +100,96 @@ export function CampaignTrackingHover({
           <p className="text-[11px] font-normal text-primary">Rastreamento de campanha</p>
         </div>
 
-        <div className={cn('space-y-3 overflow-y-auto p-3 text-left', variant === 'pipeline' ? 'max-h-[min(420px,calc(100dvh-72px))]' : 'max-h-[420px]')}>
+        <CampaignTrackingDetailsBody
+          leadMeta={leadMeta}
+          loading={loading}
+          error={error}
+          onRetry={onRetry}
+          scrollClassName={variant === 'pipeline' ? 'max-h-[min(420px,calc(100dvh-72px))]' : 'max-h-[420px]'}
+        />
+      </HoverCardContent>
+    </HoverCard>
+  );
+}
+
+/** Campaign rows, UTMs, notes and creative links. Shared by the hover and the Origem tab. */
+export function CampaignTrackingDetailsBody({
+  leadMeta,
+  loading = false,
+  error = false,
+  onRetry,
+  scrollClassName,
+}: {
+  leadMeta: CampaignTrackingDetails | null | undefined;
+  loading?: boolean;
+  error?: boolean;
+  onRetry?: () => void;
+  scrollClassName?: string;
+}) {
+  const mainRows = [
+    ['Campanha', metaText(leadMeta?.campaign_name) || metaText(leadMeta?.utm_campaign)],
+    ['Conjunto', leadMeta?.adset_name],
+    ['Anúncio', leadMeta?.ad_name],
+    ['Formulário', leadMeta?.form_name],
+    ['ID do formulário', leadMeta?.form_id],
+    ['Página', leadMeta?.page_name || leadMeta?.page_id],
+    ['Leadgen', leadMeta?.leadgen_id],
+    ['Plataforma', trackingSourceLabel(leadMeta?.platform) || leadMeta?.platform],
+    ['Origem', trackingSourceLabel(leadMeta?.source_type) || leadMeta?.utm_source],
+    [
+      'Capturado em',
+      leadMeta?.created_at
+        ? formatDateSafely(
+            leadMeta.created_at,
+            "dd/MM/yyyy 'às' HH:mm",
+            ptBR,
+            leadMeta.created_at,
+          )
+        : null,
+    ],
+  ] as const;
+
+  const utmRows = [
+    ['utm_source', leadMeta?.utm_source],
+    ['utm_medium', leadMeta?.utm_medium],
+    ['utm_campaign', leadMeta?.utm_campaign],
+    ['utm_content', leadMeta?.utm_content],
+    ['utm_term', leadMeta?.utm_term],
+  ] as const;
+
+  const safeCreativeLink = getSafeAbsoluteHttpUrl(leadMeta?.creative_link_url)
+    || getSafeAbsoluteHttpUrl(leadMeta?.creative_instagram_url);
+  const seenLinks = new Set<string>();
+  const links = ([
+    ['Link do criativo', safeCreativeLink],
+    ['Imagem', getSafeAbsoluteHttpUrl(leadMeta?.creative_url)],
+    ['Vídeo', getSafeAbsoluteHttpUrl(leadMeta?.creative_video_url)],
+  ] as const).flatMap(([label, value]) => {
+    const href = metaText(value);
+    if (!href || seenLinks.has(href)) return [];
+    seenLinks.add(href);
+    return [[label, href] as const];
+  });
+
+  const DetailRow = ({ label, value }: { label: string; value: unknown }) => {
+    const text = metaText(value);
+    if (!text) return null;
+
+    return (
+      <div className="grid grid-cols-[100px_minmax(0,1fr)] gap-2 text-left text-[11px] leading-snug">
+        <span className="text-[var(--app-text-tertiary)]">{label}</span>
+        <span className="break-words text-left font-normal text-[var(--app-text-primary)]">
+          {text}
+        </span>
+      </div>
+    );
+  };
+
+  const hasUtms = utmRows.some(([, value]) => Boolean(metaText(value)));
+  const hasLinks = links.length > 0;
+
+  return (
+        <div className={cn('space-y-3 overflow-y-auto p-3 text-left', scrollClassName)}>
           {loading && <p role="status" className="text-xs">Carregando rastreamento...</p>}
           {error && <div role="alert" className="space-y-1 text-xs"><p>Não foi possível atualizar o rastreamento da campanha.</p>{onRetry && <button type="button" disabled={loading} onClick={onRetry} className="rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1">Tentar novamente</button>}</div>}
           <div className="space-y-1.5">
@@ -212,7 +239,5 @@ export function CampaignTrackingHover({
             </div>
           )}
         </div>
-      </HoverCardContent>
-    </HoverCard>
   );
 }

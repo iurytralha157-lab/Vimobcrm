@@ -24,10 +24,18 @@ before(async () => {
     let found; const visit = node => { if (ts.isVariableDeclaration(node) && node.name.getText(ast) === name) found = node; ts.forEachChild(node, visit); };
     visit(ast); assert.ok(found, name); return found;
   };
-  const mobile = declaration('headerAssignee').initializer.getText(ast);
-  const desktopBody = declaration('DesktopContentV2').initializer;
+  let hasLayoutRenderer = false;
+  try { declaration('renderLeadLayout'); hasLayoutRenderer = true; } catch { /* baseline fixture */ }
+  const layoutBody = hasLayoutRenderer ? declaration('renderLeadLayout').initializer : null;
+  // The redesigned card renders one picker for both breakpoints: renderAssigneePicker(mobile).
+  const mobile = layoutBody ? 'renderAssigneePicker(true)' : declaration('headerAssignee').initializer.getText(ast);
+  const desktopBody = layoutBody ?? declaration('DesktopContentV2').initializer;
   let pickerBinding = '', desktop;
-  if (mobile === 'renderAssigneePicker(true)') {
+  if (layoutBody) {
+    assert.match(layoutBody.getText(ast), /renderAssigneePicker\(mobile\)/);
+    pickerBinding = 'const ' + declaration('renderAssigneePicker').getText(ast) + ';';
+    desktop = 'renderAssigneePicker(false)';
+  } else if (mobile === 'renderAssigneePicker(true)') {
     pickerBinding = 'const ' + declaration('renderAssigneePicker').getText(ast) + ';';
     assert.match(desktopBody.getText(ast), /\{renderAssigneePicker\(false\)\}/);
     desktop = 'renderAssigneePicker(false)';

@@ -38,7 +38,7 @@ function presentation(source) {
   };
   return { guard: guard.getText(ast), mobile: mobile.getText(ast), desktop: desktop.getText(ast),
     capability: [declaration('canUseLeadActions'), declaration('canOperateLead')].join('\n'),
-    mobileNotice: notice('MobileContentV2'), desktopNotice: notice('DesktopContentV2') };
+    mobileNotice: notice('renderLeadLayout'), desktopNotice: notice('renderLeadLayout') };
 }
 
 before(async () => {
@@ -67,7 +67,7 @@ before(async () => {
       ${view.guard}
       const content=mobile=><div className='flex min-h-0 flex-1 flex-col'><DialogHeader className='sr-only'><DialogTitle>{leadName}</DialogTitle><DialogDescription>Dados sintéticos.</DialogDescription></DialogHeader>
         {mobile?${view.mobileNotice}:${view.desktopNotice}}<section data-private-panel className='p-3'><h2>{leadName}</h2><label>Rascunho<textarea aria-label='Rascunho do lead' value={draft} onChange={event=>setDraft(event.target.value)}/></label><button type='button' disabled={!canOperateLead} onClick={()=>setOverlayOpen(true)}>Abrir overlay de prova</button></section></div>;
-      const MobileContentV2=()=>content(true),DesktopContentV2=()=>content(false);
+      const renderLeadLayout=mobile=>content(mobile);
       const overlays=<Dialog open={overlayOpen} onOpenChange={setOverlayOpen}><DialogContent><DialogTitle>Overlay privado {leadName}</DialogTitle><DialogDescription>Confirmação sintética.</DialogDescription><button disabled={!canOperateLead}>Salvar operação sintética</button></DialogContent></Dialog>;
       ${view.mobile}
       ${view.desktop}

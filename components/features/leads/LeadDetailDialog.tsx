@@ -1,8 +1,7 @@
-import { useState, useEffect, useLayoutEffect, useMemo, useRef, useId, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, useRef, useId, type ReactNode } from 'react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { getClientRateLimitMessage } from '@/lib/client-action-rate-limit';
 import { PropertyPickerDialog } from '@/components/features/properties/PropertyPickerDialog';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 
@@ -12,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useIsMobile } from '@/hooks/use-mobile';
 import {
-  Phone, Mail, MessageCircle, X, Plus, User, FileEdit, Activity, Contact
+  ArrowLeftRight, Calendar, ChevronLeft, Clock, Crosshair, FileEdit, FileText, Home, Mail, MessageCircle, Phone, Plus, UserRound, X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getTagColorStyleWithWhiteText } from '@/lib/tag-color';
@@ -65,12 +64,18 @@ import { hydrateLeadDetail, mergeLeadDetailMutation } from '@/components/feature
 import { LeadScheduleReadDialog } from '@/components/features/leads/lead-detail/LeadScheduleReadDialog';
 import { canOperateLeadFromFreshRead, leadProgressCapability, mergeLeadOperationCapability } from '@/lib/lead-operation-capability';
 import pipelineDetailStyles from '@/components/features/leads/lead-detail/PipelineLeadDetail.module.css';
-import { PipelineMobileLeadHeader } from '@/components/features/leads/lead-detail/PipelineMobileLeadHeader';
 import { LeadTagPickerContent } from '@/components/features/leads/lead-detail/LeadTagPickerContent';
 import { LeadDetailActions } from '@/components/features/leads/lead-detail/LeadDetailActions';
 import { LeadDetailAssigneePicker } from '@/components/features/leads/lead-detail/LeadDetailAssigneePicker';
 import { LeadDetailAttachments } from '@/components/features/leads/lead-detail/LeadDetailAttachments';
-import { LeadDetailStageStepper } from '@/components/features/leads/lead-detail/LeadDetailStageStepper';
+import { LeadDetailStageNav } from '@/components/features/leads/lead-detail/LeadDetailStageNav';
+import { DesktopLeadLayout, MobileLeadLayout, type LeadDetailLayoutProps } from '@/components/features/leads/lead-detail/LeadDetailLayout';
+import type { LeadDetailTab, LeadDetailTabId } from '@/components/features/leads/lead-detail/LeadDetailTabBar';
+import { LeadOriginPanel } from '@/components/features/leads/lead-detail/LeadOriginPanel';
+import { LeadProfileDetails } from '@/components/features/leads/lead-detail/LeadProfileDetails';
+import { daysSince, formatElapsedShort, isContactStale } from '@/components/features/leads/lead-detail/lead-detail-metrics';
+import { formatDateSafely } from '@/components/features/leads/lead-detail/utils';
+import { useCadenceOverdueCount } from '@/hooks/leads/use-cadence-overdue-count';
 import { LeadDetailReadNotice } from '@/components/features/leads/lead-detail/LeadDetailReadNotice';
 import { getLeadDetailReadState } from '@/components/features/leads/lead-detail/read-recovery';
 import type { TagCatalog } from '@/lib/validation/tag-catalog';
@@ -99,7 +104,6 @@ import {
   getLeadPropertyFallback,
   getLeadSourceLabel,
   hasTagId,
-  InfoLine,
   LeadDetailOverlays,
   LeadProfileHover,
   mergePropertyFallback,
@@ -181,7 +185,7 @@ export function LeadDetailDialog({
   const [editingScheduleEvent, setEditingScheduleEvent] = useState<ScheduleEvent | null>(null);
   const [readOnlyScheduleEvent, setReadOnlyScheduleEvent] = useState<ScheduleEvent | null>(null);
   const [scheduleDefaultType, setScheduleDefaultType] = useState<EventType>('call');
-  const [activeTab, setActiveTab] = useState('activities');
+  const [detailTabState, setDetailTabState] = useState<{ leadId: string | null; tab: LeadDetailTabId }>({ leadId: null, tab: 'atividades' });
   const [selectedTask, setSelectedTask] = useState<LeadCadenceTaskState | null>(null);
   const [taskInspectOnly, setTaskInspectOnly] = useState(false);
   const [roteiroDialogOpen, setRoteiroDialogOpen] = useState(false);
@@ -209,8 +213,6 @@ export function LeadDetailDialog({
     setReadOnlyScheduleEvent(null);
     onClose();
   };
-  const v2LeadInfoScrollRef = useRef<HTMLDivElement>(null);
-  const v2LeadWorkScrollRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
   const requestScope = useLeadRequestScope();
   const { openNewChat, openNewChatWithMessage } = useFloatingChat();
@@ -223,12 +225,9 @@ export function LeadDetailDialog({
 
   const leadId = leadProp?.id ?? null;
   const panelSessionId = getGlobalSignOutSessionId(session);
-  useLayoutEffect(() => {
-    if (!leadId) return;
-    // A fresh snapshot of the same lead must not interrupt panel navigation.
-    v2LeadInfoScrollRef.current?.scrollTo({ top: 0 });
-    v2LeadWorkScrollRef.current?.scrollTo({ top: 0 });
-  }, [leadId, leadProp?.organization_id, activeOrganization.organizationId, user?.id, panelSessionId]);
+  // Another lead opened in the same card starts on Atividades again.
+  const detailTab: LeadDetailTabId = detailTabState.leadId === leadId ? detailTabState.tab : 'atividades';
+  const setDetailTab = (tab: LeadDetailTabId) => setDetailTabState({ leadId, tab });
   const attachmentUploadDraft = useLeadAttachmentUploadDraft(activeOrganization.organizationId || null, leadId,
     user?.id || null, getGlobalSignOutSessionId(session));
   const isUploading = attachmentUploadDraft.draft?.phase === 'pending';
@@ -348,6 +347,9 @@ export function LeadDetailDialog({
     error: leadCadenceError,
     refetch: refetchLeadCadence,
   } = useLeadCadenceState(leadId, cadenceOrganizationId, cadenceStageId);
+  const cadenceOverdueCount = useCadenceOverdueCount(leadCadenceState);
+  // One clock per opened card keeps the "dias"/"últ. contato" tiles stable while it is open.
+  const [detailOpenedAt] = useState(() => Date.now());
   const { hasPermission } = useUserPermissions();
   const hasLeadOperatePermission = hasPermission('lead_operate');
   const poolReadOnly = Boolean(localLead?.queue_pool || fullLeadQuery.data?.queue_pool);
@@ -1413,10 +1415,12 @@ export function LeadDetailDialog({
       : leadHistoryQuery.isError && !localLead.first_response_at
         ? 'Indisponível'
         : leadHistoryQuery.historyComplete === false ? 'Histórico parcial' : 'Não registrado';
-  const renderStageStepper = (mobile: boolean) => (
-    <LeadDetailStageStepper stages={stages} activeStageId={localLead.stage_id} mobile={mobile}
-      pipeline={variant === 'pipeline'} disabled={!canProgressLead} onMove={handleMoveToStage} />
-  );
+  const openVisitForm = () => {
+    setEditingScheduleEvent(null);
+    setScheduleDefaultType('visit');
+    setScheduleFormOpen(true);
+  };
+  const currentStageName = stages.find((stage) => stage.id === localLead.stage_id)?.name || 'sem etapa';
   const renderAssigneePicker = (mobile: boolean) => (
     <LeadDetailAssigneePicker mobile={mobile} open={assigneePopoverOpen} disabled={!canTransferLead}
       updating={isUpdatingAssignee} assigneeName={assigneeName} users={assignableUsers}
@@ -1454,9 +1458,10 @@ export function LeadDetailDialog({
       inputRef={fileInputRef} uploadDraft={attachmentUploadDraft.draft} onUpload={handleFileUpload}
       onOpen={handleOpenAttachment} onRefetch={() => void refetchAttachments()} onClearDraft={attachmentUploadDraft.clear} />
   );
-  const renderActionSections = (mobile: boolean) => (
+  const renderActionSections = (mobile: boolean, split = false) => (
     <LeadDetailActions
       mobile={mobile}
+      split={split}
       schedule={{
         visible: canViewLeadSchedule, manageable: canManageLeadSchedule, events: scheduleEvents,
         summary: scheduleSummaryLabel, locale: dateLocale, error: scheduleError, pending: schedulePending,
@@ -1464,11 +1469,7 @@ export function LeadDetailDialog({
         onRefetch: () => void refetchScheduleEvents(),
         onFetchNextPage: () => void schedulePreview.fetchNextPage(),
         onEditEvent: handleEditScheduleEvent,
-        onSchedule: () => {
-          setEditingScheduleEvent(null);
-          setScheduleDefaultType('visit');
-          setScheduleFormOpen(true);
-        },
+        onSchedule: openVisitForm,
       }}
       cadence={{
         appearance: variant === 'pipeline' ? 'pipeline' : 'default',
@@ -1481,446 +1482,255 @@ export function LeadDetailDialog({
     />
   );
 
-  const MobileContentV2 = () => {
+  const renderTagList = (mobile: boolean) => (
+    <div className="flex flex-wrap gap-1.5">
+      {leadTags.map((tag) => (
+        <Badge
+          key={tag.id}
+          className={cn('flex h-6 items-center gap-1 rounded-[5px] border-0 px-2 text-[10px] font-light text-white', variant === 'pipeline' && pipelineDetailStyles.tag)}
+          style={getTagColorStyleWithWhiteText(tag.color?.trim() || null)}
+        >
+          <span className={mobile ? 'max-w-[140px] truncate' : undefined}>{tag.name || 'Tag'}</span>
+          <button disabled={!canOperateLead || isTagMutationPending} type="button" aria-label={`Remover tag ${tag.name || 'Tag'}`} title="Remover tag" className="rounded-[3px] p-0.5 hover:bg-primary-foreground/15 disabled:hidden" onClick={() => handleRemoveTag(tag.id)}>
+            <X className="h-2.5 w-2.5" />
+          </button>
+        </Badge>
+      ))}
+      <Popover open={tagPopoverOpen} onOpenChange={(open) => (!open || (canOperateLead && !isTagMutationPending)) && setTagPopoverOpen(open)}>
+        <PopoverTrigger asChild>
+          <Button disabled={!canOperateLead || isTagMutationPending} variant="ghost" size="sm" className={cn('rounded-[5px] border-0 px-2 text-[10px] font-light disabled:hidden', mobile ? 'h-8 bg-[var(--app-surface-soft)]' : 'h-6 bg-[var(--app-surface-solid)]')}>
+            <Plus strokeWidth={1.5} className="mr-1 h-3 w-3" />
+            Tag
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className={cn('w-64 p-0', variant === 'pipeline' && pipelineDetailStyles.portal)} align="start">
+          {variant === 'pipeline' ? (
+            <LeadTagPickerContent leadId={localLead.id} assignedTagIds={leadTagIds} disabled={!canOperateLead || isTagMutationPending} enabled={tagPopoverOpen} onAddTag={tag => handleAddTag(tag.id, tag)} onClose={() => setTagPopoverOpen(false)} />
+          ) : <TagSelectorPopoverContent availableTags={availableTags} onAddTag={handleAddTag} onClose={() => setTagPopoverOpen(false)} />}
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+
+  const renderLeadLayout = (mobile: boolean) => {
     const leadAvatarUrl = localLead.whatsapp_picture || localLead.whatsapp_avatar_url || localLead.contact_picture || null;
     const dealStatusLabel = localLead.deal_status === 'won' ? 'Ganho' : localLead.deal_status === 'lost' ? 'Perdido' : 'Aberto';
-    const mobileActiveTab = ['summary', 'actions', 'history'].includes(activeTab) ? activeTab : 'summary';
+    const profileVariant = variant === 'pipeline' ? 'pipeline' : 'default';
+    const portalClassName = variant === 'pipeline' ? pipelineDetailStyles.portal : undefined;
+    const firstName = leadName.split(/\s+/)[0] || leadName;
+    const actionHeight = mobile ? 'h-11' : 'h-8';
+    // Desktop chips sit on the grey identity block; on mobile they sit on the white card.
+    const chipBg = mobile ? 'bg-[var(--app-surface-soft)]' : 'bg-[var(--app-surface-solid)]';
+    const campaignValue = campaignTrackingDetails || leadMetaQuery.isPending || leadMetaQuery.isError
+      ? <CampaignTrackingHover leadMeta={campaignTrackingDetails} variant={profileVariant} loading={leadMetaQuery.isPending} error={leadMetaQuery.isError} onRetry={() => void leadMetaQuery.refetch()} />
+      : null;
     const contactRows: Array<{ label: string; value: ReactNode }> = [
-      { label: 'Nome', value: <LeadProfileHover lead={localLead} canRevealSensitive={canOperateLead} variant={variant === 'pipeline' ? 'pipeline' : 'default'} /> },
+      { label: 'Nome', value: <LeadProfileHover lead={localLead} canRevealSensitive={canOperateLead} variant={profileVariant} /> },
       { label: 'Telefone', value: formatPhoneForDisplay(localLead.phone || '') },
+      { label: 'E-mail', value: localLead.email || null },
       { label: 'Origem', value: getLeadSourceLabel(leadSource) },
+      { label: 'Entrou em', value: localLead.created_at ? formatDateSafely(localLead.created_at, 'dd/MM/yyyy', ptBR, '') : null },
       { label: 'Primeiro contato', value: firstResponseLabel },
-      {
-        label: 'Campanha',
-        value: campaignTrackingDetails || leadMetaQuery.isPending || leadMetaQuery.isError ? <CampaignTrackingHover leadMeta={campaignTrackingDetails} variant={variant === 'pipeline' ? 'pipeline' : 'default'} loading={leadMetaQuery.isPending} error={leadMetaQuery.isError} onRetry={() => void leadMetaQuery.refetch()} /> : null
-      },
-    ]
-      .filter((row) => Boolean(row.value));
+      { label: 'Campanha', value: campaignValue },
+    ].filter((row) => Boolean(row.value));
 
-    const mobileTabs = [
-      { id: 'summary', label: 'Resumo', icon: Contact },
-      { id: 'actions', label: 'Ações', icon: Activity, badge: scheduleEvents.length ? String(scheduleEvents.length) : undefined },
-      { id: 'history', label: 'Histórico', icon: MessageCircle },
+    const daysInFunnel = daysSince(localLead.created_at, detailOpenedAt);
+    const firstResponseSeconds = firstResponse && typeof firstResponse.seconds === 'number' && firstResponse.seconds >= 0 ? firstResponse.seconds : null;
+    const tiles = [
+      { value: daysInFunnel === null ? '—' : `${daysInFunnel} ${daysInFunnel === 1 ? 'dia' : 'dias'}`, label: 'no funil' },
+      { value: formatElapsedShort(localLead.last_contact_at, detailOpenedAt) ?? '—', label: 'últ. contato', alert: isContactStale(localLead.last_contact_at, detailOpenedAt) },
+      { value: firstResponseSeconds === null ? '—' : formatResponseTime(firstResponseSeconds), label: '1º contato' },
     ];
-    const isCompactPipelineHeader = variant === 'pipeline' && isMobile;
-    const headerStages = renderStageStepper(true);
 
-    const headerCloseAction = (
-      <button type="button" aria-label="Fechar detalhes do lead" title="Fechar" onClick={handleCloseLeadDetail} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:ring-1 focus-visible:ring-primary/30">
-        <X className="h-4 w-4" />
-      </button>
-    );
-
-    const headerTags = (
-      <div className={cn('flex flex-wrap gap-1.5', variant !== 'pipeline' && 'mt-1.5')}>
-        {(variant === 'pipeline' ? leadTags : leadTags.slice(0, 4)).map((tag) => {
-          const tagColor = tag.color?.trim() || null;
-          return (
-            <Badge
-              key={tag.id}
-              className={cn(
-                'flex h-5 items-center gap-1 rounded-[4px] border-0 px-1.5 text-[10px] font-light',
-                'text-white', variant === 'pipeline' && pipelineDetailStyles.tag,
-              )}
-              style={getTagColorStyleWithWhiteText(tagColor)}
-            >
-              <span className="max-w-[82px] truncate">{tag.name || 'Tag'}</span>
-              <button disabled={!canOperateLead || isTagMutationPending} type="button" aria-label={`Remover tag ${tag.name || 'Tag'}`} title="Remover tag" className="rounded-[3px] p-0.5 hover:bg-primary-foreground/15 disabled:hidden" onClick={() => handleRemoveTag(tag.id)}>
-                <X className="h-2.5 w-2.5" />
-              </button>
-            </Badge>
-          );
-        })}
-        {variant !== 'pipeline' && leadTags.length > 4 && (
-          <Badge variant="secondary" className="h-5 rounded-[4px] border-0 px-1.5 text-[10px]">
-            +{leadTags.length - 4}
-          </Badge>
-        )}
-        <Popover open={tagPopoverOpen} onOpenChange={(open) => (!open || (canOperateLead && !isTagMutationPending)) && setTagPopoverOpen(open)}>
-          <PopoverTrigger asChild>
-            <Button disabled={!canOperateLead || isTagMutationPending} variant="ghost" size="sm" className="h-5 rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-1.5 text-[10px] disabled:hidden">
-              <Plus className="mr-1 h-3 w-3" />
-              Tag
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className={cn('w-64 p-0', variant === 'pipeline' && pipelineDetailStyles.portal)} align="start">
-            {variant === 'pipeline' ? (
-              <LeadTagPickerContent leadId={localLead.id} assignedTagIds={leadTagIds} disabled={!canOperateLead || isTagMutationPending} enabled={tagPopoverOpen} onAddTag={tag => handleAddTag(tag.id, tag)} onClose={() => setTagPopoverOpen(false)} />
-            ) : <TagSelectorPopoverContent availableTags={availableTags} onAddTag={handleAddTag} onClose={() => setTagPopoverOpen(false)} />}
-          </PopoverContent>
-        </Popover>
+    const status = (
+      <div onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+        <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange} disabled={!canOperateLead || dealStatusChange.isPending || stageMovePending}>
+          <SelectTrigger aria-label="Status do negócio" className={cn('gap-1 rounded-[6px] border-0 px-2.5 text-xs font-light', mobile ? 'h-10 w-[110px]' : 'h-8 w-full', getDealStatusTriggerClass(localLead.deal_status), !mobile && (localLead.deal_status || 'open') === 'open' && '!bg-[var(--app-surface-solid)]')}>
+            <SelectValue>{dealStatusLabel}</SelectValue>
+          </SelectTrigger>
+          <SelectContent className={portalClassName}>
+            <SelectItem value="open" className={mobile ? 'min-h-10' : undefined}>Aberto</SelectItem>
+            <SelectItem value="won" className={mobile ? 'min-h-10' : undefined}>Ganho</SelectItem>
+            <SelectItem value="lost" className={mobile ? 'min-h-10' : undefined}>Perdido</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
     );
 
-    const headerIdentity = (
-      <div className={cn('flex items-start gap-2.5', variant === 'pipeline' && 'relative min-h-10 pr-11')}>
-        <Avatar className="h-10 w-10 shrink-0 border-0">
-          <AvatarImage src={leadAvatarUrl || undefined} alt={leadName} />
-          <AvatarFallback className={cn('text-[12px] font-light', variant === 'pipeline' ? 'bg-primary/50 text-white' : 'bg-primary/12 text-primary')}>
-            {getDisplayInitial(leadName) || <User className="h-5 w-5" />}
-          </AvatarFallback>
-        </Avatar>
+    const quickActions = (
+      <div className="flex gap-2">
+        {localLead.phone && (
+          <Button disabled={!canProgressLead} variant="ghost" size="sm" aria-label={`Ligar para ${leadName}`} title="Ligar" onClick={handleQuickPhone} className={cn('w-12 shrink-0 rounded-[6px] border-0 shadow-none', chipBg, actionHeight)}>
+            <Phone strokeWidth={1.5} className="h-4 w-4" />
+          </Button>
+        )}
+        {!hideWhatsAppAction && (
+          <Button disabled={!canOpenLeadWhatsApp || !localLead.phone} size="sm" onClick={handleQuickWhatsApp} className={cn('min-w-0 flex-1 rounded-[6px] border-0 px-2 text-xs font-light shadow-none', actionHeight)}>
+            <MessageCircle strokeWidth={1.5} className="mr-1 h-4 w-4" />
+            WhatsApp
+          </Button>
+        )}
+        {mobile && canManageLeadSchedule && (
+          <Button variant="ghost" size="sm" aria-label="Agendar visita" title="Agendar visita" onClick={openVisitForm} className={cn('w-12 shrink-0 rounded-[6px] border-0 shadow-none', chipBg, actionHeight)}>
+            <Calendar strokeWidth={1.5} className="h-4 w-4" />
+          </Button>
+        )}
+        {localLead.email && (
+          <Button disabled={!canProgressLead} variant="ghost" size="sm" aria-label={`Enviar e-mail para ${leadName}`} title="Enviar e-mail" onClick={handleQuickEmail} className={cn('w-12 shrink-0 rounded-[6px] border-0 shadow-none', chipBg, actionHeight)}>
+            <Mail strokeWidth={1.5} className="h-4 w-4" />
+          </Button>
+        )}
+      </div>
+    );
 
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-2">
-            <h2 className="truncate text-[14px] font-normal leading-tight">{leadName}</h2>
+    const tabs: LeadDetailTab[] = [
+      { id: 'atividades', label: 'Atividades', icon: Clock, alert: cadenceOverdueCount || undefined },
+      ...(hasPropertiesModule ? [{ id: 'imoveis' as const, label: 'Imóveis', icon: Home }] : []),
+      { id: 'arquivos', label: 'Arquivos', icon: FileText, count: attachments.length || undefined },
+      { id: 'dados', label: mobile ? 'Dados' : 'Dados do lead', icon: UserRound },
+      { id: 'transferir', label: 'Transferir', icon: ArrowLeftRight },
+      { id: 'origem', label: 'Origem', icon: Crosshair },
+    ];
+    const activeTab = tabs.some((tab) => tab.id === detailTab) ? detailTab : 'atividades';
+
+    const history = (
+      <LeadUnifiedThread
+        historyPagination={variant === 'pipeline'}
+        leadId={lead.id}
+        leadName={leadName}
+        leadAvatarUrl={leadAvatarUrl}
+        leadCreatedAt={lead.created_at || null}
+      />
+    );
+
+    const panels: Record<LeadDetailTabId, ReactNode> = {
+      atividades: mobile ? (
+        <div className="space-y-3">
+          {renderActionSections(true)}
+          <div data-tour="lead-detail-history" className="h-[calc(100dvh-120px)] min-h-[420px] overflow-hidden rounded-[8px] bg-[var(--app-surface-soft)]">{history}</div>
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          <div className="lead-detail-v2-scroll max-h-[48%] shrink-0 space-y-3 overflow-y-auto">{renderActionSections(false, true)}</div>
+          <div data-tour="lead-detail-history" className="min-h-[260px] flex-1 overflow-hidden rounded-[8px] bg-[var(--app-surface-soft)]">{history}</div>
+        </div>
+      ),
+      imoveis: (
+        <section className="space-y-2 rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+          <h3 className="text-[11px] font-normal uppercase tracking-[0.06em] text-[var(--app-text-tertiary)]">Imóvel de interesse</h3>
+          <p className="text-xs font-light text-[var(--app-text-secondary)]">O imóvel vinculado aparece no card, na agenda e nas propostas deste lead.</p>
+          {renderInterestProperty()}
+        </section>
+      ),
+      arquivos: renderAttachments(mobile),
+      dados: (
+        <section className="rounded-[8px] bg-[var(--app-surface-soft)]">
+          <div className="flex items-center justify-between px-3 pt-3">
+            <h3 className="text-[11px] font-normal uppercase tracking-[0.06em] text-[var(--app-text-tertiary)]">Ficha do lead</h3>
+            {!mobile && canOperateLead && (
+              <button type="button" onClick={handleOpenLeadEdit} className="lead-detail-subtle-action inline-flex h-7 items-center gap-1 rounded-[6px] bg-[var(--app-surface-solid)] px-2 text-[11px] font-light hover:text-primary">
+                <FileEdit strokeWidth={1.5} className="h-3.5 w-3.5" />
+                Editar
+              </button>
+            )}
+          </div>
+          <LeadProfileDetails lead={localLead} canRevealSensitive={canOperateLead} />
+        </section>
+      ),
+      transferir: (
+        <section className="space-y-3 rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+          <div>
+            <h3 className="text-[11px] font-normal uppercase tracking-[0.06em] text-[var(--app-text-tertiary)]">Trocar responsável</h3>
+            <p className="mt-1 text-xs font-light text-[var(--app-text-secondary)]">
+              Hoje em {currentStageName} com {assigneeName || 'ninguém'}.{!canTransferLead && ' Você não tem permissão para transferir este lead.'}
+            </p>
+          </div>
+          {renderAssigneePicker(mobile)}
+        </section>
+      ),
+      origem: (
+        <LeadOriginPanel
+          leadFirstName={firstName}
+          source={leadSource}
+          createdAt={localLead.created_at}
+          tracking={campaignTrackingDetails}
+          trackingLoading={leadMetaQuery.isPending}
+          trackingError={leadMetaQuery.isError}
+          onRetryTracking={() => void leadMetaQuery.refetch()}
+          historyEvents={leadHistoryQuery.data}
+          historyComplete={leadHistoryQuery.historyComplete !== false}
+        />
+      ),
+    };
+
+    const layoutProps: LeadDetailLayoutProps = {
+      readNotice: <LeadDetailReadNotice state={detailReadState} onRetry={retryLeadRead} />,
+      stageNav: (
+        <LeadDetailStageNav
+          stages={stages}
+          activeStageId={localLead.stage_id}
+          leadName={firstName}
+          daysInStage={daysSince(localLead.stage_entered_at, detailOpenedAt)}
+          mobile={mobile}
+          disabled={!canProgressLead}
+          portalClassName={portalClassName}
+          needsConfirmation={(stage) => getPipelineStageOutcome(stage, stageAutomations) !== 'lost'}
+          onMove={(stageId) => void handleMoveToStage(stageId)}
+        />
+      ),
+      // The picker's open state is shared: only one instance may exist at a time.
+      assignee: activeTab === 'transferir' ? (
+        <div className={cn('flex min-w-0 items-center rounded-[6px] bg-[var(--app-surface-soft)] px-3 text-xs font-light text-[var(--app-text-secondary)]', mobile ? 'h-10' : 'h-8')}>
+          <span className="truncate">{assigneeName || 'Sem responsável'}</span>
+        </div>
+      ) : renderAssigneePicker(mobile),
+      closeButton: (
+        <button type="button" aria-label="Fechar detalhes do lead" title="Fechar" onClick={handleCloseLeadDetail} className={cn('flex shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] transition-colors hover:bg-[var(--app-surface-hover)]', mobile ? 'h-10 w-10' : 'h-8 w-8')}>
+          {mobile ? <ChevronLeft strokeWidth={1.5} className="h-5 w-5" /> : <X strokeWidth={1.5} className="h-4 w-4" />}
+        </button>
+      ),
+      scrollKey: `${activeOrganization.organizationId}:${lead.id}:${user?.id}:${panelSessionId}`,
+      identity: {
+        name: leadName,
+        initial: getDisplayInitial(leadName),
+        avatarUrl: leadAvatarUrl,
+        contactLine: localLead.phone ? formatPhoneForDisplay(localLead.phone) : localLead.email || null,
+        badges: (
+          <>
             <ReentryBadge count={lead.reentry_count} lastEntryAt={lead.last_entry_at} />
             <QueuePoolClaimButton lead={localLead} compact disabled={fullLeadQuery.isFetching || readAccessPending} />
-          </div>
-          {localLead.phone && (
-            <div className="mt-1 flex min-w-0 items-center gap-1.5">
-              <p className="truncate text-xs text-[var(--app-text-tertiary)]">{formatPhoneForDisplay(localLead.phone)}</p>
-              <CopyLeadPhoneButton phone={localLead.phone} className={cn('h-10 w-10 bg-transparent hover:bg-[var(--app-surface-soft)]', variant === 'pipeline' && 'absolute right-0 top-0')} />
-            </div>
-          )}
-          {variant === 'pipeline' && !localLead.phone && localLead.email && <p className="mt-1 truncate text-xs text-[var(--app-text-tertiary)]">{localLead.email}</p>}
-
-          {variant !== 'pipeline' && headerTags}
-        </div>
-      </div>
-    );
-
-    const headerAssignee = renderAssigneePicker(true);
-
-    const headerStatus = (
-      <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange} disabled={!canOperateLead || dealStatusChange.isPending || stageMovePending}>
-        <SelectTrigger className={cn('h-10 w-[92px] gap-1 rounded-[6px] px-2 text-xs font-light', getDealStatusTriggerClass(localLead.deal_status))}>
-          <SelectValue>{dealStatusLabel}</SelectValue>
-        </SelectTrigger>
-        <SelectContent className={variant === 'pipeline' ? pipelineDetailStyles.portal : undefined}>
-          <SelectItem value="open" className="min-h-10">Aberto</SelectItem>
-          <SelectItem value="won" className="min-h-10">Ganho</SelectItem>
-          <SelectItem value="lost" className="min-h-10">Perdido</SelectItem>
-        </SelectContent>
-      </Select>
-    );
-
-    const headerActions = (
-      <div className="mt-2 grid grid-flow-col auto-cols-fr gap-2">
-        {localLead.phone && (
-          <Button disabled={!canProgressLead} variant="outline" size="sm" aria-label={`Ligar para ${leadName}`} title="Ligar" onClick={handleQuickPhone} className="h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
-            <Phone className="h-3.5 w-3.5" />
-          </Button>
-        )}
-        {!hideWhatsAppAction && <Button disabled={!canOpenLeadWhatsApp || !localLead.phone} size="sm" onClick={handleQuickWhatsApp} className="h-10 rounded-[6px] px-2 text-xs">
-          <MessageCircle className="mr-1 h-3.5 w-3.5" />
-          Chat
-        </Button>}
-          {localLead.email && (
-          <Button disabled={!canProgressLead} variant="outline" size="sm" aria-label={`Enviar e-mail para ${leadName}`} title="Enviar e-mail" onClick={handleQuickEmail} className="h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
-            <Mail className="h-3.5 w-3.5" />
-          </Button>
-        )}
-      </div>
-    );
-
-    return (
-      <div className="lead-detail-dialog lead-detail-v2 flex h-full min-h-0 flex-col bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]">
-        <LeadDetailReadNotice state={detailReadState} onRetry={retryLeadRead} />
-        {isCompactPipelineHeader ? (
-          <PipelineMobileLeadHeader
-            key={`${activeOrganization.organizationId}:${lead.id}`}
-            stages={headerStages}
-            closeAction={headerCloseAction}
-            identity={headerIdentity}
-            assignee={headerAssignee}
-            status={headerStatus}
-            tags={headerTags}
-            actions={headerActions}
-          />
-        ) : (
-          <div className="lead-mobile-drawer-header shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-3 pb-3">
-            <div className="mb-3 flex items-center gap-2">
-              {headerStages}
-              {headerCloseAction}
-            </div>
-            {headerIdentity}
-            {variant === 'pipeline' && <div className="mt-2 max-h-[72px] overflow-y-auto overscroll-contain">{headerTags}</div>}
-            <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-              {headerAssignee}
-              {headerStatus}
-            </div>
-            {headerActions}
-          </div>
-        )}
-
-        <div className="shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-3 py-2">
-          <div role="tablist" aria-label="Seções dos detalhes do lead" aria-orientation="horizontal" className="grid grid-cols-3 gap-1 rounded-[7px] bg-[var(--app-surface-soft)] p-1"
-            onKeyDown={(event) => {
-              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-              const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
-              const currentIndex = tabs.indexOf(event.target as HTMLButtonElement);
-              if (currentIndex < 0) return;
-              event.preventDefault();
-              const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
-                : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-              setActiveTab(mobileTabs[nextIndex].id);
-              tabs[nextIndex].focus();
-            }}
-          >
-            {mobileTabs.map((tab) => {
-              const Icon = tab.icon;
-              const isActive = mobileActiveTab === tab.id;
-
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  role="tab"
-                   id={`${mobileTabsId}-${tab.id}-tab`}
-                   aria-controls={`${mobileTabsId}-${tab.id}-panel`}
-                  aria-selected={isActive}
-                   tabIndex={isActive ? 0 : -1}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={cn(
-                    'flex h-10 items-center justify-center gap-1.5 rounded-[5px] text-[11px] font-light transition-colors',
-                    isActive ? 'bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]' : 'text-[var(--app-text-secondary)]',
-                  )}
-                >
-                  <Icon className="h-3.5 w-3.5" />
-                  {tab.label}
-                  {tab.badge && <span className="rounded-[4px] bg-primary/15 px-1 text-[9px] text-primary">{tab.badge}</span>}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-hidden">
-          <div role="tabpanel" id={`${mobileTabsId}-summary-panel`} aria-labelledby={`${mobileTabsId}-summary-tab`} hidden={mobileActiveTab !== 'summary'} tabIndex={0} className="h-full">
-          {mobileActiveTab === 'summary' && (
-            <div className="lead-detail-v2-scroll h-full overflow-y-auto p-3">
-              <div className="space-y-3 pb-4">
-                <section className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
-                  <div className="mb-3 flex items-center justify-between">
-                    <h3 className="text-[12px] font-normal">Dados do contato</h3>
-                    {canOperateLead && <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-10 rounded-[5px] px-2 text-[10px]" onClick={handleOpenLeadEdit}>
-                      <FileEdit className="h-3 w-3" />
-                      Editar
-                    </Button>}
-                  </div>
-
-                  <div className="space-y-2">
-                    {contactRows.map((row) => (
-                      <InfoLine key={row.label} label={row.label} value={row.value} />
-                    ))}
-                  </div>
-                </section>
-
-                {renderInterestProperty()}
-
-                {renderAttachments(true)}
-              </div>
-            </div>
-          )}
-          </div>
-
-          <div role="tabpanel" id={`${mobileTabsId}-actions-panel`} aria-labelledby={`${mobileTabsId}-actions-tab`} hidden={mobileActiveTab !== 'actions'} tabIndex={0} className="h-full">
-          {mobileActiveTab === 'actions' && (
-            <div className="lead-detail-v2-scroll h-full overflow-y-auto p-3">
-              <div className="space-y-3 pb-4">
-
-
-                {renderActionSections(true)}
-              </div>
-            </div>
-          )}
-          </div>
-
-          <div role="tabpanel" id={`${mobileTabsId}-history-panel`} aria-labelledby={`${mobileTabsId}-history-tab`} hidden={mobileActiveTab !== 'history'} tabIndex={0} className="h-full">
-          {mobileActiveTab === 'history' && (
-            <div className="h-full p-2">
-              <LeadUnifiedThread
-                historyPagination={variant === 'pipeline'}
-                leadId={lead.id}
-                leadName={leadName}
-                leadAvatarUrl={leadAvatarUrl}
-                leadCreatedAt={lead.created_at || null}
-              />
-            </div>
-          )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const DesktopContentV2 = () => {
-    const leadAvatarUrl = localLead.whatsapp_picture || localLead.whatsapp_avatar_url || localLead.contact_picture || null;
-    const dealStatusLabel = localLead.deal_status === 'won' ? 'Ganho' : localLead.deal_status === 'lost' ? 'Perdido' : 'Aberto';
-    const contactRows: Array<{ label: string; value: ReactNode; icon?: ReactNode }> = [
-      { label: 'Nome', value: <LeadProfileHover lead={localLead} canRevealSensitive={canOperateLead} variant={variant === 'pipeline' ? 'pipeline' : 'default'} /> },
-      { label: 'Telefone', value: formatPhoneForDisplay(localLead.phone || '') },
-      { label: 'Origem', value: getLeadSourceLabel(leadSource) },
-      { label: 'Primeiro contato', value: firstResponseLabel },
-      {
-        label: 'Campanha',
-        value: campaignTrackingDetails || leadMetaQuery.isPending || leadMetaQuery.isError ? <CampaignTrackingHover leadMeta={campaignTrackingDetails} variant={variant === 'pipeline' ? 'pipeline' : 'default'} loading={leadMetaQuery.isPending} error={leadMetaQuery.isError} onRetry={() => void leadMetaQuery.refetch()} /> : null
+          </>
+        ),
+        copyPhone: localLead.phone ? <CopyLeadPhoneButton phone={localLead.phone} className={cn('shrink-0 bg-transparent hover:bg-[var(--app-surface-hover)]', mobile ? 'h-10 w-10' : 'h-8 w-8')} /> : null,
       },
-    ]
-      .filter((row) => Boolean(row.value));
+      tiles,
+      tags: renderTagList(mobile),
+      status,
+      quickActions,
+      interestProperty: hasPropertiesModule && activeTab !== 'imoveis' ? renderInterestProperty() : null,
+      contact: { rows: contactRows, onEdit: canOperateLead ? handleOpenLeadEdit : undefined },
+      tabIdPrefix: mobileTabsId,
+      tabs,
+      activeTab,
+      onTabChange: setDetailTab,
+      tabActions: canManageLeadSchedule ? (
+        <Button size="sm" variant="ghost" onClick={openVisitForm} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-xs font-light shadow-none">
+          <Calendar strokeWidth={1.5} className="h-4 w-4" />
+          Agendar visita
+        </Button>
+      ) : undefined,
+      panel: panels[activeTab],
+      panelScrolls: activeTab !== 'atividades',
+    };
 
-    const desktopHeaderTags = (
-      <div data-tour="lead-detail-tags" className="mt-2 flex flex-wrap gap-1.5">
-        {leadTags.map((tag) => {
-          const tagColor = tag.color?.trim() || null;
-          return (
-            <Badge
-              key={tag.id}
-              className={cn(
-                'flex h-6 items-center gap-1 rounded-[5px] border-0 px-2 text-[10px] font-light',
-                'text-white', variant === 'pipeline' && pipelineDetailStyles.tag,
-              )}
-              style={getTagColorStyleWithWhiteText(tagColor)}
-            >
-              {tag.name || 'Tag'}
-              <button disabled={!canOperateLead || isTagMutationPending} type="button" aria-label={`Remover tag ${tag.name || 'Tag'}`} title="Remover tag" className="rounded-[3px] p-0.5 hover:bg-primary-foreground/15 disabled:hidden" onClick={() => handleRemoveTag(tag.id)}>
-                <X className="h-2.5 w-2.5" />
-              </button>
-            </Badge>
-          );
-        })}
-        <Popover open={tagPopoverOpen} onOpenChange={(open) => (!open || (canOperateLead && !isTagMutationPending)) && setTagPopoverOpen(open)}>
-          <PopoverTrigger asChild>
-            <Button disabled={!canOperateLead || isTagMutationPending} variant="ghost" size="sm" className="h-6 rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-2 text-[10px] disabled:hidden">
-              <Plus className="mr-1 h-3 w-3" />
-              Tag
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className={cn('w-64 p-0', variant === 'pipeline' && pipelineDetailStyles.portal)} align="start">
-              {variant === 'pipeline' ? (
-                <LeadTagPickerContent leadId={localLead.id} assignedTagIds={leadTagIds} disabled={!canOperateLead || isTagMutationPending} enabled={tagPopoverOpen} onAddTag={tag => handleAddTag(tag.id, tag)} onClose={() => setTagPopoverOpen(false)} />
-              ) : <TagSelectorPopoverContent availableTags={availableTags} onAddTag={handleAddTag} onClose={() => setTagPopoverOpen(false)} />}
-          </PopoverContent>
-        </Popover>
-      </div>
-    );
-
-    return (
-      <div className="lead-detail-dialog lead-detail-v2 flex h-full max-h-full flex-col bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]">
-        <LeadDetailReadNotice state={detailReadState} onRetry={retryLeadRead} />
-        <div className="border-b border-transparent bg-[var(--app-surface-solid)] px-4 pt-4">
-          <DialogHeader className="sr-only">
-            <DialogTitle>{leadName}</DialogTitle>
-            <DialogDescription>Dados, ações e histórico do lead.</DialogDescription>
-          </DialogHeader>
-
-          {renderStageStepper(false)}
-        </div>
-
-        <div className={cn('lead-detail-v2-grid grid min-h-0 flex-1 grid-cols-[280px_1fr_340px] xl:grid-cols-[330px_1fr_390px] grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden', variant === 'contacts' && 'grid-cols-[minmax(220px,0.9fr)_minmax(0,1.1fr)_minmax(240px,1fr)] xl:grid-cols-[minmax(220px,0.9fr)_minmax(0,1.1fr)_minmax(240px,1fr)] [&>div]:min-w-0')}>
-          <aside className="lead-detail-v2-column border-r border-[var(--app-border)]">
-            <div ref={v2LeadInfoScrollRef} className={cn('lead-detail-v2-scroll h-full overflow-y-auto p-4', variant === 'pipeline' && pipelineDetailStyles.columnScroll)}>
-              <section className="space-y-3">
-                <div className={cn('flex items-start gap-3', variant === 'pipeline' && 'relative min-h-11 pr-11')}>
-                  <Avatar className="h-11 w-11 shrink-0 border-0">
-                    <AvatarImage src={leadAvatarUrl || undefined} alt={leadName} />
-                    <AvatarFallback className={cn('text-[12px] font-light', variant === 'pipeline' ? 'bg-primary/50 text-white' : 'bg-primary/12 text-primary')}>
-                      {getDisplayInitial(leadName) || <User className="h-5 w-5" />}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <h2 className="truncate text-[14px] font-normal leading-tight">{leadName}</h2>
-                      <ReentryBadge count={lead.reentry_count} lastEntryAt={lead.last_entry_at} />
-                      <QueuePoolClaimButton lead={localLead} compact disabled={fullLeadQuery.isFetching || readAccessPending} />
-                    </div>
-                    {variant === 'pipeline' && (localLead.phone || localLead.email) && (
-                      <div className="mt-1 flex min-w-0 items-center gap-1.5">
-                        <p className="truncate text-xs text-[var(--app-text-tertiary)]">{localLead.phone ? formatPhoneForDisplay(localLead.phone) : localLead.email}</p>
-                        {localLead.phone && <CopyLeadPhoneButton phone={localLead.phone} className="absolute right-0 top-0 h-10 w-10 bg-transparent hover:bg-[var(--app-surface-soft)]" />}
-                      </div>
-                    )}
-                    {variant !== 'pipeline' && desktopHeaderTags}
-                  </div>
-                </div>
-                {variant === 'pipeline' && desktopHeaderTags}
-
-                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                  {renderAssigneePicker(false)}
-
-                  <div onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
-                    <Select value={localLead.deal_status || 'open'} onValueChange={handleDealStatusChange} disabled={!canOperateLead || dealStatusChange.isPending || stageMovePending}>
-                      <SelectTrigger
-                        className={cn(
-                          'h-8 w-[92px] gap-1 rounded-[6px] px-2 text-xs font-light',
-                          getDealStatusTriggerClass(localLead.deal_status),
-                        )}
-                      >
-                        <SelectValue>{dealStatusLabel}</SelectValue>
-                      </SelectTrigger>
-                      <SelectContent className={variant === 'pipeline' ? pipelineDetailStyles.portal : undefined}>
-                        <SelectItem value="open">Aberto</SelectItem>
-                        <SelectItem value="won">Ganho</SelectItem>
-                        <SelectItem value="lost">Perdido</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="grid grid-flow-col auto-cols-fr gap-2">
-                  {localLead.phone && (
-                    <Button disabled={!canProgressLead} variant="outline" size="sm" aria-label={`Ligar para ${leadName}`} title="Ligar" onClick={handleQuickPhone} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
-                      <Phone className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
-                  {!hideWhatsAppAction && <Button disabled={!canOpenLeadWhatsApp || !localLead.phone} size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
-                    <MessageCircle className="mr-1 h-3.5 w-3.5" />
-                    Chat
-                  </Button>}
-                  {localLead.email && (
-                    <Button disabled={!canProgressLead} variant="outline" size="sm" aria-label={`Enviar e-mail para ${leadName}`} title="Enviar e-mail" onClick={handleQuickEmail} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
-                      <Mail className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
-                </div>
-
-                <div data-tour="lead-detail-contact" className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
-                  <div className="mb-3 flex items-center justify-between">
-                    <h3 className="text-[12px] font-normal">Dados do contato</h3>
-                    {canOperateLead && <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" onClick={handleOpenLeadEdit}>
-                      <FileEdit className="h-3 w-3" />
-                      Editar
-                    </Button>}
-                  </div>
-
-                  <div className="space-y-2">
-                    {contactRows.map((row) => (
-                      <InfoLine key={row.label} label={row.label} value={row.value} icon={row.icon} />
-                    ))}
-                  </div>
-
-                </div>
-
-                {renderInterestProperty()}
-
-                {renderAttachments(false)}
-
-              </section>
-            </div>
-          </aside>
-
-          <main className="lead-detail-v2-column">
-            <div ref={v2LeadWorkScrollRef} className={cn('lead-detail-v2-scroll h-full overflow-y-auto p-4', variant === 'pipeline' && pipelineDetailStyles.columnScroll)}>
-              <div className="space-y-4">
-
-
-                {renderActionSections(false)}
-              </div>
-            </div>
-          </main>
-
-          <aside data-tour="lead-detail-history" className="lead-detail-v2-column border-l border-[var(--app-border)]">
-            <LeadUnifiedThread
-              historyPagination={variant === 'pipeline'}
-              leadId={lead.id}
-              leadName={leadName}
-              leadAvatarUrl={leadAvatarUrl}
-              leadCreatedAt={lead.created_at || null}
-            />
-          </aside>
-        </div>
-      </div>
+    return mobile ? <MobileLeadLayout {...layoutProps} /> : (
+      <>
+        <DialogHeader className="sr-only">
+          <DialogTitle>{leadName}</DialogTitle>
+          <DialogDescription>Dados, ações e histórico do lead.</DialogDescription>
+        </DialogHeader>
+        <DesktopLeadLayout {...layoutProps} />
+      </>
     );
   };
 
@@ -2014,7 +1824,7 @@ export function LeadDetailDialog({
             <DrawerDescription className="sr-only">Dados, ações e histórico do lead.</DrawerDescription>
             {detailReadState.hideDetails
               ? <LeadDetailReadNotice state={detailReadState} onRetry={retryLeadRead} onClose={handleCloseLeadDetail} />
-              : <>{MobileContentV2()}</>}
+              : <>{renderLeadLayout(true)}</>}
           </DrawerContent>
         </Drawer>
         {!detailReadState.hideDetails && overlays}
@@ -2050,7 +1860,7 @@ export function LeadDetailDialog({
           {detailReadState.hideDetails ? <>
             <DialogHeader className="sr-only"><DialogTitle>Acesso ao lead</DialogTitle><DialogDescription>Confirme o acesso para visualizar os detalhes.</DialogDescription></DialogHeader>
             <LeadDetailReadNotice state={detailReadState} onRetry={retryLeadRead} onClose={handleCloseLeadDetail} />
-          </> : <>{DesktopContentV2()}</>}
+          </> : renderLeadLayout(false)}
         </DialogContent>
       </Dialog>
       {!detailReadState.hideDetails && overlays}

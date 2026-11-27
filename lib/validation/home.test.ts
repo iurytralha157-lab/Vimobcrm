@@ -29,7 +29,7 @@ const leadDetailOverlaysSource = readFileSync(
   "utf8",
 );
 const leadDetailStepperSource = readFileSync(
-  "components/features/leads/lead-detail/LeadDetailStageStepper.tsx",
+  "components/features/leads/lead-detail/LeadDetailStageNav.tsx",
   "utf8",
 );
 const contactsSource = readFileSync(
@@ -489,20 +489,19 @@ test("detalhe do lead monta somente os layouts V2 ativos em mobile e desktop", (
 
   assert.match(
     leadDetailSource,
-    /if \(isMobile \|\| isTablet\) \{\s*return \([\s\S]*?<Drawer\b[\s\S]*?\{MobileContentV2\(\)\}/,
+    /if \(isMobile \|\| isTablet\) \{\s*return \([\s\S]*?<Drawer\b[\s\S]*?\{renderLeadLayout\(true\)\}/,
   );
   assert.match(
     leadDetailSource,
-    /data-tour="lead-detail-dialog"[\s\S]*?\{DesktopContentV2\(\)\}/,
+    /data-tour="lead-detail-dialog"[\s\S]*?: renderLeadLayout\(false\)\}/,
   );
-  assert.match(leadDetailSource, /<LeadDetailStageStepper\b[\s\S]*?disabled=\{!canProgressLead\}/);
-  assert.match(leadDetailSource, /const headerStages = renderStageStepper\(true\)/);
-  assert.match(leadDetailSource, /\{renderStageStepper\(false\)\}/);
+  assert.match(leadDetailSource, /<LeadDetailStageNav\b[\s\S]*?disabled=\{!canProgressLead\}/);
+  assert.match(leadDetailSource, /stageNav: \(\s*<LeadDetailStageNav\b[\s\S]*?mobile=\{mobile\}/);
   assert.match(leadDetailStepperSource, /disabled=\{disabled\}\s+aria-label=\{.Mover para /);
   assert.equal(
     [...leadDetailSource.matchAll(/onValueChange=\{handleDealStatusChange\} disabled=\{!canOperateLead \|\|/g)].length,
-    2,
-    "deal status still requires general edit access on both layouts",
+    1,
+    "deal status still requires general edit access in the layout shared by mobile and desktop",
   );
   assert.equal(
     [...leadDetailSource.matchAll(/\{!detailReadState\.hideDetails && overlays\}/g)].length,
@@ -513,11 +512,11 @@ test("detalhe do lead monta somente os layouts V2 ativos em mobile e desktop", (
   assert.match(leadDetailOverlaysSource, /hasAgendaModule && \(\s*<EventSheet\b/);
   assert.match(
     leadDetailSource,
-    /if \(isMobile \|\| isTablet\) \{[\s\S]*?\{MobileContentV2\(\)\}[\s\S]*?<\/Drawer>\s*\{!detailReadState\.hideDetails && overlays\}/,
+    /if \(isMobile \|\| isTablet\) \{[\s\S]*?\{renderLeadLayout\(true\)\}[\s\S]*?<\/Drawer>\s*\{!detailReadState\.hideDetails && overlays\}/,
   );
   assert.match(
     leadDetailSource,
-    /data-tour="lead-detail-dialog"[\s\S]*?\{DesktopContentV2\(\)\}[\s\S]*?<\/Dialog>\s*\{!detailReadState\.hideDetails && overlays\}/,
+    /data-tour="lead-detail-dialog"[\s\S]*?: renderLeadLayout\(false\)\}[\s\S]*?<\/Dialog>\s*\{!detailReadState\.hideDetails && overlays\}/,
   );
   assert.match(leadDetailStepperSource, /data-tour="lead-detail-stages"/);
   assert.match(leadDetailSource, /data-tour="lead-detail-history"/);

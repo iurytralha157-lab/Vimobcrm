@@ -808,7 +808,7 @@ test("ajustes visuais do fluxo WhatsApp preservam os dados e escondem codigos in
   );
   assert.match(
     trackingHoverSource,
-    /\['Video', getSafeAbsoluteHttpUrl\(leadMeta\?\.creative_video_url\)\]/,
+    /\['Vídeo', getSafeAbsoluteHttpUrl\(leadMeta\?\.creative_video_url\)\]/,
   );
   assert.match(trackingHoverSource, /const seenLinks = new Set<string>\(\)/);
   assert.match(trackingHoverSource, /seenLinks\.has\(href\)/);

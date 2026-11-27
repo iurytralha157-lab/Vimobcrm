@@ -23,7 +23,7 @@ before(async () => {
     if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'leadAvatarUrl') avatars.push(node.initializer.getText(ast));
     if (ts.isExpressionStatement(node) && ts.isCallExpression(node.expression) && node.expression.expression.getText(ast) === 'useEffect' && node.getText(ast).includes('setLocalLead(hydratedLead)')) hydration = node.getText(ast);
     ts.forEachChild(node,visit);
-  }; visit(ast); assert.equal(avatars.length,2); assert(hydration);
+  }; visit(ast); assert.equal(avatars.length,1,'mobile and desktop share one avatar expression'); assert(hydration);
   const stub = path.join(directory,'stub.tsx'), entry = path.join(directory,'entry.tsx'), loader = path.join(directory,'loader.cjs');
   await writeFile(stub, `import{createContext,useContext}from'react';export const Auth=createContext(null),useAuth=()=>useContext(Auth);export const useLeadSensitiveProfile=()=>({data:{},isLoading:false,isFetching:false,isError:false});`);
   await writeFile(loader, `const ts=require(${JSON.stringify(require.resolve('typescript'))}),fs=require('node:fs');module.exports=function(s){if(process.env.PIPELINE_TAG_PROFILE_SOURCE&&this.resourcePath.replaceAll('\\\\','/').endsWith('/lead-detail/LeadProfileHover.tsx'))s=fs.readFileSync(process.env.PIPELINE_TAG_PROFILE_SOURCE,'utf8');return ts.transpileModule(s,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext,jsx:ts.JsxEmit.ReactJSX}}).outputText};`);
@@ -47,7 +47,7 @@ before(async () => {
       ${variable('handleRemoveTag')}
       h.local=localLead;h.handlers={add:handleAddTag,remove:handleRemoveTag};h.patchLocal=patch=>setLocalLead(value=>({...value,...patch}));h.addOther=()=>setLocalLead(value=>({...value,tags:[...value.tags,{id:'other',name:'Other'}]}));
       h.canonical=async(patch={},same=false)=>{const key=['lead',scope.org,leadId],next=same?structuredClone(h.local):{...h.local,...patch};if(same)client.setQueryData(key,h.local);const before=client.getQueryData(key);await client.fetchQuery({queryKey:key,queryFn:async()=>next,staleTime:0});const installed=client.getQueryData(key);h.sharedCanonical=installed===before;setCanonical(installed)};
-      const mobileAvatar=${avatars[0]},desktopAvatar=${avatars[1]};h.avatars={mobile:mobileAvatar,desktop:desktopAvatar};
+      const mobileAvatar=${avatars[0]},desktopAvatar=${avatars[0]};h.avatars={mobile:mobileAvatar,desktop:desktopAvatar};
       return <><pre data-testid='lead'>{JSON.stringify(localLead)}</pre><div data-testid='profile'><LeadProfileHover lead={localLead} canRevealSensitive={false} variant='pipeline'/></div></>}
     function Fixture(){const[scope,setScope]=useState({org:'org-a',actor:'actor-a',sid:'sid-a',allowed:true}),[shown,setShown]=useState(true);h.scope=scope;h.switch=patch=>setScope(old=>({...old,...patch}));h.show=setShown;
       return <Auth.Provider value={{activeOrganization:{organizationId:scope.org}}}><QueryClientProvider client={client}>{shown&&<Detail scope={scope}/>}</QueryClientProvider></Auth.Provider>}

@@ -53,7 +53,7 @@ for (const status of [403, 404]) test(`actual sensitive hook ${status} erases ca
     fixture.hook('lead-a'); await fixture.observer().refetch(); failure = Object.assign(new Error('Synthetic denied'), { status }); await fixture.observer().refetch();
     const result = fixture.hook('lead-a'); assert.equal(result.data, undefined);
     assert.deepEqual(fixture.client.getQueryData(['lead-sensitive-profile', 'org-a', 'lead-a']), {});
-    const source = 'const ' + productionDeclaration('components/features/leads/lead-detail/LeadProfileHover.tsx', node => ts.isVariableDeclaration(node) && node.name.getText() === 'sensitiveValue');
+    const source = 'const ' + productionDeclaration('components/features/leads/lead-detail/LeadProfileDetails.tsx', node => ts.isVariableDeclaration(node) && node.name.getText() === 'sensitiveValue');
     const visible = allowed => evaluateProduction(source, { canRevealSensitive: allowed, revealSensitive: true, sensitiveProfile: { ...result, data: { cpf: '11122233344' } }, maskCPF: String, maskRG: String }, 'sensitiveValue');
     assert.equal(visible(false)('cpf'), '••••••••••••'); assert.equal(visible(true)('cpf'), 'Indisponível');
   } finally { fixture.close(); }
@@ -68,7 +68,7 @@ test('closing the actual profile hover masks locally without canceling the edito
   } });
   try {
     const fetch = observer.refetch(); await turn();
-    const clear = evaluateProduction('const ' + productionDeclaration('components/features/leads/lead-detail/LeadProfileHover.tsx',
+    const clear = evaluateProduction('const ' + productionDeclaration('components/features/leads/lead-detail/LeadProfileDetails.tsx',
       node => ts.isVariableDeclaration(node) && node.name.getText() === 'clearSensitiveData'), {
       setRevealSensitive: value => { revealed = value; }, queryClient: client, organizationId: 'org-a', lead: { id: 'lead-a' },
     }, 'clearSensitiveData');

@@ -19,7 +19,7 @@ test("lead details render Agenda only with module and schedule_view", () => {
   );
   assert.match(source, /<LeadDetailActions\b[\s\S]*?schedule=\{\{\s*visible: canViewLeadSchedule/);
   assert.match(source, /\{renderActionSections\(true\)\}/);
-  assert.match(source, /\{renderActionSections\(false\)\}/);
-  assert.match(actionsSource, /\{schedule\.visible && \(\s*<section[^>]*lead-agenda-card/);
+  assert.match(source, /\{renderActionSections\(false, true\)\}/);
+  assert.match(actionsSource, /const scheduleCard = schedule\.visible && \(\s*<section[^>]*lead-agenda-card/);
   assert.doesNotMatch(source, /\{hasAgendaModule && <section[^>]*lead-agenda-card/);
 });
